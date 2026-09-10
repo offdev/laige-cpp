@@ -1,0 +1,30 @@
+# Build trees (canonical: build, build-asan, build-tsan — roadmap/README.md §1)
+build/
+build-*/
+
+# CMake
+Testing/
+CMakeUserPresets.json
+
+# Compiled artifacts (in case they ever land outside build trees)
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Fuzzing / coverage artifacts
+*.profraw
+*.profdata
+*.fuzz
+coverage/
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+*.user
+*.swp

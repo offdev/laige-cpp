@@ -55,7 +55,7 @@ No rendering, no physics, no networking yet — `laige-core` only.
 
 ## Repository & build
 
-- [ ] **M0-REPO-01 · Repository skeleton**
+- [x] **M0-REPO-01 · Repository skeleton**
   - **Refs:** PRD §10.1 (module map), NFR-8.8, NFR-8.10; AGENTS §13 (docs layout)
   - **Depends:** M0-DEC-01
   - **Scope:**
