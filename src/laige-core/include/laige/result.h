@@ -102,6 +102,15 @@ class Result {
     return error_;
   }
 
+  // Move the success value out of an rvalue result (ownership transfer,
+  // e.g. handing a freshly created resource to a container).
+  // Precondition: ok() and an rvalue result. Debug builds assert; in
+  // release builds an unchecked call is undefined behavior.
+  [[nodiscard]] T takeValue() && {
+    assert(ok() && "Result::takeValue() called on an error result");
+    return std::move(*value_);
+  }
+
   // Null-safe accessors (no precondition): nullptr when the result does
   // not carry the requested state.
   [[nodiscard]] const T* valueIfOk() const noexcept {

@@ -68,6 +68,7 @@ const laige::ErrorCode kRegistered[] = {
     laige::ErrorCode::InvalidArgument,
     laige::ErrorCode::MalformedInput,
     laige::ErrorCode::BudgetExhausted,
+    laige::ErrorCode::IoError,
 };
 
 // NFR-13.3 grammar check on a rendered error line: exactly 5 fields
@@ -173,6 +174,20 @@ TEST(ResultStatus, MoveOnlyPayload) {
   EXPECT_EQ(*r2.value(), 7);
   // r is in a valid but unspecified state after the move; it is used
   // only for destruction here.
+}
+
+TEST(ResultStatus, TakeValueMovesOutSuccessValue) {
+  // Ownership transfer path (rvalue results only): used e.g. to hand a
+  // freshly created resource (FileSink, M0-CORE-02) to a container.
+  auto makePtr = [](int x) { return std::make_unique<int>(x); };
+  auto r = laige::Result<std::unique_ptr<int>>::success(makePtr(9));
+  std::unique_ptr<int> moved = std::move(r).takeValue();
+  ASSERT_NE(moved, nullptr);
+  EXPECT_EQ(*moved, 9);
+
+  // An error result has no value to take.
+  auto e = laige::Result<int>::failure(laige::ErrorCode::InvalidArgument);
+  EXPECT_TRUE(e.isError());
 }
 
 TEST(ResultStatus, CopySemantics) {
@@ -293,6 +308,7 @@ TEST(ErrorCodeRegistry, IntegerValuesArePinned) {
             3u);
   EXPECT_EQ(static_cast<std::uint32_t>(laige::ErrorCode::BudgetExhausted),
             4u);
+  EXPECT_EQ(static_cast<std::uint32_t>(laige::ErrorCode::IoError), 5u);
 }
 
 TEST(ErrorCodeRegistry, UnregisteredValuesRenderUnknown) {

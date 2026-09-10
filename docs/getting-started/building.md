@@ -125,7 +125,10 @@ Every engine target is passed through `laige_apply_engine_policy()`
   engine code from M0-CORE-01: `laige::Result<T,E>` / `laige::Status` and
   the error-code registry (`include/laige/result.h`,
   `include/laige/errors.h`, `errors.cpp`; error text follows the NFR-13.3
-  5-field grammar — see [docs/api/errors.md](../api/errors.md)).
+  5-field grammar — see [docs/api/errors.md](../api/errors.md)), and the
+  structured logging facade from M0-CORE-02 (`include/laige/logging.h`,
+  `logging.cpp`; API contract in
+  [docs/api/logging.md](../api/logging.md)).
 - `tests/laige-core/laige-core_tests` is a CTest link smoke test (a
   GoogleTest suite since M0-DEP-01) that runs in every build tree above: it
   verifies the static/shared link and checks the NFR-8.10 policy flags with
@@ -134,8 +137,13 @@ Every engine target is passed through `laige_apply_engine_policy()`
   same `laige-core_tests` executable covering the `ResultStatus`, `Status`,
   and `ErrorCodeRegistry` suites — the step's Verify command is
   `ctest -R result_status`.
+- `logging` is the M0-CORE-02 CTest entry: a filtered view of the same
+  executable covering the `LogGate`, `LogRecord`, `LogSinks`,
+  `LogRateLimit`, `LogFatal`, `LogCrash`, `LogConcurrency`, and
+  `LogPerformance` suites — the step's Verify command is
+  `ctest -R logging`.
 - Every configure verifies the vendored dependency lock
   (`cmake/laige-deps-lock.cmake` against `deps.lock`); a tampered or
   unlisted file under `deps/` fails the configure loudly. GoogleTest is the
   only vendored dependency and is linked into tests only (M0-DEP-01,
-  [ADR 0004](../docs/decisions/0004-google-test-vendoring.md)).
+  [ADR 0004](../decisions/0004-google-test-vendoring.md)).

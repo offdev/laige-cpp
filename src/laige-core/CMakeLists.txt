@@ -8,15 +8,15 @@
 # M0-BUILD-01: the library target. Static by default; LAIGE_BUILD_SHARED=ON
 # builds it shared (NFR-8.9). The target currently carries the
 # version/build-identifier code (version.cpp) plus the first functional
-# engine code (M0-CORE-01: Result/Status + error registry, errors.cpp);
-# further functional code lands in the remaining M0-CORE-xx steps. The
-# link smoke test in tests/laige-core/ verifies the library in both
-# variants.
+# engine code (M0-CORE-01: Result/Status + error registry, errors.cpp)
+# and the structured logging facade (M0-CORE-02, logging.cpp); further
+# functional code lands in the remaining M0-CORE-xx steps. The link
+# smoke test in tests/laige-core/ verifies the library in both variants.
 
 if(LAIGE_BUILD_SHARED)
-  add_library(laige-core SHARED version.cpp errors.cpp)
+  add_library(laige-core SHARED version.cpp errors.cpp logging.cpp)
 else()
-  add_library(laige-core STATIC version.cpp errors.cpp)
+  add_library(laige-core STATIC version.cpp errors.cpp logging.cpp)
 endif()
 
 laige_apply_engine_policy(laige-core)

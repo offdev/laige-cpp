@@ -20,6 +20,16 @@ Status: M0 — Foundations.
   `include/laige/errors.h`, `errors.cpp`); rendered error text follows the
   NFR-13.3 5-field grammar (`docs/api/errors.md`); unit suite:
   `ctest -R result_status`.
+- **M0-CORE-02 (done):** the one structured logging facade
+  (`include/laige/logging.h`, `logging.cpp`): severity Trace…Fatal,
+  stable subsystem/event names, lazy field/message evaluation (disabled
+  events cost one atomic load + branch, no allocation), per-subsystem
+  level filtering, replaceable sinks (console, file), rate limiting with
+  `rate_limited` suppressed-count summaries, and flush-on-shutdown/crash
+  (AGENTS §14). `Result::takeValue()` (rvalue move-out of the success
+  value) and `ErrorCode::IoError` (`5`) were added as small additive
+  extensions of M0-CORE-01 to support the FileSink→facade hand-off. API
+  contract: `docs/api/logging.md`; unit suite: `ctest -R logging`.
 - Further public headers land with each M0-CORE-xx step.
 
 Canonical build commands:
