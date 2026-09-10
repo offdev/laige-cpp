@@ -262,7 +262,17 @@ No rendering, no physics, no networking yet — `laige-core` only.
     `-fno-exceptions -fno-rtti` (NFR-8.10) and self-checks the policy with
     `static_assert`s (a violation fails the build). Verified locally
     2026-09-10 (GCC 16.2.1: static, shared, ASan/UBSan, TSan trees; fresh
-    Clang 22.1.8 tree — all 7/7 ctest, zero warnings).
+    Clang 22.1.8 tree — all 7/7 ctest, zero warnings). CI: the first push
+    failed on Windows x64 (MSVC 2022) with C2535 — the two converting
+    constructors have identical parameter lists when `T == E` (MSVC rejects
+    duplicate member declarations; GCC/Clang accept the SFINAE-guarded
+    pair) — fixed in `6fa1414` by taking the failure value by `const E&`,
+    which keeps the signatures distinct for every `(T, E)`. `ci.yml` run 34525402022 on
+    `6fa1414`: full 8-job matrix green (linux-gcc, linux-clang,
+    windows-msvc, macos-arm64, macos-intel, linux-asan, linux-tsan,
+    include-lint), the Windows job compiled `result_status_tests.cpp` and
+    passed `result_status`; every job ran in under a minute (well inside
+    the 10-minute budget).
   - **Size:** 339 lines implementation (`errors.h` 68, `result.h` 157,
     `errors.cpp` 114) + 309 lines tests (over the ~250-lines estimate: the
     headers carry the full AGENTS §9 API contracts and the registry
