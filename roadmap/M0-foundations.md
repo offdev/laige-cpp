@@ -205,8 +205,10 @@ No rendering, no physics, no networking yet — `laige-core` only.
     green, including the new `include-lint` job, whose job log shows
     the live report: `count: 1 (budget: 10, PRD §11)` and `OK — 2
     source file(s) scanned, 1 allowed internal include edge(s)`; the
-    `ci-pull.yml` include-lint job is exercised by this step's own PR —
-    the observation is appended in the closing record commit):
+    `ci-pull.yml` include-lint job was exercised by this step's own PR
+    #1 (run 34521473503 on `5b66cca`, green — the 5 relevant jobs incl.
+    `include-lint`, same live report in its job log); the post-merge
+    `ci.yml` (8-job) run 34521722826 on `a74b65a` is green):
     (a) an illegal include fails the lint — a future `laige-render` header
     stub plus a `laige-core` file including it → `R1`, exit 1; the same
     stub from `laige-sim` → `R2` (upward); a `src/` module including
