@@ -22,6 +22,10 @@ CMakeUserPresets.json
 *.fuzz
 coverage/
 
+# Python artifacts (tools/ scripts)
+__pycache__/
+*.pyc
+
 # Editor and OS noise
 .DS_Store
 .idea/
