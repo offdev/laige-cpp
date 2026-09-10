@@ -7,6 +7,11 @@
 #   name           stable dependency name (matches deps/<name>/)
 #   version        upstream version string
 #   path           vendored tree, relative to the repo root (deps/<name>)
+#   owner          the module that owns (wraps) the dependency: 'tests'
+#                  for dev-only deps used only by the test suite, or
+#                  'src/laige-<module>' for engine modules (AGENTS DEP-004).
+#                  tools/laige-include-lint (M0-CI-03) enforces that the
+#                  dependency is only included from this boundary.
 #   source_url     upstream repository URL
 #   source_commit  upstream git commit the vendored tree was taken from
 #   sha256         SHA-256 of the vendored tree (definition below)
@@ -152,9 +157,9 @@ function(laige_deps_verify_lock)
         endif()
         set(_in_entry 1)
         set(_n_fields 0)
-        set(_f_name "" _f_version "" _f_path "" _f_source_url ""
-            _f_source_commit "" _f_sha256 "" _f_license ""
-            _f_justification "")
+        set(_f_name "" _f_version "" _f_path "" _f_owner ""
+            _f_source_url "" _f_source_commit "" _f_sha256 ""
+            _f_license "" _f_justification "")
       elseif(_line MATCHES "^[ \t]*\\}[ \t]*$")
         if(NOT _in_entry)
           message(FATAL_ERROR "laige-deps: malformed deps.lock — stray "
@@ -164,15 +169,15 @@ function(laige_deps_verify_lock)
         set(_in_entry 0)
 
         # --- validate one complete entry (fields in _f_* variables) -------
-        if(NOT _n_fields EQUAL 8)
+        if(NOT _n_fields EQUAL 9)
           message(FATAL_ERROR "laige-deps: deps.lock entry ${_entries} has "
-                              "${_n_fields} fields (expected 8, each "
+                              "${_n_fields} fields (expected 9, each "
                               "exactly once) — duplicate or missing field.")
         endif()
         set(_missing "")
-        foreach(_f IN ITEMS _f_name _f_version _f_path _f_source_url
-                        _f_source_commit _f_sha256 _f_license
-                        _f_justification)
+        foreach(_f IN ITEMS _f_name _f_version _f_path _f_owner
+                        _f_source_url _f_source_commit _f_sha256
+                        _f_license _f_justification)
           if(${_f} STREQUAL "")
             list(APPEND _missing "${_f}")
           endif()
@@ -192,6 +197,13 @@ function(laige_deps_verify_lock)
           message(FATAL_ERROR "laige-deps: entry '${_f_name}' path must be "
                               "an immediate subdirectory of deps/, got "
                               "'${_f_path}'.")
+        endif()
+        if(NOT _f_owner MATCHES "^(tests|src/laige-[a-z0-9]+)$")
+          message(FATAL_ERROR "laige-deps: entry '${_f_name}' owner must be "
+                              "'tests' or 'src/laige-<module>' — the module "
+                              "that owns (wraps) the dependency (AGENTS "
+                              "DEP-004; enforced by tools/laige-include-lint) — "
+                              "got '${_f_owner}'.")
         endif()
         if(NOT IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${_f_path}")
           message(FATAL_ERROR "laige-deps: entry '${_f_name}' path "
@@ -241,6 +253,8 @@ function(laige_deps_verify_lock)
           set(_f_version "${CMAKE_MATCH_2}")
         elseif(CMAKE_MATCH_1 STREQUAL "path")
           set(_f_path "${CMAKE_MATCH_2}")
+        elseif(CMAKE_MATCH_1 STREQUAL "owner")
+          set(_f_owner "${CMAKE_MATCH_2}")
         elseif(CMAKE_MATCH_1 STREQUAL "source_url")
           set(_f_source_url "${CMAKE_MATCH_2}")
         elseif(CMAKE_MATCH_1 STREQUAL "source_commit")

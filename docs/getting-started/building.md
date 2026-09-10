@@ -36,14 +36,24 @@ The canonical-commands table in [roadmap/README.md](../../roadmap/README.md)
 | Benchmarks | `./build/bin/laige-bench --suite=<name>` |
 | Determinism check | `./build/bin/laige-detcheck --scenario=<name>` |
 | API manifest | `cmake --build build --target laige-api` |
+| Include-graph lint + dependency count | `python3 tools/laige-include-lint` |
 
 Notes:
 
 - `Debug` is the canonical `CMAKE_BUILD_TYPE`; `Release` is supported.
-- The last four rows name tools that land in later M0 steps — `laige-fuzz`
-  (M0-TEST-01), `laige-bench` (M0-CORE-08), `laige-detcheck` (M0-TOOL-02),
-  target `laige-api` (M0-TOOL-01). Their command forms are fixed here now so
-  later steps cannot drift.
+- The four rows above the lint row name tools that land in later M0 steps —
+  `laige-fuzz` (M0-TEST-01), `laige-bench` (M0-CORE-08), `laige-detcheck`
+  (M0-TOOL-02), target `laige-api` (M0-TOOL-01). Their command forms are
+  fixed here now so later steps cannot drift.
+- Include-graph lint (M0-CI-03): platform-independent (Python 3 stdlib
+  only, no setup). It parses the `#include` edges of `src/**` and enforces
+  the PRD §10.1 rules (laige-core includes nothing internal; arrows only
+  downward in the module stack; vendored deps only from their `deps.lock`
+  `owner`), then prints the vendored-dependency list and fails above the
+  PRD §11 budget of 10. CI runs it on every PR and merge (job
+  `include-lint` in `ci-pull.yml`/`ci.yml`), and the CTest suite runs it
+  against the real tree in every build job (`tests/tools`). On Windows use
+  `python tools\laige-include-lint`.
 - Test (TSan tree): registered tests automatically run with
   `TSAN_OPTIONS=halt_on_error=1` (wired in `tests/<module>/CMakeLists.txt`
   when `LAIGE_TSAN=ON`), so a data race makes `ctest` fail with a non-zero

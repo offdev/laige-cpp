@@ -31,6 +31,15 @@
 # the ci.yml header for the lane semantics (fatal sanitizer reports,
 # report archiving, toolchain choice).
 #
+# Include-graph lint (M0-CI-03; NFR-8.11, NFR-8.13): the `include-lint`
+# job runs on EVERY pull request, independent of the ci:* label selector
+# — it is a platform-independent repository check (Python 3 stdlib only),
+# not a P0 OS build, so it does not interact with the "one P0 OS per PR"
+# cadence. It enforces the PRD §10.1 include rules over src/** (laige-core
+# depends on nothing internal; arrows only downward in the module stack;
+# vendored deps only included from their deps.lock `owner`) and reports
+# the vendored-dependency count, which must stay ≤ 10 (PRD §11).
+#
 # Fork PRs: this workflow uses the pull_request event, which runs on the
 # merge ref with a read-only token; checkout + build + ctest need nothing
 # beyond contents:read. On such PRs the artifact upload (needs
@@ -212,3 +221,18 @@ jobs:
         run: cmake --build build -j
       - name: Test (unit)
         run: ctest --test-dir build --output-on-failure
+
+  include-lint:
+    # M0-CI-03: runs on every PR (no ci:* condition). Platform-independent:
+    # the lint is Python 3 stdlib only (no setup step needed) and checks
+    # the repository layout, not a compiler-specific build. The CTest
+    # suite runs it against the real tree in every P0 job as well
+    # (tests/tools, test `include-lint-real-tree`), so a broken include
+    # fails even a PR that selects another P0 OS.
+    name: Include-graph lint + dependency count
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint include graph + report dependency count
+        run: python3 tools/laige-include-lint

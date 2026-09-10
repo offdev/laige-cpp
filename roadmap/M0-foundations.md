@@ -163,15 +163,62 @@ No rendering, no physics, no networking yet — `laige-core` only.
     the full 7-job matrix ran green.)
   - **Size:** workflow changes only
 
-- [ ] **M0-CI-03 · Include-graph lint + dependency-count metric**
+- [x] **M0-CI-03 · Include-graph lint + dependency-count metric**
   - **Refs:** NFR-8.11, NFR-8.13; PRD §10.1 dependency rule
   - **Depends:** M0-BUILD-01
   - **Scope:**
     - Script (in `tools/`) that parses `#include` edges of `src/**` and enforces: `laige-core` includes nothing internal; arrows only downward; no include of `deps/` outside the owning module's boundary (DEP-004).
     - Same script reports the vendored-dependency count; CI asserts ≤ 10 (PRD §11) and prints the list.
     - Both run in CI on every PR.
-  - **Verify:** an illegal include (e.g. `laige-core` including a future `laige-render` header stub) fails the lint; dep count prints and passes.
-  - **Size:** ~200 lines script
+  - **Decision (2026-09-10):** `tools/laige-include-lint` (Python 3,
+    stdlib only — runs on every P0 runner without setup). Parses the
+    `#include` edges of `src/**` (textual; backslash continuations handled)
+    and enforces: **R1** `laige-core` includes nothing internal;
+    **R2** arrows only downward in the PRD §10.1 stack (`MODULE_STACK` in
+    the script mirrors the PRD order; cross-module includes must go
+    through the target's public include root `src/<module>/include` —
+    CPP-010); **R3** a vendored dep is includable only from the module
+    recorded as its `owner` in `deps.lock` (both relative paths into
+    `deps/` and angle-bracket includes of vendored header paths are
+    caught via a vendored-header map); **R4** engine code includes only
+    `src/**` or `deps/**`. Structural problems (unknown `src/` module,
+    source outside a module, malformed/missing `deps.lock` or `owner`,
+    missing vendored tree, ambiguous include paths) exit 2; include
+    violations exit 1; pass exits 0. Ownership needed a machine-readable
+    home, so `deps.lock` gains a required `owner` field (`tests` or
+    `src/laige-<module>`), validated by `cmake/laige-deps-lock.cmake`
+    (9 fields/entry) and by the lint. The metric reads `deps.lock`, prints
+    the list (name, version, owner, license, justification) and fails
+    above the PRD §11 budget of 10. CI: a new `include-lint` job in
+    `ci-pull.yml` (every PR, independent of the ci:* label selector) and
+    `ci.yml` (every merge) — platform-independent, one ubuntu runner,
+    `timeout-minutes: 5`. CTest coverage in `tests/tools`: four fixture
+    trees (clean graph; one violation per rule R1–R4; 11-dep budget
+    overrun; unknown `src/` module) plus a real-tree check that runs in
+    every P0 job. Expected-failure tests assert exit code **and** output
+    content via a generated `cmake -P` check script — CTest inverts
+    `PASS_REGULAR_EXPRESSION` under `WILL_FAIL` (verified on CMake 4.4.3),
+    so content cannot be asserted with CTest properties.
+  - **Verify:** (verified locally 2026-09-10, GCC 16.2.1 + Clang 22.1.8;
+    the GitHub remote was not reachable from the authoring environment, so
+    the CI job's first live run is pending the push):
+    (a) an illegal include fails the lint — a future `laige-render` header
+    stub plus a `laige-core` file including it → `R1`, exit 1; the same
+    stub from `laige-sim` → `R2` (upward); a `src/` module including
+    `<gtest/gtest.h>` → `R3` (owner: tests); a legitimate downward
+    `laige-sim → laige-core` include passes; (b) dep count prints and
+    passes: `count: 1 (budget: 10, PRD §11)` with the googletest entry;
+    (c) fixtures: clean → exit 0; violations → exit 1 with exactly 6
+    violations (one per rule file); 11-dep lock → exit 2 “exceed the PRD
+    §11 budget of 10”; `src/laige-audio` → exit 2 “not a PRD §10.1
+    module”; (d) scratch removed, clean tree green; `ctest` 6/6 on the
+    fresh g++ tree, the shared tree, the ASan+UBSan tree, and a fresh
+    Clang tree.
+  - **Size:** 439 lines script + 233 lines CTest fixtures/template + ~140
+    lines workflow/lock/docs (over the ~200-line estimate: the script's
+    doc header carries the rule contract, and the milestone rule's
+    "unit tests in the same change" is satisfied by the fixture CTest
+    suite — cohesive, not split)
 
 ## laige-core
 

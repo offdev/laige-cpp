@@ -9,8 +9,10 @@ dependency, **GoogleTest** (dev-only).
 
 `deps.lock` is the machine-readable record of every vendored dependency.
 Each entry carries: `name`, `version`, `path` (the vendored tree relative to
-the repo root), `source_url`, `source_commit`, `sha256` (SHA-256 of the
-vendored tree), `license`, and `justification` (the PRD §11 row).
+the repo root), `owner` (the module that owns/wraps the dependency — `tests`
+for dev-only deps, or `src/laige-<module>` for engine modules; AGENTS
+DEP-004), `source_url`, `source_commit`, `sha256` (SHA-256 of the vendored
+tree), `license`, and `justification` (the PRD §11 row).
 
 The tree hash is defined and computed by `cmake/laige-deps-lock.cmake`
 (`laige_deps_tree_sha256`): for every regular file under the tree, sorted by
@@ -37,9 +39,9 @@ recomputes the tree hash and rejects the configure.
 
 ## Current dependencies
 
-| Dependency | Version | Tree | Used by | License | Justification |
+| Dependency | Version | Tree | Owner (`deps.lock`) | License | Justification |
 |---|---|---|---|---|---|
-| GoogleTest | 1.18.0 | `googletest/` | `tests/` only | BSD-3-Clause | PRD §11 dev-only row (unit/integration tests; never shipped) |
+| GoogleTest | 1.18.0 | `googletest/` | `tests` (`tests/` only) | BSD-3-Clause | PRD §11 dev-only row (unit/integration tests; never shipped) |
 
 See [ADR 0004](../docs/decisions/0004-google-test-vendoring.md) for the full
 DEP-003 justification and the upgrade/removal strategy.
@@ -47,7 +49,8 @@ DEP-003 justification and the upgrade/removal strategy.
 ## Adding or updating a dependency
 
 1. Vendor the pinned source into `deps/<name>/` (a complete tagged tree).
-2. Add/update the entry in `deps.lock` (recompute the tree hash).
+2. Add/update the entry in `deps.lock` (recompute the tree hash; set
+   `owner` to the module that will wrap the dependency).
 3. Document it per AGENTS DEP-003; the PRD §11 table must already list it —
    a brand-new dependency first needs a PRD revision.
 4. Reconfigure; the lock check verifies the result.
@@ -55,3 +58,6 @@ DEP-003 justification and the upgrade/removal strategy.
 Vendored code is wrapped at a narrow module boundary (AGENTS DEP-004): only
 `tests/` links GoogleTest (`gtest`/`gtest_main`); it is never linked into
 engine libraries (dev-only deps never link into engine libraries at all).
+The include side of that boundary is machine-checked by
+`tools/laige-include-lint` (M0-CI-03): a vendored dependency may only be
+`#include`d from its `deps.lock` `owner`, in CI on every PR and locally.

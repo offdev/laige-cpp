@@ -7,8 +7,9 @@
 # Cadence (PRD §14: "one per PR, all per merge"):
 #   * this workflow runs on every push to the default branch (master) —
 #     i.e. on merge — and on manual workflow_dispatch:
-#     ALL seven jobs run (the five P0 OS/variant jobs plus the two
-#     sanitizer lanes, M0-CI-02).
+#     ALL eight jobs run (the five P0 OS/variant jobs, the two sanitizer
+#     lanes (M0-CI-02), and the platform-independent include-graph lint
+#     with dependency-count metric, M0-CI-03).
 #   * Pull requests run exactly ONE P0 OS (label-selectable, default
 #     Linux) in the companion workflow .github/workflows/ci-pull.yml.
 #
@@ -23,6 +24,15 @@
 #   windows-msvc  Windows x64, MSVC 2022    (windows-2022)
 #   macos-arm64   macOS arm64, AppleClang   (macos-15)
 #   macos-intel   macOS Intel, AppleClang   (macos-14)
+#   include-lint  Include-graph lint + dependency count (M0-CI-03)
+#
+# The include-lint job (M0-CI-03; NFR-8.11, NFR-8.13) is platform-
+# independent — it parses the #include edges of src/** (PRD §10.1 rules:
+# laige-core includes nothing internal, arrows only downward in the
+# module stack, vendored deps included only from their deps.lock owner)
+# and asserts the vendored-dependency count stays ≤ 10 (PRD §11) while
+# printing the list. It is Python 3 stdlib only, so one runner image
+# suffices; it runs on every PR too (ci-pull.yml, same job definition).
 #
 # Sanitizer lanes (M0-CI-02; NFR-8.2 "Core is ASan + UBSan + TSan clean in
 # CI", AGENTS TEST-006):
@@ -53,9 +63,11 @@
 #       output of every test.
 #
 # Build budget (PRD §8.1: clean build ≤ 10 min on CI; roadmap M0-CI-01
-# "matrix runs in < 10 min"): every job carries timeout-minutes: 10, so a
-# job (and therefore the whole matrix, which runs the jobs in parallel)
-# longer than the budget fails instead of dragging on.
+# "matrix runs in < 10 min"): every build job carries timeout-minutes: 10,
+# so a job (and therefore the whole matrix, which runs the jobs in
+# parallel) longer than the budget fails instead of dragging on. The
+# include-lint job is a lint job, not a build, and carries its own
+# timeout-minutes: 5.
 #
 # Windows note: CMake's default generator there is the multi-config
 # "Visual Studio 17 2022" generator, which ignores CMAKE_BUILD_TYPE and
@@ -65,8 +77,9 @@
 # single-config platforms run the canonical commands verbatim.
 #
 # AC-6.1 (same source tree, same feature set, no per-OS feature flags): no
-# job passes feature flags; every job builds the identical tree with the
-# only variation being the platform/compiler.
+# build job passes feature flags; every build job builds the identical
+# tree with the only variation being the platform/compiler (include-lint
+# does not build).
 # ============================================================================
 
 name: CI (merge)
@@ -223,3 +236,15 @@ jobs:
         run: cmake --build build -j
       - name: Test (unit)
         run: ctest --test-dir build --output-on-failure
+
+  include-lint:
+    # M0-CI-03 (NFR-8.11, NFR-8.13): platform-independent repository
+    # check — the include-graph lint over src/** plus the vendored-
+    # dependency count (budget 10, PRD §11). See the header note.
+    name: Include-graph lint + dependency count
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint include graph + report dependency count
+        run: python3 tools/laige-include-lint

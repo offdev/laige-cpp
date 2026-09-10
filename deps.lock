@@ -5,6 +5,7 @@
       "name": "googletest",
       "version": "1.18.0",
       "path": "deps/googletest",
+      "owner": "tests",
       "source_url": "https://github.com/google/googletest",
       "source_commit": "063de7e9578f82b369302001269680b4b1553359",
       "sha256": "9eac342808f400ff2955195e1261d9ad4b6d33ef13450e4557adc5864ff5c76a",

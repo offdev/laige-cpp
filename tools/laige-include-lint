@@ -1,0 +1,439 @@
+#!/usr/bin/env python3
+# ============================================================================
+# laige-include-lint — include-graph lint + vendored-dependency count metric
+#
+# Roadmap:  roadmap/M0-foundations.md, step M0-CI-03
+# PRD refs: §10.1 (module map, "arrows only downward"), §11 (dependency
+#           count is a CI metric, target ≤ 10)
+# NFR refs: NFR-8.11 (module boundaries enforced by include-graph lint in
+#           CI), NFR-8.13 (dependency count is a tracked metric in CI)
+# AGENTS:   DEP-004 (wrap third-party APIs at a narrow module boundary),
+#           CORE-008 (no silent failure), CPP-010 (no transitive leakage)
+#
+# Usage:
+#   python3 tools/laige-include-lint [--root REPO_ROOT]
+#
+# REPO_ROOT defaults to the current directory. CI runs it from the repo
+# root on every pull request (job `include-lint` in
+# .github/workflows/ci-pull.yml) and on every merge (ci.yml); it is also
+# registered as CTest tests in tests/tools (fixture trees + real tree).
+#
+# What it does
+# ------------
+# 1. Parses the #include edges of every C/C++ source and header under
+#    src/** (text-based; no preprocessing).
+# 2. Enforces the PRD §10.1 module-boundary rules:
+#
+#    R1  laige-core includes nothing internal (PRD §10.1).
+#    R2  Arrows only downward: a module may include public headers of
+#        modules strictly below it in the PRD §10.1 stack (MODULE_STACK
+#        below, bottom to top); same-module includes are allowed.
+#        Cross-module includes must go through the target module's
+#        public include root (src/<module>/include), never through
+#        another module's private paths (CPP-010).
+#    R3  A vendored dependency (deps/<name>) may only be included from
+#        the module recorded as its "owner" in deps.lock (AGENTS
+#        DEP-004: wrap third-party APIs at a narrow module boundary).
+#        Both relative paths into deps/ and angle-bracket includes of
+#        vendored header paths are caught.
+#    R4  Engine code may only include engine modules (src/**) or vendored
+#        deps (deps/**); an include that resolves anywhere else in the
+#        repository (tests/, tools/, third_party/, repo root) fails.
+# 3. Reports the vendored-dependency count from deps.lock with the full
+#    list (name, version, owner, license, justification) and fails if it
+#    exceeds the PRD §11 budget of 10. Adding a dependency also requires
+#    a PRD revision (PRD §11).
+# 4. Fails loudly on structural problems: a src/ subdirectory that is not
+#    a PRD §10.1 module, source files directly under src/, a missing or
+#    malformed deps.lock, a missing/invalid "owner" field, a missing
+#    vendored tree, or an ambiguous public include path.
+#
+# Exit codes: 0 = pass · 1 = include-graph violation · 2 = structural or
+# metric failure.
+#
+# Limitations (documented, not bugs): the lint is textual — an #include
+# line inside a string literal is not excluded; include resolution uses
+# the repository layout (each module's src/<module>/include public root)
+# rather than CMake's -I set, which by convention matches it. Backslash
+# line continuations in #include lines are handled.
+#
+# Python 3 stdlib only; no third-party imports (DEP policy: the lint must
+# run on every P0 runner image without setup).
+# ============================================================================
+
+import json
+import re
+import sys
+from pathlib import Path
+
+# PRD §10.1 module map, bottom to top. "Arrows only downward" means a
+# module may depend only on modules below it in this list; laige-core
+# sits at the bottom and depends on nothing internal. The list mirrors
+# the PRD §10.1 module-map order exactly: if the PRD changes the map,
+# update this list in the same change (CORE-006).
+MODULE_STACK = [
+    "laige-core",
+    "laige-sim",
+    "laige-render",
+    "laige-assets",
+    "laige-net",
+    "laige-server",
+    "laige-script",
+    "laige-editor",
+    "laige-sample",
+]
+LEVEL = {name: i for i, name in enumerate(MODULE_STACK)}
+
+MAX_VENDORED_DEPS = 10  # PRD §11: dependency count target ≤ 10.
+
+SOURCE_EXTS = {".h", ".hpp", ".hh", ".hxx", ".inl", ".tpp",
+               ".c", ".cc", ".cpp", ".cxx"}
+HEADER_EXTS = {".h", ".hpp", ".hh", ".hxx", ".inl"}
+
+LOCK_FIELDS = ("name", "version", "path", "owner", "source_url",
+               "source_commit", "sha256", "license", "justification")
+
+INCLUDE_DIRECTIVE = re.compile(r"^\s*#\s*include\b\s*")
+QUOTED_PATH = re.compile(r'"([^"]*)"')
+ANGLE_PATH = re.compile(r"<([^>]*)>")
+
+
+class Failure(Exception):
+    """Structural or metric failure: process exits with code 2."""
+
+
+def fail(message):
+    raise Failure(message)
+
+
+def find_root(explicit):
+    root = Path(explicit if explicit else ".").resolve()
+    if not (root / "deps.lock").is_file() or not (root / "src").is_dir():
+        fail(f"repository root not found: need deps.lock and src/ under "
+             f"'{root}' (pass --root REPO_ROOT)")
+    return root
+
+
+def load_lock(root):
+    """deps.lock → (entries, {name: entry}). Structural checks, exit 2."""
+    try:
+        lock = json.loads((root / "deps.lock").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        fail(f"deps.lock: cannot parse as JSON ({e})")
+    entries = lock.get("entries") if isinstance(lock, dict) else None
+    if not isinstance(entries, list):
+        fail("deps.lock: missing the 'entries' array")
+    owners = {}
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            fail(f"deps.lock: entry {i} is not an object")
+        name = entry.get("name") or f"<entry {i}>"
+        missing = [k for k in LOCK_FIELDS if not entry.get(k)]
+        if missing:
+            fail(f"deps.lock: entry '{name}' is missing field(s): "
+                 f"{', '.join(missing)}")
+        if name in owners:
+            fail(f"deps.lock: duplicate entry name '{name}'")
+        owner = entry["owner"]
+        if owner != "tests" and not re.match(r"^src/laige-[a-z0-9]+$", owner):
+            fail(f"deps.lock: entry '{name}' owner must be 'tests' or "
+                 f"'src/laige-<module>' — the module that owns (wraps) the "
+                 f"dependency, AGENTS DEP-004 — got '{owner}'")
+        if entry["path"] != f"deps/{name}":
+            fail(f"deps.lock: entry '{name}' path must be 'deps/{name}', "
+                 f"got '{entry['path']}'")
+        owners[name] = entry
+    return entries, owners
+
+
+def discover_modules(root):
+    """Every src/ subdirectory must be a PRD §10.1 module (exit 2)."""
+    src = root / "src"
+    modules = []
+    for child in sorted(src.iterdir()):
+        if child.is_dir():
+            if child.name not in LEVEL:
+                fail(f"src/{child.name}: not a PRD §10.1 module. Module "
+                     f"directories must be exactly the PRD §10.1 stack "
+                     f"({', '.join(MODULE_STACK)}): add the module to the "
+                     "PRD first, then to MODULE_STACK in the same change.")
+            modules.append(child.name)
+        elif child.suffix in SOURCE_EXTS:
+            fail(f"src/{child.name}: source file directly under src/ — "
+                 "engine code must live in a module directory "
+                 "(src/laige-<module>/)")
+    return modules
+
+
+def public_header_map(root, modules):
+    """
+    → (pub, roots)
+    pub:  {include path: module} for every header under src/<module>/include
+    roots: {module: Path of the public include root, or None}
+    Two modules exposing the same public include path is a structural
+    failure (ambiguous address, CPP-010).
+    """
+    pub, roots = {}, {}
+    for name in modules:
+        r = root / "src" / name / "include"
+        roots[name] = r if r.is_dir() else None
+        if not r.is_dir():
+            continue
+        for f in sorted(r.rglob("*")):
+            if not f.is_file() or f.suffix not in HEADER_EXTS:
+                continue
+            key = f.relative_to(r).as_posix()
+            if key in pub and pub[key] != name:
+                fail(f"ambiguous public include path '{key}': exposed by "
+                     f"both '{pub[key]}' and '{name}' — module public "
+                     "headers must be uniquely addressable (CPP-010)")
+            pub[key] = name
+    return pub, roots
+
+
+def vendored_header_map(root, entries):
+    """
+    → {include path: dep name} for every vendored header.
+    A header is addressable as its path relative to the dep tree root and
+    relative to every ancestor directory named "include" (the public
+    include roots of vendored libraries, e.g. deps/googletest/.../include).
+    Two dependencies exposing the same include path is a structural
+    failure: the compiler's include would be ambiguous as well.
+    """
+    cands = {}
+    for entry in entries:
+        name = entry["name"]
+        tree = root / entry["path"]
+        if not tree.is_dir():
+            fail(f"deps.lock: entry '{name}' tree '{entry['path']}' is not "
+                 "a directory (the vendored tree is missing)")
+        for f in sorted(tree.rglob("*")):
+            if not f.is_file() or f.suffix not in HEADER_EXTS:
+                continue
+            rels = [f.relative_to(tree).as_posix()]
+            p = f.parent
+            while True:
+                if p.name == "include":
+                    rels.append(f.relative_to(p).as_posix())
+                if p == tree:
+                    break
+                p = p.parent
+            for rel in rels:
+                if rel in cands and cands[rel] != name:
+                    fail(f"ambiguous vendored header path '{rel}': exposed "
+                         f"by both '{cands[rel]}' and '{name}'")
+                cands[rel] = name
+    return cands
+
+
+def classify_repo(root, path):
+    """Classify an absolute repo path → (kind, target, path_or_rel)."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        # A relative include that resolves outside the repository root is
+        # not a system header — flag it (CORE-008: no silent failure).
+        return ("outside", str(path), None)
+    parts = rel.parts
+    if parts[0] == "src":
+        if len(parts) >= 2 and parts[1] in LEVEL:
+            return ("module", parts[1], path)
+        return ("foreign", rel.as_posix(), path)
+    if parts[0] == "deps" and len(parts) >= 2:
+        return ("dep", parts[1], path)
+    return ("foreign", rel.as_posix(), path)
+
+
+def resolve_include(root, srcfile, path, quoted, pub, vendored):
+    """
+    Resolve one #include the way the repository layout defines it:
+    relative to the including file first (preprocessor order), then the
+    module public include roots, then the vendored header paths.
+    → (kind, target, resolved_path_or_None)
+    kind ∈ module | dep | foreign | system
+    """
+    cand = (srcfile.parent / path).resolve()
+    if cand.is_file():
+        return classify_repo(root, cand)
+    if path in pub:
+        return ("module", pub[path], None)  # via a public root by construction
+    if path in vendored:
+        return ("dep", vendored[path], None)
+    return ("system", None, None)
+
+
+def iter_includes(text):
+    """Yield (line number, include path, quoted) per #include directive."""
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        m = INCLUDE_DIRECTIVE.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        first = i + 1
+        rest = lines[i][m.end():]
+        # Splice backslash line continuations (the preprocessor removes the
+        # backslash-newline pair; the path then continues on the next line).
+        while rest.rstrip().endswith("\\") and i + 1 < len(lines):
+            rest = rest.rstrip()[:-1] + lines[i + 1]
+            i += 1
+        m2 = QUOTED_PATH.search(rest)
+        if m2:
+            yield first, m2.group(1), True
+            i += 1
+            continue
+        m3 = ANGLE_PATH.search(rest)
+        if m3:
+            yield first, m3.group(1), False
+        i += 1
+
+
+def scan(root, modules, pub, roots, vendored, owners):
+    """Walk src/** and collect (violations, counters)."""
+    violations = []
+    counters = {"files": 0, "internal": 0, "deps": 0, "system": 0}
+    for name in modules:
+        mdir = root / "src" / name
+        for f in sorted(mdir.rglob("*")):
+            if not f.is_file() or f.suffix not in SOURCE_EXTS:
+                continue
+            counters["files"] += 1
+            relsrc = f.relative_to(root).as_posix()
+            try:
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except OSError as e:
+                violations.append(f"{relsrc}: unreadable source file ({e})")
+                continue
+            for lineno, path, quoted in iter_includes(text):
+                kind, target, repo_path = resolve_include(
+                    root, f, path, quoted, pub, vendored)
+                if kind == "system":
+                    counters["system"] += 1
+                elif kind in ("foreign", "outside"):
+                    violations.append(
+                        f"{relsrc}:{lineno}: R4: include of '{path}' "
+                        f"resolves outside engine code ('{target}') — "
+                        "engine code may only include engine modules "
+                        "(src/**) or vendored deps (deps/**)")
+                elif kind == "dep":
+                    entry = owners.get(target)
+                    if entry is None:
+                        violations.append(
+                            f"{relsrc}:{lineno}: R3: include of vendored "
+                            f"code '{path}' — 'deps/{target}' is not "
+                            "listed in deps.lock")
+                    elif entry["owner"] == "src/" + name:
+                        counters["deps"] += 1
+                    else:
+                        where = ("tests/ (dev-only)"
+                                if entry["owner"] == "tests"
+                                else f"module {entry['owner']}")
+                        violations.append(
+                            f"{relsrc}:{lineno}: R3: include of vendored "
+                            f"dependency '{target}' ('{path}') — owned by "
+                            f"{where} per deps.lock, not by '{name}'; "
+                            "DEP-004: wrap the dependency at the owning "
+                            "module's boundary")
+                else:  # kind == "module"
+                    if target == name:
+                        counters["internal"] += 1
+                    elif name == "laige-core":
+                        violations.append(
+                            f"{relsrc}:{lineno}: R1: include of '{path}' "
+                            f"reaches module '{target}' — laige-core "
+                            "includes nothing internal (PRD §10.1)")
+                    elif LEVEL[target] > LEVEL[name]:
+                        violations.append(
+                            f"{relsrc}:{lineno}: R2: include of '{path}' "
+                            f"reaches module '{target}', which is above "
+                            f"'{name}' in the PRD §10.1 stack — dependency "
+                            "arrows only point downward")
+                    else:
+                        # Downward: allowed only via the target module's
+                        # public include root (CPP-010: no private
+                        # leakage). repo_path is None when the include
+                        # resolved through the public map — public by
+                        # construction.
+                        troot = roots.get(target)
+                        if repo_path is None or (
+                                troot is not None
+                                and repo_path.as_posix().startswith(
+                                    troot.as_posix() + "/")):
+                            counters["internal"] += 1
+                        elif troot is None:
+                            violations.append(
+                                f"{relsrc}:{lineno}: R2: include of "
+                                f"'{path}' reaches module '{target}', "
+                                f"which has no public include root "
+                                f"(src/{target}/include) yet — make the "
+                                f"header public in '{target}' before "
+                                "including it")
+                        else:
+                            violations.append(
+                                f"{relsrc}:{lineno}: R2: include of "
+                                f"'{path}' reaches private code of module "
+                                f"'{target}' — cross-module includes must "
+                                f"use the public include root "
+                                f"(src/{target}/include); CPP-010")
+    return violations, counters
+
+
+def main(argv):
+    root_arg = None
+    args = argv[1:]
+    if "--root" in args:
+        i = args.index("--root")
+        if i + 1 >= len(args):
+            print("usage: laige-include-lint [--root REPO_ROOT]",
+                  file=sys.stderr)
+            return 2
+        root_arg = args[i + 1]
+    try:
+        root = find_root(root_arg)
+        entries, owners = load_lock(root)
+        modules = discover_modules(root)
+        pub, roots = public_header_map(root, modules)
+        vendored = vendored_header_map(root, entries)
+        violations, counters = scan(root, modules, pub, roots, vendored,
+                                    owners)
+    except Failure as e:
+        print(f"laige-include-lint: FAIL (structural): {e}", file=sys.stderr)
+        return 2
+
+    # Vendored-dependency count metric (NFR-8.13, PRD §11).
+    n = len(entries)
+    print(f"laige-include-lint: vendored dependencies — count: {n} "
+          f"(budget: {MAX_VENDORED_DEPS}, PRD §11)")
+    if entries:
+        for i, e in enumerate(entries, 1):
+            print(f"  {i}. {e['name']} {e['version']} — owner: {e['owner']}"
+                  f" — {e['license']}")
+            print(f"     {e['justification']}")
+    else:
+        print("  (none)")
+
+    if violations:
+        for v in violations:
+            print(f"laige-include-lint: FAIL\n  {v}", file=sys.stderr)
+        print(f"laige-include-lint: {len(violations)} include violation(s) "
+              f"across {counters['files']} scanned file(s); dep count "
+              f"{n}/{MAX_VENDORED_DEPS} "
+              f"{'OK' if n <= MAX_VENDORED_DEPS else 'OVER BUDGET'}",
+              file=sys.stderr)
+        return 1
+    if n > MAX_VENDORED_DEPS:
+        print(f"laige-include-lint: FAIL (metric): {n} vendored "
+              f"dependencies exceed the PRD §11 budget of "
+              f"{MAX_VENDORED_DEPS}; remove a dependency or revise the "
+              "PRD (dependency additions are PRD-gated).", file=sys.stderr)
+        return 2
+    print(f"laige-include-lint: OK — {counters['files']} source file(s) "
+          f"scanned, {counters['internal']} allowed internal include "
+          f"edge(s), {counters['deps']} allowed vendored include edge(s), "
+          f"{counters['system']} system header(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -63,3 +63,7 @@ foreach(_t IN ITEMS gtest gtest_main)
 endforeach()
 
 add_subdirectory(laige-core)
+
+# Tooling checks (M0-CI-03): the include-graph lint runs against fixture
+# trees and the real repository tree (tests/tools).
+add_subdirectory(tools)
