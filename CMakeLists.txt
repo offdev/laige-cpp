@@ -8,7 +8,8 @@
 #
 # Roadmap: M0-REPO-01 created the skeleton; M0-BUILD-01 adds the
 # laige-core target, the sanitizer/test options, and the canonical
-# command set (docs/getting-started/building.md is the source of truth).
+# command set (docs/getting-started/building.md is the source of truth);
+# M0-DEP-01 adds the vendored-dependency lock check (deps.lock).
 # Every engine target is passed through laige_apply_engine_policy().
 # ============================================================================
 
@@ -104,6 +105,17 @@ elseif(LAIGE_TSAN)
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${_laige_sanitizer_flags}")
   set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${_laige_sanitizer_flags}")
 endif()
+
+# ---------------------------------------------------------------------------
+# Vendored dependency lock (M0-DEP-01; PRD §11, NFR-8.6, DEP-005)
+# ---------------------------------------------------------------------------
+# deps.lock pins every vendored dependency under deps/ (name, version,
+# source URL + commit, tree SHA-256, license, justification). This check
+# re-hashes the vendored trees on every configure and fails loudly on any
+# drift, missing tree, or unlisted vendored directory (CORE-008). It runs
+# for every build tree, including library-only builds.
+include(cmake/laige-deps-lock.cmake)
+laige_deps_verify_lock()
 
 # ---------------------------------------------------------------------------
 # Engine target policy (NFR-8.10, AGENTS CORE-010)

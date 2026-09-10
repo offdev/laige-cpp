@@ -75,14 +75,27 @@ No rendering, no physics, no networking yet — `laige-core` only.
   - **Verify:** static and shared builds both configure+build with zero warnings; `docs/getting-started/building.md` matches the actual commands (spot-checked).
   - **Size:** ~150 lines CMake + docs
 
-- [ ] **M0-DEP-01 · Dependency lock + vendored GoogleTest**
+- [x] **M0-DEP-01 · Dependency lock + vendored GoogleTest**
   - **Refs:** PRD §11 (dep table, `deps.lock`, NFR-8.6), DEP-005
   - **Depends:** M0-REPO-01
   - **Scope:**
     - `deps.lock`: JSON file listing each vendored dependency with name, version, source commit/URL, SHA-256 of the vendored tree, license, justification ref (PRD §11 row).
     - Vendor GoogleTest (dev-only, per PRD §11) under `deps/googletest/`; wire it into tests only, never linked into engine libs.
     - CMake check that `deps.lock` hashes match the vendored trees (fails loudly on mismatch).
-  - **Verify:** hash check passes; tampering a vendored file makes the CMake configure/test fail; `ctest` runs one trivial test via GTest.
+  - **Decision (2026-09-10):** vendored **GoogleTest v1.18.0** (commit
+    `063de7e9…`, complete tagged tree, BSD-3-Clause) in
+    `deps/googletest`; `deps.lock` (repo root, one entry per dep, tree
+    SHA-256); configure-time verification in
+    `cmake/laige-deps-lock.cmake` (re-hashes every tree, also rejects
+    unlisted `deps/` subdirectories); `gtest_main` wired into `tests/` only
+    (`BUILD_GMOCK`/`INSTALL_GTEST` off; no-exceptions/no-rtti flags match the
+    engine test TUs for ODR safety); `laige-core_tests` converted to the
+    first GTest suite. ADR 0004 written.
+  - **Verify:** hash check passes; tampering a vendored file makes the CMake
+    configure/test fail; `ctest` runs one trivial test via GTest.
+    (Verified 2026-09-10: fresh + shared + ASan + Clang trees configure,
+    build warning-clean, `ctest` 1/1; tampered vendored file fails the
+    configure with expected-vs-actual hashes; restored tree passes again.)
   - **Size:** ~150 lines (scripts + lock) + vendored tree
 
 ## CI

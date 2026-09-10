@@ -9,9 +9,10 @@ isometric-first rendering, and a server-authoritative MMO path.
   licensed; each sample ships its own `LICENSE`
   ([ADR 0001](docs/decisions/0001-name-and-license.md)).
 - **Status:** **M0 — Foundations**, in progress. The repository skeleton,
-  build system, and `laige-core` library target have landed; the functional
-  core (math, pools, Result, logging, config) lands over the remaining M0
-  steps in [roadmap/M0-foundations.md](roadmap/M0-foundations.md). No engine
+  build system, `laige-core` library target, and dependency lock
+  (`deps.lock` with vendored GoogleTest) have landed; the functional core
+  (math, pools, Result, logging, config) lands over the remaining M0 steps
+  in [roadmap/M0-foundations.md](roadmap/M0-foundations.md). No engine
   features are buildable yet.
 
 ## Repository layout

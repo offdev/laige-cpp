@@ -1,9 +1,9 @@
-// laige-core build smoke test (M0-BUILD-01).
+// laige-core build smoke test (M0-BUILD-01; GoogleTest-ified in M0-DEP-01).
 //
 // laige-core carries no functional engine code yet (Result/Status lands in
-// M0-CORE-01), so this test verifies what M0-BUILD-01 delivers:
+// M0-CORE-01), so this suite verifies what M0-BUILD-01 delivers:
 //
-//   1. The laige-core library links into a test executable in whichever
+//   1. The laige-core library links into the test executable in whichever
 //      variant the build tree selected: static (default) or shared
 //      (LAIGE_BUILD_SHARED=ON). NFR-8.9.
 //   2. The NFR-8.10 language policy was actually applied to this
@@ -11,13 +11,20 @@
 //      Check 2 uses static_assert, so a policy violation fails the build
 //      loudly instead of passing silently (CORE-008).
 //
-// Plain C++ on purpose: GoogleTest is vendored in M0-DEP-01; tests before
-// that are CTest-registered executables with no third-party dependency.
+// This is the first suite running on the GoogleTest framework wired in by
+// M0-DEP-01 (deps/googletest, locked in deps.lock): a green
+// `ctest -R laige-core_tests` proves the dev-only dependency plumbing end
+// to end (configure → build → ctest).
 
 #include <cstdio>
 #include <cstring>
 
+#include "gtest/gtest.h"
 #include "laige/core/version.h"
+
+// ---------------------------------------------------------------------------
+// NFR-8.10 policy self-checks (compile-time; a violation fails the build)
+// ---------------------------------------------------------------------------
 
 #if defined(__cpp_exceptions)
 static_assert(false,
@@ -43,37 +50,34 @@ static_assert(false,
 
 namespace {
 
-int gFailures = 0;
-
-void check(bool condition, const char* what) {
-  if (!condition) {
-    ++gFailures;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-  }
-}
+// The variant actually linked, as stamped by CMake: LAIGE_CORE_IS_SHARED is
+// defined only for shared builds (tests/laige-core/CMakeLists.txt).
+#if defined(LAIGE_CORE_IS_SHARED)
+constexpr int kLinkedShared = 1;
+#else
+constexpr int kLinkedShared = 0;
+#endif
 
 }  // namespace
 
-int main() {
+// NFR-8.9: the variant actually linked must be the variant the build tree
+// selected. A mismatch means this smoke test no longer reflects the tree it
+// was built in.
+TEST(LaigeCoreBuild, LinksTheVariantTheBuildTreeSelected) {
+  static_assert(kLinkedShared == LAIGE_EXPECT_SHARED,
+                "linked laige-core variant does not match "
+                "LAIGE_BUILD_SHARED (NFR-8.9); see "
+                "tests/laige-core/CMakeLists.txt.");
+  std::printf("laige-core_tests: linked against %s laige-core; OK\n",
+              kLinkedShared == 1 ? "shared" : "static");
+  SUCCEED();
+}
+
+// M0-BUILD-01: the module carries the minimal version identifier only.
+TEST(LaigeCoreBuild, VersionIsZeroInM0) {
   using namespace laige::core;
-
-  check(kMajor == 0 && kMinor == 0 && kPatch == 0,
-        "version components are 0.0.0 in M0");
-
-  const char* const version = versionString();
-  check(version != nullptr, "versionString() returns non-null");
-  check(version != nullptr && std::strcmp(version, "0.0.0") == 0,
-        "versionString() renders \"0.0.0\"");
-
-  if (gFailures != 0) {
-    std::printf("laige-core_tests: %d failure(s)\n", gFailures);
-    return 1;
-  }
-
-#if defined(LAIGE_CORE_IS_SHARED)
-  std::puts("laige-core_tests: linked against shared laige-core; OK");
-#else
-  std::puts("laige-core_tests: linked against static laige-core; OK");
-#endif
-  return 0;
+  EXPECT_EQ(kMajor, 0);
+  EXPECT_EQ(kMinor, 0);
+  EXPECT_EQ(kPatch, 0);
+  EXPECT_STREQ(versionString(), "0.0.0");
 }

@@ -16,10 +16,10 @@ The canonical-commands table in [roadmap/README.md](../../roadmap/README.md)
   | Windows (x64) | MSVC 2022 (clang-cl secondary) |
   | macOS (arm64/Intel) | AppleClang |
 
-- No vendored dependencies are required to build the current tree. GoogleTest
-  (dev-only, PRD §11) is the first vendored dependency and lands in
-  M0-DEP-01; all dependencies stay vendored and locked in `deps.lock`
-  (NFR-8.8).
+- All dependencies are vendored in-tree (NFR-8.8): no network access is
+  needed to build. The only vendored dependency so far is GoogleTest
+  (dev-only, PRD §11), used by `tests/` only and integrity-checked against
+  `deps.lock` on every configure (M0-DEP-01).
 
 ## Canonical commands
 
@@ -111,7 +111,12 @@ Every engine target is passed through `laige_apply_engine_policy()`
   identifier code (`include/laige/core/version.h`, `version.cpp`); the
   functional engine code (`laige::Result<T,E>` / `laige::Status`) lands in
   M0-CORE-01.
-- `tests/laige-core/laige-core_tests` is a CTest link smoke test that runs
-  in every build tree above: it verifies the static/shared link and checks
-  the NFR-8.10 policy flags with `static_assert` (a policy violation fails
-  the build).
+- `tests/laige-core/laige-core_tests` is a CTest link smoke test (a
+  GoogleTest suite since M0-DEP-01) that runs in every build tree above: it
+  verifies the static/shared link and checks the NFR-8.10 policy flags with
+  `static_assert` (a policy violation fails the build).
+- Every configure verifies the vendored dependency lock
+  (`cmake/laige-deps-lock.cmake` against `deps.lock`); a tampered or
+  unlisted file under `deps/` fails the configure loudly. GoogleTest is the
+  only vendored dependency and is linked into tests only (M0-DEP-01,
+  [ADR 0004](../docs/decisions/0004-google-test-vendoring.md)).
