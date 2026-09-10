@@ -18,10 +18,12 @@ isometric-first rendering, and a server-authoritative MMO path.
 ## Built by a local LLM
 
 This project is being completely built by a local LLM. The engine is
-designed and implemented by **Qwen3.8-27B-GSQ-RCO** (IQ3_S quant), served
-by the most recent builds of
-[llama.cpp](https://github.com/ggml-org/llama.cpp) and driven by the
-DeepSeek Harness. No cloud or hosted model API is involved.
+designed and implemented by
+**[Qwen3.8-27B-GSQ-RCO](https://huggingface.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF)**
+(IQ3_S quant), served by the most recent builds of
+[llama.cpp](https://llama.app/) and driven by the
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/).
+No cloud or hosted model API is involved.
 
 A human supervises the project and every milestone step: the model drafts
 and writes the work, and a human reviews and accepts each step before it
@@ -36,7 +38,6 @@ The AI-relevant hardware the model runs on:
 | CPU | AMD Ryzen 9 7950X3D — 16 cores / 32 threads, up to 5.7 GHz, 3D V-Cache |
 | Memory | 64 GB |
 | GPU | NVIDIA GeForce RTX 4090 (24 GB) |
-| Storage | 2 TB Samsung 980 PRO NVMe (root on an LVM-encrypted volume) |
 | OS | CachyOS (Arch-based), Linux 7.2.2, x86_64 |
 
 ## Repository layout
