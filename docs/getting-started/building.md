@@ -120,14 +120,20 @@ Every engine target is passed through `laige_apply_engine_policy()`
 ## Current status (M0)
 
 - `laige-core` builds as a static library (default) or a shared library
-  (`-DLAIGE_BUILD_SHARED=ON`). It carries only the minimal version/build
-  identifier code (`include/laige/core/version.h`, `version.cpp`); the
-  functional engine code (`laige::Result<T,E>` / `laige::Status`) lands in
-  M0-CORE-01.
+  (`-DLAIGE_BUILD_SHARED=ON`). It carries the version/build identifier
+  (`include/laige/core/version.h`, `version.cpp`) plus the first functional
+  engine code from M0-CORE-01: `laige::Result<T,E>` / `laige::Status` and
+  the error-code registry (`include/laige/result.h`,
+  `include/laige/errors.h`, `errors.cpp`; error text follows the NFR-13.3
+  5-field grammar — see [docs/api/errors.md](../api/errors.md)).
 - `tests/laige-core/laige-core_tests` is a CTest link smoke test (a
   GoogleTest suite since M0-DEP-01) that runs in every build tree above: it
   verifies the static/shared link and checks the NFR-8.10 policy flags with
   `static_assert` (a policy violation fails the build).
+- `result_status` is the M0-CORE-01 CTest entry: a filtered view of the
+  same `laige-core_tests` executable covering the `ResultStatus`, `Status`,
+  and `ErrorCodeRegistry` suites — the step's Verify command is
+  `ctest -R result_status`.
 - Every configure verifies the vendored dependency lock
   (`cmake/laige-deps-lock.cmake` against `deps.lock`); a tampered or
   unlisted file under `deps/` fails the configure loudly. GoogleTest is the

@@ -11,12 +11,16 @@ Status: M0 — Foundations.
   shared with `-DLAIGE_BUILD_SHARED=ON` (NFR-8.9); engine policy
   `-Wall -Werror -fno-exceptions -fno-rtti` applied via
   `laige_apply_engine_policy()` (NFR-8.10, flags kept PRIVATE so they do not
-  leak to consumers). Contains only the minimal version/build identifier
+  leak to consumers). Contains the minimal version/build identifier
   (`include/laige/core/version.h`, `version.cpp`); link smoke test in
   `tests/laige-core/`.
-- **M0-CORE-01 (next):** first functional code (`laige::Result<T,E>` /
-  `laige::Status` + error registry); further public headers land with each
-  M0-CORE-xx step.
+- **M0-CORE-01 (done):** first functional engine code —
+  `laige::Result<T,E>` / `laige::Status` (no exceptions, FR-12.1) plus the
+  central error-code registry (`include/laige/result.h`,
+  `include/laige/errors.h`, `errors.cpp`); rendered error text follows the
+  NFR-13.3 5-field grammar (`docs/api/errors.md`); unit suite:
+  `ctest -R result_status`.
+- Further public headers land with each M0-CORE-xx step.
 
 Canonical build commands:
 [docs/getting-started/building.md](../../docs/getting-started/building.md).

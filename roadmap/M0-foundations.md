@@ -229,15 +229,44 @@ No rendering, no physics, no networking yet — `laige-core` only.
 
 ## laige-core
 
-- [ ] **M0-CORE-01 · `Result<T,E>` / `Status` + error registry**
+- [x] **M0-CORE-01 · `Result<T,E>` / `Status` + error registry**
   - **Refs:** FR-12.1, NFR-13.3; AGENTS CORE-008
   - **Depends:** M0-BUILD-01
   - **Scope:**
     - `laige::Result<T, E>` and `laige::Status` (no exceptions): success/value or error code.
     - Central error-code registry: stable integer codes, each with `{code} | {what} | {why} | {fix} | {doc_anchor}` template text (NFR-13.3 grammar).
     - Unit tests: construction, error propagation, no exceptions raised (linker-level: build with `-fno-exceptions`).
-  - **Verify:** `ctest -R result_status` green; error strings follow the 5-field grammar (test asserts format).
-  - **Size:** ~250 lines + tests
+  - **Decision (2026-09-10):** `laige::Result<T, E = ErrorCode>` with
+    inline `std::optional<T>` storage (no heap, no allocation, O(1)
+    accessors); `Result()` deleted (API-008: an empty result is
+    unrepresentable); SFINAE-guarded implicit constructors from `T`/`E`
+    make error propagation natural (`return e;` / `return v;`), and the
+    unambiguous `success()`/`failure()` factories are the only path when
+    `T` and `E` are mutually convertible; `value()`/`error()` assert the
+    state in debug (undefined in release, documented) while
+    `valueIfOk()`/`errorIfError()` are the null-safe pointer reads.
+    `laige::Status` is the value-less result: success by default,
+    implicit from `ErrorCode`. Registry: flat value-indexed table in
+    `errors.cpp` — 4 codes (`unknown` 1, `invalid_argument` 2,
+    `malformed_input` 3, `budget_exhausted` 4); 0 is reserved as the
+    no-error sentinel and unregistered values render `unknown` (CORE-008).
+    Each entry carries its pre-rendered NFR-13.3 line
+    `{codeId} | {what} | {why} | {fix} | {docAnchor}`; the human-readable
+    registry is `docs/api/errors.md`.
+  - **Verify:** `ctest -R result_status` green — 16 GTest cases: success/
+    failure construction (implicit + factory forms), error and value
+    propagation through call chains, copy/move (incl. move-only payload),
+    5-field grammar per registered code, field↔rendered-text equivalence,
+    anchor format, pinned integer values, unregistered → `unknown`.
+    "No exceptions raised" at the linker level: the test TU compiles with
+    `-fno-exceptions -fno-rtti` (NFR-8.10) and self-checks the policy with
+    `static_assert`s (a violation fails the build). Verified locally
+    2026-09-10 (GCC 16.2.1: static, shared, ASan/UBSan, TSan trees; fresh
+    Clang 22.1.8 tree — all 7/7 ctest, zero warnings).
+  - **Size:** 339 lines implementation (`errors.h` 68, `result.h` 157,
+    `errors.cpp` 114) + 309 lines tests (over the ~250-lines estimate: the
+    headers carry the full AGENTS §9 API contracts and the registry
+    pre-renders its grammar line next to its fields — cohesive, not split)
 
 - [ ] **M0-CORE-02 · Structured logging facade**
   - **Refs:** AGENTS.md §14 (LOG-001…LOG-007); FR-12.2

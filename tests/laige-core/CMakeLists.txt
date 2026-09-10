@@ -6,7 +6,11 @@
 # suite also exercises the GoogleTest plumbing end to end (configure →
 # build → ctest) — the M0-DEP-01 verify path.
 
-add_executable(laige-core_tests laige-core_tests.cpp)
+# One executable per module (tests/README.md); the functional suites land
+# in this shared executable as separate source files and are exposed as
+# their own CTest entries (M0-CORE-01 adds `result_status`; later
+# M0-CORE-xx steps follow the same pattern).
+add_executable(laige-core_tests laige-core_tests.cpp result_status_tests.cpp)
 laige_apply_engine_policy(laige-core_tests)
 
 # Links the library under test (the link itself is the static/shared check)
@@ -26,9 +30,18 @@ endif()
 
 add_test(NAME laige-core_tests COMMAND laige-core_tests)
 
+# M0-CORE-01: Result<T,E>/Status + error registry. The step's Verify
+# command is `ctest -R result_status`; this entry selects exactly the
+# ResultStatus/Status/ErrorCodeRegistry suites from the shared
+# laige-core_tests executable (the unfiltered entry above still runs them
+# as part of the full module suite).
+add_test(NAME result_status
+         COMMAND laige-core_tests
+         --gtest_filter="ResultStatus.*:Status.*:ErrorCodeRegistry.*")
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
-  set_tests_properties(laige-core_tests
+  set_tests_properties(laige-core_tests result_status
     PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()
