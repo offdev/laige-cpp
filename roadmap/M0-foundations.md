@@ -200,8 +200,10 @@ No rendering, no physics, no networking yet — `laige-core` only.
     `PASS_REGULAR_EXPRESSION` under `WILL_FAIL` (verified on CMake 4.4.3),
     so content cannot be asserted with CTest properties.
   - **Verify:** (verified locally 2026-09-10, GCC 16.2.1 + Clang 22.1.8;
-    the GitHub remote was not reachable from the authoring environment, so
-    the CI job's first live run is pending the push):
+    pushed as `785af81` — the `ci.yml` (8-job) run, including the new
+    `include-lint` job, is pending observation from this environment
+    (private repo, no CI API token); the `ci-pull.yml` job will run on
+    the next PR):
     (a) an illegal include fails the lint — a future `laige-render` header
     stub plus a `laige-core` file including it → `R1`, exit 1; the same
     stub from `laige-sim` → `R2` (upward); a `src/` module including
