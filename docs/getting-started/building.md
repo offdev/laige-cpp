@@ -1,0 +1,117 @@
+# Building Laige
+
+This document is the **source of truth** for the canonical build commands.
+The canonical-commands table in [roadmap/README.md](../../roadmap/README.md)
+§1 mirrors it; later roadmap steps MUST use these exact forms.
+
+## Prerequisites
+
+- CMake ≥ 3.22 (NFR-8.8): single configure, no autotools, no network access
+  needed to build.
+- A C++20 compiler (NFR-8.10) for one of the P0 platforms (PRD §6):
+
+  | P0 platform | Toolchain |
+  |---|---|
+  | Linux (x64/arm64) | GCC or Clang |
+  | Windows (x64) | MSVC 2022 (clang-cl secondary) |
+  | macOS (arm64/Intel) | AppleClang |
+
+- No vendored dependencies are required to build the current tree. GoogleTest
+  (dev-only, PRD §11) is the first vendored dependency and lands in
+  M0-DEP-01; all dependencies stay vendored and locked in `deps.lock`
+  (NFR-8.8).
+
+## Canonical commands
+
+| Purpose | Command |
+|---|---|
+| Configure | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug` |
+| Build | `cmake --build build -j` |
+| Test | `ctest --test-dir build --output-on-failure` |
+| ASan/UBSan build | `cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DLAIGE_ASAN=ON` |
+| Test (ASan/UBSan tree) | `ctest --test-dir build-asan --output-on-failure` |
+| TSan build | `cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DLAIGE_TSAN=ON` |
+| Test (TSan tree) | `ctest --test-dir build-tsan --output-on-failure` |
+| Fuzz (bounded) | `./build/bin/laige-fuzz <target> --runs=1000` |
+| Benchmarks | `./build/bin/laige-bench --suite=<name>` |
+| Determinism check | `./build/bin/laige-detcheck --scenario=<name>` |
+| API manifest | `cmake --build build --target laige-api` |
+
+Notes:
+
+- `Debug` is the canonical `CMAKE_BUILD_TYPE`; `Release` is supported.
+- The last four rows name tools that land in later M0 steps — `laige-fuzz`
+  (M0-TEST-01), `laige-bench` (M0-CORE-08), `laige-detcheck` (M0-TOOL-02),
+  target `laige-api` (M0-TOOL-01). Their command forms are fixed here now so
+  later steps cannot drift.
+- Test (TSan tree): registered tests automatically run with
+  `TSAN_OPTIONS=halt_on_error=1` (wired in `tests/<module>/CMakeLists.txt`
+  when `LAIGE_TSAN=ON`), so a data race makes `ctest` fail with a non-zero
+  exit — no extra environment setup needed.
+
+## Build trees and artifacts
+
+| Tree | Configure flags | Contents |
+|---|---|---|
+| `build/` | (default) | Engine libraries (static), tests, tools |
+| `build-shared/` | `-DLAIGE_BUILD_SHARED=ON` | Same, engine libraries shared (NFR-8.9) |
+| `build-asan/` | `-DLAIGE_ASAN=ON` | Same, whole tree instrumented with ASan+UBSan |
+| `build-tsan/` | `-DLAIGE_TSAN=ON` | Same, whole tree instrumented with TSan |
+
+Runtime artifacts (test binaries, future tools) land in `<tree>/bin/`,
+libraries in `<tree>/lib/` — the canonical commands above reference
+`build/bin/` accordingly.
+
+## Build options
+
+| Option | Default | Effect |
+|---|---|---|
+| `CMAKE_BUILD_TYPE` | `Debug` | Build type (canonical: `Debug`). |
+| `LAIGE_BUILD_SHARED` | `OFF` | `OFF`: engine libraries are static; `ON`: shared (NFR-8.9). Both variants are built with position-independent code so they link identically. |
+| `LAIGE_BUILD_TESTS` | `ON` | Build `tests/` and register it with CTest. |
+| `LAIGE_ASAN` | `OFF` | Instrument the whole tree with AddressSanitizer + UBSan (NFR-8.2). UBSan reports are fatal: any UB aborts the process. |
+| `LAIGE_TSAN` | `OFF` | Instrument the whole tree with ThreadSanitizer (NFR-8.2); registered tests run with `TSAN_OPTIONS=halt_on_error=1`. Mutually exclusive with `LAIGE_ASAN` — configuring both fails loudly. |
+| `LAIGE_SCRIPT` | `OFF` | Reserved for the scripting module (M4); no effect in M0. |
+
+## Sanitizer builds (NFR-8.2)
+
+- **ASan/UBSan** (`LAIGE_ASAN=ON`): every target — engine libraries, tests,
+  future tools — compiles and links with
+  `-fsanitize=address,undefined -fno-sanitize-recover=all
+  -fno-omit-frame-pointer` (GCC/Clang/AppleClang). MSVC 2022 uses the
+  documented equivalent `/fsanitize=address` (plus the MSVC-supported UBSan
+  subset where available).
+- **TSan** (`LAIGE_TSAN=ON`): `-fsanitize=thread` (GCC/Clang/AppleClang),
+  `/fsanitize=thread` (MSVC 2022).
+- Any sanitizer report therefore fails the build/test loudly: ASan aborts
+  on the first error, UBSan is made fatal by `-fno-sanitize-recover=all`,
+  and TSan failures are fatal to the test process via
+  `TSAN_OPTIONS=halt_on_error=1`. CI (M0-CI-02) archives the reports as
+  artifacts.
+- Sanitizer builds are separate build trees (`build-asan`, `build-tsan`);
+  the options are mutually exclusive and configuring both is rejected.
+- MSVC sanitizer flags are wired but verified on the Windows CI job
+  (M0-CI-01); the Linux flag set is the reference implementation.
+
+## Engine compiler policy (NFR-8.10)
+
+Every engine target is passed through `laige_apply_engine_policy()`
+(root `CMakeLists.txt`):
+
+- GCC/Clang/AppleClang: `-Wall -Werror -fno-exceptions -fno-rtti`
+- MSVC 2022: `/W4 /WX /EHs- /EHc- /GR-` (the documented equivalent)
+- C++20 required. The requirement propagates to consumers; the warning
+  flags do not (CPP-010 — a game linking the engine keeps its own compiler
+  policy).
+
+## Current status (M0)
+
+- `laige-core` builds as a static library (default) or a shared library
+  (`-DLAIGE_BUILD_SHARED=ON`). It carries only the minimal version/build
+  identifier code (`include/laige/core/version.h`, `version.cpp`); the
+  functional engine code (`laige::Result<T,E>` / `laige::Status`) lands in
+  M0-CORE-01.
+- `tests/laige-core/laige-core_tests` is a CTest link smoke test that runs
+  in every build tree above: it verifies the static/shared link and checks
+  the NFR-8.10 policy flags with `static_assert` (a policy violation fails
+  the build).

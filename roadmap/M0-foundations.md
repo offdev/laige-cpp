@@ -65,7 +65,7 @@ No rendering, no physics, no networking yet — `laige-core` only.
   - **Verify:** `cmake -S . -B build` configures cleanly; `cmake --build build` succeeds (empty target).
   - **Size:** ~100 lines (mostly CMake/docs)
 
-- [ ] **M0-BUILD-01 · `laige-core` target + canonical commands**
+- [x] **M0-BUILD-01 · `laige-core` target + canonical commands**
   - **Refs:** NFR-8.8, NFR-8.9, NFR-8.10; README §1 canonical commands
   - **Depends:** M0-REPO-01
   - **Scope:**

@@ -154,7 +154,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 
 | Milestone | Steps | Done | Status |
 |---|---|---|---|
-| M0 | 22 | 4 | ▶ in progress |
+| M0 | 22 | 5 | ▶ in progress |
 | M1 | 25 | 0 | ⬜ not started |
 | M2 | 32 | 0 | ⬜ not started |
 | M3 | 36 | 0 | ⬜ not started |
@@ -164,7 +164,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 | M7 | 15 | 0 | ⬜ not started |
 | M8 | 8 | 0 | ⬜ not started |
 | M9 | 6 | 0 | ⬜ proposals only |
-| **Total** | **193** | **4** | |
+| **Total** | **193** | **5** | |
 
 ---
 
@@ -176,6 +176,7 @@ One line per completed (or split/renumbered) step.
 |---|---|---|---|
 | 2026-09-10 | M0-DEC-01, M0-DEC-02, M0-DEC-03 | — | Decisions recorded by project owner; ADRs 0001–0003 written in `docs/decisions/`; docs only, no code |
 | 2026-09-14 | M0-REPO-01 | — | Repo skeleton: top-level `README.md`/`LICENSE` (MIT, ADR 0001)/`.gitignore`; root `CMakeLists.txt` (CMake ≥ 3.22, C++20, `-Wall -Werror`, no exceptions/RTTI via `laige_apply_engine_policy`, `LAIGE_BUILD_SHARED` placeholder); PRD §10.1 module dirs with only `laige-core` populated; empty-target configure+build verified |
+| 2026-09-10 | M0-BUILD-01 | — | `laige-core` CMake target (static default, shared via `LAIGE_BUILD_SHARED`; no transitive leakage — policy flags PRIVATE, CPP-010); options `LAIGE_ASAN`/`LAIGE_TSAN` (mutually exclusive, whole-tree instrumentation, fatal UBSan, TSan `halt_on_error=1`), `LAIGE_SCRIPT` reserved, `LAIGE_BUILD_TESTS` default ON; canonical commands fixed in `docs/getting-started/building.md` (source of truth); link smoke test `tests/laige-core` with NFR-8.10 `static_assert` policy self-checks; static+shared+ASan+TSan+Clang builds verified warning-free; fixed latent invalid `target_compile_features` call in M0-REPO-01 policy function |
 
 ---
 

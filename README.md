@@ -9,9 +9,10 @@ isometric-first rendering, and a server-authoritative MMO path.
   licensed; each sample ships its own `LICENSE`
   ([ADR 0001](docs/decisions/0001-name-and-license.md)).
 - **Status:** **M0 — Foundations**, in progress. The repository skeleton,
-  build system, and `laige-core` land over the M0 steps in
-  [roadmap/M0-foundations.md](roadmap/M0-foundations.md). No engine features
-  are buildable yet.
+  build system, and `laige-core` library target have landed; the functional
+  core (math, pools, Result, logging, config) lands over the remaining M0
+  steps in [roadmap/M0-foundations.md](roadmap/M0-foundations.md). No engine
+  features are buildable yet.
 
 ## Repository layout
 
@@ -32,19 +33,24 @@ Requirements (PRD §6, §8.3): CMake ≥ 3.22 and a C++20 compiler (GCC,
 Clang, MSVC 2022). No network access is needed to build (all dependencies
 are vendored, NFR-8.8).
 
-Canonical commands (the source of truth lands in
-`docs/getting-started/building.md` at M0-BUILD-01):
+Canonical commands (the full table — including sanitizer, fuzz, and
+benchmark forms — is the source of truth in
+[docs/getting-started/building.md](docs/getting-started/building.md)):
 
 | Purpose | Command |
 |---|---|
 | Configure | `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug` |
 | Build | `cmake --build build -j` |
 | Test | `ctest --test-dir build --output-on-failure` |
+| ASan/UBSan build | `cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DLAIGE_ASAN=ON` |
+| TSan build | `cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DLAIGE_TSAN=ON` |
 
-Until M0-BUILD-01 the project configures and builds an empty skeleton.
-Engine targets compile with `-Wall -Werror` and with exceptions and RTTI
-disabled (NFR-8.10); `LAIGE_BUILD_SHARED=ON` switches engine libraries from
-static (default) to shared builds (NFR-8.9).
+The `laige-core` library builds now: static by default, shared with
+`-DLAIGE_BUILD_SHARED=ON` (NFR-8.9), verified by a CTest link smoke test in
+both variants. It carries no functional engine code yet — the first code
+(`laige::Result<T,E>` / `laige::Status`) lands in M0-CORE-01. Engine targets
+compile with `-Wall -Werror` and with exceptions and RTTI disabled
+(NFR-8.10).
 
 ## Documentation
 
