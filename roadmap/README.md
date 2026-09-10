@@ -154,7 +154,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 
 | Milestone | Steps | Done | Status |
 |---|---|---|---|
-| M0 | 22 | 6 | ▶ in progress |
+| M0 | 22 | 7 | ▶ in progress |
 | M1 | 25 | 0 | ⬜ not started |
 | M2 | 32 | 0 | ⬜ not started |
 | M3 | 36 | 0 | ⬜ not started |
@@ -164,7 +164,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 | M7 | 15 | 0 | ⬜ not started |
 | M8 | 8 | 0 | ⬜ not started |
 | M9 | 6 | 0 | ⬜ proposals only |
-| **Total** | **193** | **6** | |
+| **Total** | **193** | **7** | |
 
 ---
 
@@ -178,6 +178,7 @@ One line per completed (or split/renumbered) step.
 | 2026-09-14 | M0-REPO-01 | — | Repo skeleton: top-level `README.md`/`LICENSE` (MIT, ADR 0001)/`.gitignore`; root `CMakeLists.txt` (CMake ≥ 3.22, C++20, `-Wall -Werror`, no exceptions/RTTI via `laige_apply_engine_policy`, `LAIGE_BUILD_SHARED` placeholder); PRD §10.1 module dirs with only `laige-core` populated; empty-target configure+build verified |
 | 2026-09-10 | M0-BUILD-01 | — | `laige-core` CMake target (static default, shared via `LAIGE_BUILD_SHARED`; no transitive leakage — policy flags PRIVATE, CPP-010); options `LAIGE_ASAN`/`LAIGE_TSAN` (mutually exclusive, whole-tree instrumentation, fatal UBSan, TSan `halt_on_error=1`), `LAIGE_SCRIPT` reserved, `LAIGE_BUILD_TESTS` default ON; canonical commands fixed in `docs/getting-started/building.md` (source of truth); link smoke test `tests/laige-core` with NFR-8.10 `static_assert` policy self-checks; static+shared+ASan+TSan+Clang builds verified warning-free; fixed latent invalid `target_compile_features` call in M0-REPO-01 policy function |
 | 2026-09-10 | M0-DEP-01 | — | `deps.lock` (repo root) + configure-time verification in `cmake/laige-deps-lock.cmake` (deterministic tree SHA-256; fails loudly on mismatch, missing tree, unlisted `deps/` dir, or malformed lock); vendored GoogleTest v1.18.0 (`deps/googletest`, 252 files, commit `063de7e9…`, BSD-3-Clause) wired into tests only (`gtest_main`, `BUILD_GMOCK`/`INSTALL_GTEST` off, no-exceptions/no-rtti flags match engine test TUs); `laige-core_tests` converted to the first GTest suite; ADR 0004 written; fresh+shared+ASan+Clang trees verified warning-free with `ctest` 1/1, tampered vendored file fails the configure |
+| 2026-09-10 | M0-CI-01 | `7ec98b9` | CI matrix `.github/workflows/ci.yml` (all 5 P0 jobs on push to `master` + `workflow_dispatch`: linux-gcc, linux-clang, windows-msvc, macos-arm64, macos-intel) and `ci-pull.yml` (one P0 OS per PR, selected by `ci:linux`/`ci:windows`/`ci:macos` labels, default Linux — PRD §14 cadence); each job = canonical configure→build→ctest with `timeout-minutes: 10`; fixes landed in the same step: `.gitattributes` (`deps/** -text`) for byte-exact LF vendored checkouts (Windows CRLF broke the tree-hash lock), `_MSVC_LANG` for the C++20 self-check on MSVC, MSVC `/EH` conflict resolution (strip platform-default `/EHsc`; gtest rewritten to its documented no-exception set `/EHs-c- -D_HAS_EXCEPTIONS=0`), and `_HAS_EXCEPTIONS=0` in the engine policy for the MS STL (C4530 under `/WX`); verified: full matrix green after pushing `a90191c..7ec98b9` |
 
 ---
 

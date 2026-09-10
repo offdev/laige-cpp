@@ -100,7 +100,7 @@ No rendering, no physics, no networking yet — `laige-core` only.
 
 ## CI
 
-- [ ] **M0-CI-01 · CI matrix: all P0 platforms**
+- [x] **M0-CI-01 · CI matrix: all P0 platforms**
   - **Refs:** PRD §6 (AC-6.1), §14; NFR-8.8
   - **Depends:** M0-BUILD-01
   - **Scope:**
@@ -108,6 +108,11 @@ No rendering, no physics, no networking yet — `laige-core` only.
     - Each job: configure → build → `ctest` (unit tests only so far).
     - Cadence per PRD §14: one P0 OS per PR, all three per merge (implement as labels or merge-gate).
   - **Verify:** pushing a trivial change runs all jobs and they are green; matrix runs in < 10 min (PRD §8.1 build budget starts counting here).
+    (Verified 2026-09-10: full 5-job matrix — linux-gcc, linux-clang,
+    windows-msvc, macos-arm64, macos-intel — green after pushing
+    `a90191c..7ec98b9`; each job is capped at `timeout-minutes: 10` and
+    jobs run in parallel, so the < 10 min budget is enforced by the
+    workflow itself.)
   - **Size:** workflow files only
 
 - [ ] **M0-CI-02 · Sanitizer CI jobs**
