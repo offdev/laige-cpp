@@ -7,7 +7,8 @@
 # Cadence (PRD §14: "one per PR, all per merge"):
 #   * this workflow runs on every push to the default branch (master) —
 #     i.e. on merge — and on manual workflow_dispatch:
-#     ALL five P0 OS/variant jobs run.
+#     ALL seven jobs run (the five P0 OS/variant jobs plus the two
+#     sanitizer lanes, M0-CI-02).
 #   * Pull requests run exactly ONE P0 OS (label-selectable, default
 #     Linux) in the companion workflow .github/workflows/ci-pull.yml.
 #
@@ -17,9 +18,39 @@
 #
 #   linux-gcc     Linux x64, g++            (ubuntu-24.04)
 #   linux-clang   Linux x64, clang++        (ubuntu-24.04)
+#   linux-asan    Linux x64, clang++, LAIGE_ASAN=ON  (ubuntu-24.04)
+#   linux-tsan    Linux x64, clang++, LAIGE_TSAN=ON  (ubuntu-24.04)
 #   windows-msvc  Windows x64, MSVC 2022    (windows-2022)
 #   macos-arm64   macOS arm64, AppleClang   (macos-15)
 #   macos-intel   macOS Intel, AppleClang   (macos-14)
+#
+# Sanitizer lanes (M0-CI-02; NFR-8.2 "Core is ASan + UBSan + TSan clean in
+# CI", AGENTS TEST-006):
+#
+#   * linux-asan builds the canonical build-asan tree (LAIGE_ASAN=ON:
+#     whole tree instrumented with ASan+UBSan) and runs the unit suites.
+#     Any sanitizer report is fatal to the test process — UBSan via
+#     -fno-sanitize-recover=all (wired by CMake), ASan via
+#     abort_on_error=1:halt_on_error=1 below — so ctest exits non-zero and
+#     the job fails: "fail build on any sanitizer report".
+#   * linux-tsan builds the canonical build-tsan tree (LAIGE_TSAN=ON:
+#     whole tree instrumented with TSan). tests/ applies
+#     TSAN_OPTIONS=halt_on_error=1 per test (M0-BUILD-01), so the first
+#     data race report kills the test process and ctest fails.
+#
+#   Toolchain: clang++ for both lanes — TSan is most mature on Clang and
+#   -fsanitize=undefined enables a superset of the GCC UB checks; the GCC
+#   build itself is covered by the linux-gcc job. Scope is Linux-only per
+#   the M0-CI-02 roadmap step (the MSVC/AppleClang sanitizer flag wiring
+#   already exists in CMake for later extension).
+#
+#   Reports are archived as artifacts on every run, green or red:
+#     - the tee'd ctest output carries every report that reached stderr
+#       (ASan and TSan both print reports to stderr);
+#     - ASan additionally writes one report file per test process under
+#       asan-reports/ (ASAN_OPTIONS log_path below);
+#     - <tree>/Testing/Temporary/LastTest.log keeps ctest's full raw
+#       output of every test.
 #
 # Build budget (PRD §8.1: clean build ≤ 10 min on CI; roadmap M0-CI-01
 # "matrix runs in < 10 min"): every job carries timeout-minutes: 10, so a
@@ -78,6 +109,71 @@ jobs:
         run: cmake --build build -j
       - name: Test (unit)
         run: ctest --test-dir build --output-on-failure
+
+  linux-asan:
+    name: Linux x64 ASan+UBSan (clang++)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (ASan+UBSan)
+        run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_ASAN=ON
+      - name: Build (ASan+UBSan)
+        run: cmake --build build-asan -j
+      - name: Test (unit, ASan+UBSan)
+        # Every sanitizer report is fatal to the test process: ASan via
+        # abort_on_error=1:halt_on_error=1 here, UBSan via
+        # -fno-sanitize-recover=all (wired by CMake). detect_leaks=1 (the
+        # Linux default) is stated explicitly. log_path keeps one report
+        # file per test process for the artifact upload below.
+        env:
+          ASAN_OPTIONS: "abort_on_error=1:halt_on_error=1:detect_leaks=1:log_path=${{ github.workspace }}/asan-reports/asan"
+        run: |
+          set -o pipefail
+          ctest --test-dir build-asan --output-on-failure 2>&1 | tee asan-ctest-output.txt
+      - name: Archive sanitizer reports
+        # Runs green or red: on a red run the reports live in this
+        # artifact. Step-level actions:write — the workflow-level token
+        # is contents:read only.
+        if: always()
+        permissions:
+          actions: write
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-asan-reports
+          path: |
+            asan-ctest-output.txt
+            asan-reports/
+            build-asan/Testing/Temporary/LastTest.log
+
+  linux-tsan:
+    name: Linux x64 TSan (clang++)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (TSan)
+        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_TSAN=ON
+      - name: Build (TSan)
+        run: cmake --build build-tsan -j
+      - name: Test (unit, TSan)
+        # TSAN_OPTIONS=halt_on_error=1 is applied per test by tests/
+        # (M0-BUILD-01), so the first data race report kills the test
+        # process and ctest fails. The race report is printed to stderr
+        # and captured by the tee below.
+        run: |
+          set -o pipefail
+          ctest --test-dir build-tsan --output-on-failure 2>&1 | tee tsan-ctest-output.txt
+      - name: Archive sanitizer reports
+        if: always()
+        permissions:
+          actions: write
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tsan-reports
+          path: |
+            tsan-ctest-output.txt
+            build-tsan/Testing/Temporary/LastTest.log
 
   windows-msvc:
     name: Windows x64 (MSVC 2022)

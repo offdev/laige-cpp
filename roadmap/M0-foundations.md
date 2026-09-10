@@ -122,6 +122,37 @@ No rendering, no physics, no networking yet — `laige-core` only.
     - Linux jobs building with `LAIGE_ASAN=ON` (ASan+UBSan) and `LAIGE_TSAN=ON`, running the unit suites.
     - Fail build on any sanitizer report; reports archived as CI artifacts.
   - **Verify:** introducing a deliberate OOB read in a scratch test fails the ASan job (test removed afterwards); TSan job green on clean code.
+    (Mechanics verified locally 2026-09-10, Clang 22.1.8; the CI run
+    itself is pending — no GitHub push access in the implementing
+    environment, so the box stays open per this file's contract.
+    `ci.yml` gains two lanes on merge and `ci-pull.yml` on every PR not
+    selecting another P0 OS (Linux default), each a canonical
+    configure → build → ctest with `timeout-minutes: 10`:
+    - `linux-asan`: `LAIGE_ASAN=ON`, canonical `build-asan` tree,
+      clang++; `ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:
+      detect_leaks=1:log_path=…/asan-reports/asan` on the test step
+      (UBSan is already fatal via `-fno-sanitize-recover=all`).
+    - `linux-tsan`: `LAIGE_TSAN=ON`, canonical `build-tsan` tree,
+      clang++; `TSAN_OPTIONS=halt_on_error=1` per test as wired by
+      `tests/` (M0-BUILD-01).
+    - Reports archived as artifacts on every run, green or red: tee'd
+      ctest output (carries reports on stderr), ASan per-process report
+      files under `asan-reports/`, and `<tree>/Testing/Temporary/
+      LastTest.log`; uploads are step-scoped to `actions: write` and
+      `continue-on-error: true` in `ci-pull.yml` (fork-PR read-only
+      token).
+    Local verification of the exact Verify scenario: on a scratch OOB
+    read (`tests/laige-core/sanitizer-scratch.cpp`, runtime-volatile
+    index so `-Wall -Werror` stays clean) the ASan lane's ctest failed
+    non-zero with a fatal report ("index 16 out of bounds for type
+    'int[4]'", report file written via `log_path`) while the same
+    scratch kept the TSan lane green (100% passed, exit 0); a separate
+    deliberate data race failed the TSan lane with a
+    `WARNING: ThreadSanitizer: data race` report in ctest output
+    (exit 8). Scratch removed afterwards; both lanes re-ran green on
+    the clean tree. Remaining: push, run the OOB-scratch cycle on CI
+    (ASan job red, TSan job green), remove the scratch, confirm the
+    7-job matrix green.)
   - **Size:** workflow changes only
 
 - [ ] **M0-CI-03 · Include-graph lint + dependency-count metric**
