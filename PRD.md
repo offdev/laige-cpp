@@ -3,12 +3,14 @@
 | | |
 |---|---|
 | **Document** | PRD — Laige 2.5D Multi-OS Game Engine (C++) |
-| **Version** | 0.2 (draft) |
+| **Version** | 0.3 (draft) |
 | **Status** | Proposed — pending review |
 | **Owner** | Engine team |
-| **Last updated** | 2026-07-10 |
+| **Last updated** | 2026-09-10 |
 
-> Working name: **Laige**. Rename before M0 if a different brand is chosen (the name is not load-bearing in the architecture).
+> Name: **Laige** — an acronym for *Legendary AI Game Engine*. Confirmed as the final name on 2026-09-10 (decision D-NAME, ADR 0001).
+>
+> **v0.3 change:** engine name confirmed as "Laige" (acronym for *Legendary AI Game Engine*); §18 item 1 resolved (ADR 0001).
 >
 > **v0.2 change:** isometric is designated the **primary projection** — most Laige games will be isometric. It is the default template, the reference scene for all visual/performance acceptance tests, and the focus of new first-class requirements (depth keys, picking, grid-snap camera, grid-aligned AOI).
 
@@ -474,7 +476,7 @@ Developed with the expectation that a significant share of game code is written 
 
 ## 18. Open Questions
 
-1. **Name & license** — "Laige" tentative; engine license proposed MIT (assets/samples separately licensed). Confirm.
+1. **Name & license** — **Resolved 2026-09-10** (ADR 0001): name confirmed as "Laige" (*Legendary AI Game Engine*); engine MIT, assets/samples separately licensed.
 2. **Fixed-point default** — Q16.16 for all deterministic paths, or float-pinned with fixed-point only for lockstep? (Affects M1 core math; decision needed before M1.)
 3. **Lua vs alternative** — confirm Lua 5.4 (vs. no scripting in 1.0; vs. embedded WASM for scripting — heavier).
 4. **Editor embedded vs standalone** — PRD assumes standalone binary (FR-8.7); confirm (embedded play-mode is P0 either way).

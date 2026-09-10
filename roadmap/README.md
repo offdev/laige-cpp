@@ -1,6 +1,7 @@
 # Laige Roadmap — Implementation Checklist
 
-This folder is the **working implementation plan** for the Laige engine, derived from
+This folder is the **working implementation plan** for the Laige engine
+(*Legendary AI Game Engine*), derived from
 [`../PRD.md`](../PRD.md) and governed by [`../AGENTS.md`](../AGENTS.md).
 
 It is a checklist designed so that **one AI agent (or one human) can safely pick up
@@ -133,17 +134,17 @@ flagged where it occurs rather than silently re-scoped.
 
 Steps tagged `DEC` close these. ADRs live in `docs/decisions/`.
 
-| ID | Question (PRD §18) | Blocking step(s) | Default if unresolved |
-|---|---|---|---|
-| D-NAME | Engine name & license (MIT proposed) | M0-REPO-01 | keep "Laige", MIT |
-| D-MATH | Fixed-point default for all deterministic paths, or float-pinned + FP only for lockstep | M1-DET-01, M3-PHYS-11 | Q16.16 default for deterministic mode (PRD §10.3 recommends it for lockstep/MMO) |
-| D-JSON | Config JSON: tiny in-engine parser vs vendored library | M0-CORE-07 | in-engine bounded parser (no new dep) |
-| D-ISO | 2:1 dimetric vs true iso as template default | M2-CAM-02 | 2:1 dimetric (PRD v0.2: pixel-art default) |
-| D-UI | Confirm minimal retained UI widget set for M2 | M2-UI-01 | the FR-2.8 P0 list (panel/button/text/image/list/slider/input) |
-| D-EDITOR | Editor embedded vs standalone | M5-ED-01 | standalone binary (FR-8.7) |
-| D-LUA | Confirm Lua 5.4 (vs no scripting in 1.0, vs WASM) | M4-SCRIPT-01 | Lua 5.4, optional module, off by default |
-| D-NAT | M6 NAT traversal scope: STUN-only vs STUN+TURN | M6-NET-11 | STUN-style + relay endpoint, no TURN server in-engine |
-| D-PERSIST | Persistence seam: external store only vs built-in SQLite | M7-PERSIST-01 | external store only (PRD §12.5) |
+| ID | Question (PRD §18) | Blocking step(s) | Default if unresolved | Decision |
+|---|---|---|---|---|
+| D-NAME | Engine name & license (MIT proposed) | M0-REPO-01 | keep "Laige", MIT | **Decided 2026-09-10:** keep "Laige" (*Legendary AI Game Engine*); MIT (ADR 0001) |
+| D-MATH | Fixed-point default for all deterministic paths, or float-pinned + FP only for lockstep | M1-DET-01, M3-PHYS-11 | Q16.16 default for deterministic mode (PRD §10.3 recommends it for lockstep/MMO) | **Decided 2026-09-10:** SimMath — config-selectable; `fpx16_16` default + `fp32_pinned` opt-in (ADR 0002) |
+| D-JSON | Config JSON: tiny in-engine parser vs vendored library | M0-CORE-07 | in-engine bounded parser (no new dep) | **Decided 2026-09-10:** in-engine bounded parser, no new dep (ADR 0003) |
+| D-ISO | 2:1 dimetric vs true iso as template default | M2-CAM-02 | 2:1 dimetric (PRD v0.2: pixel-art default) | — open |
+| D-UI | Confirm minimal retained UI widget set for M2 | M2-UI-01 | the FR-2.8 P0 list (panel/button/text/image/list/slider/input) | — open |
+| D-EDITOR | Editor embedded vs standalone | M5-ED-01 | standalone binary (FR-8.7) | — open |
+| D-LUA | Confirm Lua 5.4 (vs no scripting in 1.0, vs WASM) | M4-SCRIPT-01 | Lua 5.4, optional module, off by default | — open |
+| D-NAT | M6 NAT traversal scope: STUN-only vs STUN+TURN | M6-NET-11 | STUN-style + relay endpoint, no TURN server in-engine | — open |
+| D-PERSIST | Persistence seam: external store only vs built-in SQLite | M7-PERSIST-01 | external store only (PRD §12.5) | — open |
 
 ---
 
@@ -153,7 +154,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 
 | Milestone | Steps | Done | Status |
 |---|---|---|---|
-| M0 | 22 | 0 | ⬜ not started |
+| M0 | 22 | 3 | ▶ in progress |
 | M1 | 25 | 0 | ⬜ not started |
 | M2 | 32 | 0 | ⬜ not started |
 | M3 | 36 | 0 | ⬜ not started |
@@ -173,7 +174,7 @@ One line per completed (or split/renumbered) step.
 
 | Date | Step | Commit | Note |
 |---|---|---|---|
-| — | — | — | (empty) |
+| 2026-09-10 | M0-DEC-01, M0-DEC-02, M0-DEC-03 | — | Decisions recorded by project owner; ADRs 0001–0003 written in `docs/decisions/`; docs only, no code |
 
 ---
 

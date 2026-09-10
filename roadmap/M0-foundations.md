@@ -13,30 +13,43 @@ No rendering, no physics, no networking yet — `laige-core` only.
 
 ## Decisions
 
-- [ ] **M0-DEC-01 · Resolve engine name and license**
+- [x] **M0-DEC-01 · Resolve engine name and license**
   - **Refs:** PRD §18.1, §15 (working name "Laige")
   - **Depends:** —
   - **Scope:**
     - Decide final name (or confirm "Laige") and license (MIT proposed; assets/samples separately licensed).
     - Write ADR `docs/decisions/0001-name-and-license.md`.
+  - **Decision (2026-09-10):** keep **Laige** (*Legendary AI Game Engine*);
+    engine **MIT**, samples/assets separately licensed. ADR 0001 written.
   - **Verify:** ADR file exists and is linked from `docs/decisions/` index.
   - **Size:** docs only
 
-- [ ] **M0-DEC-02 · Decide deterministic math strategy (D-MATH)**
+- [x] **M0-DEC-02 · Decide deterministic math strategy (D-MATH)**
   - **Refs:** PRD §18.2, §10.3, FR-3.3; AGENTS ARCH-010
   - **Depends:** —
   - **Scope:**
     - Decide: Q16.16 fixed-point as the default deterministic math, vs float-pinned with fixed-point only for lockstep.
     - ADR `docs/decisions/0002-deterministic-math.md` stating the determinism scope (same build/platform/ISA vs cross-ISA) and which paths use which type.
+  - **Decision (2026-09-10):** config-selectable **SimMath** — one op
+    interface, two backends: `fpx16_16` (**default**; required for
+    lockstep/MMO; bit-exact across build/platform/ISA/compiler) and
+    `fp32_pinned` (opt-in; bit-exact per platform/ISA until CI proves
+    cross-ISA). Backend selected once at engine/zone init (template dispatch,
+    no per-call indirection); backend id is part of replay identity. ADR 0002
+    written.
   - **Verify:** ADR exists; decision matrix (float path, fixed-point path, lockstep path) explicit.
   - **Size:** docs only
 
-- [ ] **M0-DEC-03 · Decide config JSON strategy (D-JSON)**
+- [x] **M0-DEC-03 · Decide config JSON strategy (D-JSON)**
   - **Refs:** PRD §7.1 (FR-1.5), §11 (dep policy)
   - **Depends:** —
   - **Scope:**
     - Decide: in-engine bounded JSON parser (recommended; no new dependency) vs vendored JSON library (would need PRD §11 revision).
     - ADR `docs/decisions/0003-config-json.md`.
+  - **Decision (2026-09-10):** in-engine bounded parser in `laige-core`
+    (defaults: depth ≤ 32, size ≤ 1 MiB; malformed input → `Status`; fuzz
+    target `json_parse`). **No new dependency** — PRD §11 table unchanged.
+    ADR 0003 written.
   - **Verify:** ADR exists; if a new dependency is chosen, the PRD §11 table is updated in the same change.
   - **Size:** docs only
 
@@ -125,24 +138,25 @@ No rendering, no physics, no networking yet — `laige-core` only.
   - **Verify:** `ctest -R logging` green; trace-level spam in a disabled-subsystem test shows zero allocations (ASan/alloc counter).
   - **Size:** ~350 lines + tests
 
-- [ ] **M0-CORE-03 · Deterministic float math ops**
-  - **Refs:** PRD §10.3, S-7; AGENTS CORE-005
+- [ ] **M0-CORE-03 · SimMath interface + `fp32_pinned` backend**
+  - **Refs:** PRD §10.3, S-7; ADR 0002 (`fp32_pinned` backend); AGENTS CORE-005
   - **Depends:** M0-DEC-02, M0-CORE-01
   - **Scope:**
-    - Minimal engine math op set for sim use (add/sub/mul/div, compare, clamp, lerp, normalize, length) on `float`, with compiler flags pinned for deterministic IEEE semantics (documented in ADR 0002).
-    - Ops are the *only* float operations allowed in deterministic sim code (enforcement comes later in M1-DET-01; here: provide the API + docs).
+    - SimMath op interface (add/sub/mul/div, compare, clamp, lerp, normalize, length) plus the `fp32_pinned` backend: IEEE `float` ops with ADR 0002's pinned flag set (no FMA in sim translation units, `-ffp-contract=off`/equivalent per compiler, no reassociation, no floating-point intrinsics) applied and documented.
+    - Ops are the *only* math allowed in deterministic sim code (enforcement comes later in M1-DET-01; here: provide the API + docs).
     - Unit tests: property tests (associativity guards, NaN/inf handling is *defined* and tested — a documented policy, not "whatever the CPU does").
-  - **Verify:** `ctest -R math_float` green; documented NaN/Inf policy exists in header docs.
-  - **Size:** ~200 lines + tests
+  - **Verify:** `ctest -R math_float` green; documented NaN/Inf policy exists in header docs; pinned flag set documented and applied to sim targets.
+  - **Size:** ~250 lines + tests
 
-- [ ] **M0-CORE-04 · Q16.16 fixed-point type**
-  - **Refs:** PRD §10.3, FR-3.3 (fixed-point option); M0-DEC-02
+- [ ] **M0-CORE-04 · SimMath `fpx16_16` backend (default)**
+  - **Refs:** PRD §10.3, FR-3.3 (fixed-point option); ADR 0002 (`fpx16_16` backend); M0-DEC-02
   - **Depends:** M0-CORE-03
   - **Scope:**
     - `laige::fpx16_16`: signed Q16.16; add/sub/mul (rounded, documented), divide, negate, compare, convert from/to `int32_t`/`float`; overflow defined (saturate) and documented; no UB under any input (CPP-004).
+    - Wire it in as the **default** SimMath backend (ADR 0002) with the same op surface as M0-CORE-03.
     - Unit tests including exhaustive edge cases (min/max, wrap candidates, rounding ties).
   - **Verify:** `ctest -R math_fixed` green under ASan+UBSan; property test: same op sequence on two different compiler builds produces identical results (run locally in M1-DET-04 CI hookup).
-  - **Size:** ~300 lines + tests
+  - **Size:** ~350 lines + tests
 
 - [ ] **M0-CORE-05 · Pools: `ArenaPool<T>` and `Pool<T>`**
   - **Refs:** PRD §9.1 (S-2), §10.4; AGENTS PERF-003, CPP-002/007
