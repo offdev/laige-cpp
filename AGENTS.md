@@ -509,7 +509,30 @@ Provide only cheap essentials by default; make detailed views opt-in:
 Metrics MUST use documented units and distinguish counters, gauges, histograms,
 and timings. Avoid vanity metrics that cannot guide a decision.
 
-## 16. Change acceptance checklist
+## 16. GitHub API access
+
+Agent interaction with GitHub (repositories, issues, pull requests, CI,
+releases, and other remote state) MUST go through the GitHub API using the
+token stored in the project-local, git-ignored `.env` file under the
+`GITHUB_TOKEN` key, rather than browser-based interaction or hardcoded
+credentials.
+
+- **GHT-001:** Read the token from `.env` at the point of use (e.g. export
+  `GITHUB_TOKEN` for the `gh` CLI, or send
+  `Authorization: Bearer $GITHUB_TOKEN` to `https://api.github.com`). Never
+  hardcode a token in source, scripts, build files, tests, documentation, or
+  commit messages.
+- **GHT-002:** If `GITHUB_TOKEN` still holds the placeholder value, stop and
+  ask the user to install a real token before calling the API. Do not proceed
+  silently with a placeholder (CORE-008).
+- **GHT-003:** Never print, log, echo, or include the token value in output,
+  diagnostics, error messages, or chat replies. This extends LOG-005 to API
+  credentials.
+- **GHT-004:** The `.env` file MUST NOT be added to git, shared, or transmitted
+  outside this machine. The committed `.env.example` documents the expected
+  keys without values.
+
+## 17. Change acceptance checklist
 
 A change is complete only when all applicable statements are true:
 
@@ -521,6 +544,8 @@ A change is complete only when all applicable statements are true:
 - [ ] Supported builds are warning-clean; relevant analysis/sanitizers pass.
 - [ ] Public docs, examples, performance notes, and migration guidance are current.
 - [ ] Logging is structured, actionable, safe, and cheap when disabled.
+- [ ] GitHub API access used the `.env` token; the token appears in no commit,
+      log, or output.
 - [ ] Runtime diagnostics cover the new system without perturbing hot paths.
 - [ ] Dependencies were avoided or justified with lifecycle and license review.
 - [ ] Magic values were removed or explained with names, types, units, or formulas.

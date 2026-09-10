@@ -32,3 +32,8 @@ __pycache__/
 .vscode/
 *.user
 *.swp
+
+# Local secrets — never committed, never shared (see .env.example template)
+.env
+.env.local
+*.token
