@@ -32,3 +32,19 @@ if(LAIGE_TSAN)
   set_tests_properties(laige-core_tests
     PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()
+
+# M0-CI-02 Verify scratch (INTENTIONALLY FAILING; see sanitizer-scratch.cpp).
+# The deliberate OOB read must turn the linux-asan CI lane red (UBSan bounds
+# report, fatal via -fno-sanitize-recover=all) while the linux-tsan lane
+# stays green. Delete this block and the .cpp file after the CI cycle.
+add_executable(sanitizer-scratch sanitizer-scratch.cpp)
+laige_apply_engine_policy(sanitizer-scratch)
+target_link_libraries(sanitizer-scratch PRIVATE gtest_main laige-core)
+add_test(NAME sanitizer-scratch COMMAND sanitizer-scratch)
+
+if(LAIGE_TSAN)
+  # Same fatal-report wiring as the main suite: should stay green for this
+  # scratch (an OOB read is not a data race), but any race would fail hard.
+  set_tests_properties(sanitizer-scratch
+    PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
+endif()
