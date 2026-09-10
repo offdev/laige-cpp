@@ -135,7 +135,12 @@ laige_deps_verify_lock()
 # C++20, warnings-as-errors, exceptions and RTTI disabled. The MSVC options
 # are the documented equivalent of
 # -Wall -Werror -fno-exceptions -fno-rtti: /EHs- /EHc- clear C++ exception
-# handling (Microsoft /EH reference), /GR- disables RTTI.
+# handling (Microsoft /EH reference), /GR- disables RTTI, and
+# _HAS_EXCEPTIONS=0 switches the MS STL to its no-exception code paths:
+# the STL gates its own try/catch (iosfwd _TRY_IO_BEGIN/_CATCH_IO_,
+# yvals.h _TRY_BEGIN/_CATCH) on the _HAS_EXCEPTIONS macro, not on the /EH
+# flags — with /EHs- alone it would still emit catch blocks that the
+# compiler cannot unwind (cl C4530, fatal under /WX).
 #
 # The warning/language flags are PRIVATE: they govern this target's own
 # translation units and must not leak into consumers (CPP-010) — a game
@@ -152,6 +157,10 @@ function(laige_apply_engine_policy target)
   elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(${target} PRIVATE
       /W4 /WX /EHs- /EHc- /GR-)
+    # See the function header: the MS STL needs _HAS_EXCEPTIONS=0 to take
+    # its no-exception code paths (same define GTest's own no-exception
+    # targets use; deps/googletest/cmake/internal_utils.cmake).
+    target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
   else()
     message(FATAL_ERROR
       "laige: no engine compiler policy for '${CMAKE_CXX_COMPILER_ID}'; "

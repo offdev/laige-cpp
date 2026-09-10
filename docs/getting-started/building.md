@@ -99,7 +99,10 @@ Every engine target is passed through `laige_apply_engine_policy()`
 (root `CMakeLists.txt`):
 
 - GCC/Clang/AppleClang: `-Wall -Werror -fno-exceptions -fno-rtti`
-- MSVC 2022: `/W4 /WX /EHs- /EHc- /GR-` (the documented equivalent)
+- MSVC 2022: `/W4 /WX /EHs- /EHc- /GR-` plus `-D_HAS_EXCEPTIONS=0`
+  (the documented equivalent; the define switches the MS STL to its
+  no-exception code paths, because the STL gates its own `try/catch` on
+  `_HAS_EXCEPTIONS`, not on `/EHs-`)
 - C++20 required. The requirement propagates to consumers; the warning
   flags do not (CPP-010 — a game linking the engine keeps its own compiler
   policy).

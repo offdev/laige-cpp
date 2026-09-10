@@ -43,6 +43,10 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
   # (/EHs-c- -D_HAS_EXCEPTIONS=0, the same flags GTest's own
   # gtest_no_exception targets use), so one consistent model applies
   # everywhere and no conflicting flags appear on the command line.
+  # Engine test TUs receive the matching _HAS_EXCEPTIONS=0 from
+  # laige_apply_engine_policy() (the MS STL gates its own try/catch on
+  # that macro, not on /EHs-), so the STL code paths agree on both
+  # sides of the gtest boundary as well.
   set(_laige_gtest_flags /GR-)
   foreach(_t IN ITEMS gtest gtest_main)
     get_target_property(_laige_gtest_compile_flags ${_t} COMPILE_FLAGS)
