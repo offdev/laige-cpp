@@ -36,7 +36,8 @@ namespace laige {
 // type E (default: laige::ErrorCode).
 //
 // Constraints: T must not be void (use Status); E must be
-// default-constructible and move-constructible (ErrorCode satisfies both).
+// default-constructible and copyable — the failure constructor takes the
+// error by const reference and copies it (error codes are small scalars).
 // When T and E are mutually convertible the converting constructors are
 // unavailable (they would be ambiguous) — use success()/failure().
 template <typename T, typename E = ErrorCode>
@@ -60,11 +61,15 @@ class Result {
       requires(!std::is_convertible_v<E, T>)
       : value_(std::move(value)), error_(E{}) {}
 
-  // Failure carrying `error`.
+  // Failure carrying `error` (copied from a const reference; error codes
+  // are small scalars). The signature stays distinct from the value
+  // constructor even when T and E are the same type, which keeps the
+  // class well-formed on all conforming compilers (MSVC rejects two
+  // member declarations with identical parameter lists).
   [[nodiscard]]
-  Result(E error)
+  Result(const E& error)
       requires(!std::is_convertible_v<T, E>)
-      : value_(), error_(std::move(error)) {}
+      : value_(), error_(error) {}
 
   // Unambiguous factory forms (always available, including when T and E
   // are mutually convertible).
