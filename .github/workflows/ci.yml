@@ -114,6 +114,12 @@ jobs:
     name: Linux x64 ASan+UBSan (clang++)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # Job-scoped token: the archive step below needs actions:write, which
+    # the workflow-level contents:read token does not grant (GitHub
+    # Actions has no step-level permissions).
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
       - name: Configure (ASan+UBSan)
@@ -133,11 +139,8 @@ jobs:
           ctest --test-dir build-asan --output-on-failure 2>&1 | tee asan-ctest-output.txt
       - name: Archive sanitizer reports
         # Runs green or red: on a red run the reports live in this
-        # artifact. Step-level actions:write — the workflow-level token
-        # is contents:read only.
+        # artifact. The job-level token grants actions:write.
         if: always()
-        permissions:
-          actions: write
         uses: actions/upload-artifact@v4
         with:
           name: linux-asan-reports
@@ -150,6 +153,11 @@ jobs:
     name: Linux x64 TSan (clang++)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # Job-scoped token: the archive step below needs actions:write (see
+    # the linux-asan job comment).
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
       - name: Configure (TSan)
@@ -165,9 +173,9 @@ jobs:
           set -o pipefail
           ctest --test-dir build-tsan --output-on-failure 2>&1 | tee tsan-ctest-output.txt
       - name: Archive sanitizer reports
+        # Runs green or red: on a red run the race report lives in this
+        # artifact. The job-level token grants actions:write.
         if: always()
-        permissions:
-          actions: write
         uses: actions/upload-artifact@v4
         with:
           name: linux-tsan-reports

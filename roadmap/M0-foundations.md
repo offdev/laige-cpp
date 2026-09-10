@@ -138,9 +138,11 @@ No rendering, no physics, no networking yet — `laige-core` only.
     - Reports archived as artifacts on every run, green or red: tee'd
       ctest output (carries reports on stderr), ASan per-process report
       files under `asan-reports/`, and `<tree>/Testing/Temporary/
-      LastTest.log`; uploads are step-scoped to `actions: write` and
-      `continue-on-error: true` in `ci-pull.yml` (fork-PR read-only
-      token).
+      LastTest.log`; uploads run under job-scoped `actions: write`
+      (GitHub Actions has no step-level permissions — the first CI run
+      rejected the workflow file for exactly that, fixed before the run
+      executed) and `continue-on-error: true` in `ci-pull.yml` (fork-PR
+      read-only token).
     Local verification of the exact Verify scenario: on a scratch OOB
     read (`tests/laige-core/sanitizer-scratch.cpp`, runtime-volatile
     index so `-Wall -Werror` stays clean) the ASan lane's ctest failed

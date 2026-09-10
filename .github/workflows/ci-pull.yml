@@ -91,6 +91,12 @@ jobs:
       !contains(github.event.pull_request.labels.*.name, 'ci:windows')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # Job-scoped token: the archive step below needs actions:write for
+    # PRs from the base repository (fork PR tokens stay read-only,
+    # whatever this declares — see header).
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
       - name: Configure (ASan+UBSan)
@@ -110,11 +116,10 @@ jobs:
       - name: Archive sanitizer reports
         # continue-on-error: fork PRs run with a read-only token, so the
         # upload 403s there (see header); the reports stay in the job log
-        # and the tee'd output. Step-level actions:write for base-repo PRs.
+        # and the tee'd output. The job-level actions:write covers PRs
+        # from the base repository.
         if: always()
         continue-on-error: true
-        permissions:
-          actions: write
         uses: actions/upload-artifact@v4
         with:
           name: linux-asan-reports
@@ -130,6 +135,11 @@ jobs:
       !contains(github.event.pull_request.labels.*.name, 'ci:windows')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # Job-scoped token: the archive step below needs actions:write (see
+    # the linux-asan job comment).
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
       - name: Configure (TSan)
@@ -145,10 +155,11 @@ jobs:
           set -o pipefail
           ctest --test-dir build-tsan --output-on-failure 2>&1 | tee tsan-ctest-output.txt
       - name: Archive sanitizer reports
+        # continue-on-error and job-level permissions: same rationale as
+        # the linux-asan job (fork PRs read-only, base-repo PRs can
+        # upload).
         if: always()
         continue-on-error: true
-        permissions:
-          actions: write
         uses: actions/upload-artifact@v4
         with:
           name: linux-tsan-reports
