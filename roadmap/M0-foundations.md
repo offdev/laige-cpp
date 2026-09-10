@@ -343,7 +343,12 @@ No rendering, no physics, no networking yet — `laige-core` only.
     enabled, N=200000). Verified locally 2026-09-10 (GCC 16.2.1: static,
     shared, ASan/UBSan, TSan trees — all 8/8 ctest, zero warnings; fresh
     Clang 22.1.8 static + shared trees — all 8/8 ctest, zero warnings;
-    `ctest -R logging` green in every tree). CI: pending observation.
+    `ctest -R logging` green in every tree). CI (observed 2026-09-10
+    via the GitHub API): `ci-pull.yml` run 34534697621 on `0d3ee28`
+    green — all 5 jobs of the default-Linux lane passed (linux-gcc
+    g++, linux-clang clang++, linux-asan+UBSan clang++, linux-tsan
+    clang++, include-lint), finished in 50 s; macOS/Windows jobs
+    skipped (label-gated).
   - **Size:** ~1034 lines implementation (`logging.h` 538 — full AGENTS
     §9 contracts, facade, macros — `logging.cpp` 496) + ~860 lines tests
     (`logging_tests.cpp` 743, allocation counter 115) + ~300 lines
