@@ -115,16 +115,16 @@ No rendering, no physics, no networking yet — `laige-core` only.
     workflow itself.)
   - **Size:** workflow files only
 
-- [ ] **M0-CI-02 · Sanitizer CI jobs**
+- [x] **M0-CI-02 · Sanitizer CI jobs**
   - **Refs:** NFR-8.2 (ASan+UBSan, TSan); AGENTS TEST-006
   - **Depends:** M0-CI-01
   - **Scope:**
     - Linux jobs building with `LAIGE_ASAN=ON` (ASan+UBSan) and `LAIGE_TSAN=ON`, running the unit suites.
     - Fail build on any sanitizer report; reports archived as CI artifacts.
   - **Verify:** introducing a deliberate OOB read in a scratch test fails the ASan job (test removed afterwards); TSan job green on clean code.
-    (Mechanics verified locally 2026-09-10, Clang 22.1.8; the CI run
-    itself is pending — no GitHub push access in the implementing
-    environment, so the box stays open per this file's contract.
+    (Mechanics verified locally 2026-09-10, Clang 22.1.8, and the full
+    CI Verify cycle completed the same day on the pushed commits —
+    see the end of this note.
     `ci.yml` gains two lanes on merge and `ci-pull.yml` on every PR not
     selecting another P0 OS (Linux default), each a canonical
     configure → build → ctest with `timeout-minutes: 10`:
@@ -152,9 +152,15 @@ No rendering, no physics, no networking yet — `laige-core` only.
     deliberate data race failed the TSan lane with a
     `WARNING: ThreadSanitizer: data race` report in ctest output
     (exit 8). Scratch removed afterwards; both lanes re-ran green on
-    the clean tree. Remaining: push, run the OOB-scratch cycle on CI
-    (ASan job red, TSan job green), remove the scratch, confirm the
-    7-job matrix green.)
+    the clean tree. CI verification of the exact Verify scenario:
+    scratch OOB read pushed as `6331a40`; the first `ci.yml` run
+    rejected the workflow file (step-level `permissions:` is not a
+    valid schema — fixed in `f75ed0d` by moving `actions: write` to
+    job scope); with the fix, `linux-asan` failed with the UBSan
+    "index 16 out of bounds for type 'int[4]'" report (archived in
+    the `linux-asan-reports` artifact) while `linux-tsan` and the
+    other five jobs stayed green; scratch removed in `25b57b9` and
+    the full 7-job matrix ran green.)
   - **Size:** workflow changes only
 
 - [ ] **M0-CI-03 · Include-graph lint + dependency-count metric**
