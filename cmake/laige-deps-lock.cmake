@@ -41,6 +41,12 @@
 #
 # An empty tree hashes the empty blob. Hidden files are included; symlinks
 # are neither followed nor hashed (the vendored trees contain none).
+#
+# The hash covers file content, so checkouts must be byte-identical on every
+# platform. .gitattributes enforces this: deps/** is -text (never
+# converted) and the repo default is text=auto eol=lf. A CRLF checkout
+# (e.g. core.autocrlf=true on Windows without attributes) changes every
+# file hash and fails here.
 function(laige_deps_tree_sha256 dir out_var)
   set(_files "")
   file(GLOB_RECURSE _files "${dir}/*")

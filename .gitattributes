@@ -1,0 +1,23 @@
+# End-of-line policy (DEP-005: reproducible, byte-identical checkouts).
+#
+# Background: GitHub's Windows runners have core.autocrlf=true in the image
+# global config, so without attribute rules every text file is checked out
+# as CRLF on Windows. The deps.lock tree hashes hash file content, so a CRLF
+# checkout changes every hash and laige_deps_verify_lock() fails. .gitattributes
+# takes precedence over core.autocrlf, so these rules make checkouts
+# byte-identical on Linux, macOS, and Windows.
+#
+# Order matters: for a given file the LAST matching line wins, so the
+# catch-all comes first and deps/** overrides it. (Values are case-
+# sensitive: it is eol=lf, not eol=LF — an unrecognized value is ignored
+# and core.autocrlf applies instead.)
+
+# Repo default: normalize text files to LF in the repo and check them out as
+# LF on every platform (Windows included); binaries are left untouched.
+* text=auto eol=lf
+
+# Vendored trees are pinned by content hash in deps.lock and must never be
+# line-ending-converted on any platform. (Pattern is deps/** — in
+# gitattributes a trailing-slash form like "deps/" matches only a file
+# literally named "deps", not the directory contents.)
+deps/** -text
