@@ -97,3 +97,14 @@ The step that needs a new code performs, in one change:
 | why | the caller requested more work or capacity than the configured budget allows (PERF-008, SCALE-003) |
 | fix | reduce per-call work or raise the budget through typed configuration (API-006); budgeted resources must never grow silently |
 | doc anchor | `docs/api/errors.md#budget-exhausted` |
+
+### io-error
+
+- **Integer value:** `5` (added by M0-CORE-02: file sink creation)
+
+| Field | Text |
+|---|---|
+| what | an I/O operation (a file, or a system interface) failed |
+| why | the file could not be opened, written, or flushed (missing path, permissions, full disk), or a system interface call (e.g. signal registration for crash handling) was rejected |
+| fix | check the path, permissions, and disk space; for logging, fall back to the current console sink (LOG-007 minimal fallback, `docs/api/logging.md`) |
+| doc anchor | `docs/api/errors.md#io-error` |

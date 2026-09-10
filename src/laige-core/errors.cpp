@@ -20,7 +20,7 @@ namespace laige {
 namespace {
 
 constexpr std::size_t kLastCode =
-    static_cast<std::size_t>(ErrorCode::BudgetExhausted);
+    static_cast<std::size_t>(ErrorCode::IoError);
 
 const ErrorEntry kErrorRegistry[kLastCode + 1] = {
     {   // slot 0: no-error sentinel + unregistered-value fallback
@@ -98,6 +98,25 @@ const ErrorEntry kErrorRegistry[kLastCode + 1] = {
         "SCALE-003) | reduce per-call work or raise the budget through "
         "typed configuration (API-006); budgeted resources must never "
         "grow silently | docs/api/errors.md#budget-exhausted"},
+    {   // slot 5
+        ErrorCode::IoError,
+        "io_error",
+        "an I/O operation (a file, or a system interface) failed",
+        "the file could not be opened, written, or flushed (missing "
+        "path, permissions, full disk), or a system interface call "
+        "(e.g. signal registration for crash handling) was rejected",
+        "check the path, permissions, and disk space; for logging, "
+        "fall back to the current console sink (LOG-007 minimal "
+        "fallback, docs/api/logging.md)",
+        "docs/api/errors.md#io-error",
+        "io_error | an I/O operation (a file, or a system interface) "
+        "failed | the file could not be opened, written, or flushed "
+        "(missing path, permissions, full disk), or a system interface "
+        "call (e.g. signal registration for crash handling) was "
+        "rejected | check the path, permissions, and disk space; for "
+        "logging, fall back to the current console sink (LOG-007 "
+        "minimal fallback, docs/api/logging.md) | "
+        "docs/api/errors.md#io-error"},
 };
 
 }  // namespace

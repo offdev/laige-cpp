@@ -12,8 +12,10 @@ isometric-first rendering, and a server-authoritative MMO path.
   build system, `laige-core` library target, and dependency lock
   (`deps.lock` with vendored GoogleTest) have landed; the functional core
   (math, pools, Result, logging, config) lands over the remaining M0 steps
-  in [roadmap/M0-foundations.md](roadmap/M0-foundations.md). No engine
-  features are buildable yet.
+  in [roadmap/M0-foundations.md](roadmap/M0-foundations.md). So far:
+  `laige::Result<T,E>` / `laige::Status` plus the error-code registry
+  (M0-CORE-01) and the structured logging facade (M0-CORE-02). No game-facing
+  engine features are buildable yet.
 
 ## Built by a local LLM
 
@@ -73,10 +75,12 @@ benchmark forms — is the source of truth in
 
 The `laige-core` library builds now: static by default, shared with
 `-DLAIGE_BUILD_SHARED=ON` (NFR-8.9), verified by a CTest link smoke test in
-both variants. It carries no functional engine code yet — the first code
-(`laige::Result<T,E>` / `laige::Status`) lands in M0-CORE-01. Engine targets
-compile with `-Wall -Werror` and with exceptions and RTTI disabled
-(NFR-8.10).
+both variants. It carries the first functional engine code:
+`laige::Result<T,E>` / `laige::Status` plus the error-code registry
+(M0-CORE-01, `ctest -R result_status`) and the structured logging facade
+(M0-CORE-02, `ctest -R logging`, API contract in
+[docs/api/logging.md](docs/api/logging.md)). Engine targets compile with
+`-Wall -Werror` and with exceptions and RTTI disabled (NFR-8.10).
 
 ## Documentation
 

@@ -33,6 +33,7 @@ enum class ErrorCode : std::uint32_t {
   InvalidArgument = 2,
   MalformedInput = 3,
   BudgetExhausted = 4,
+  IoError = 5,
 };
 
 // One registry entry per stable code. `text` is the pre-rendered

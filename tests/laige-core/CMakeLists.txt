@@ -10,7 +10,23 @@
 # in this shared executable as separate source files and are exposed as
 # their own CTest entries (M0-CORE-01 adds `result_status`; later
 # M0-CORE-xx steps follow the same pattern).
-add_executable(laige-core_tests laige-core_tests.cpp result_status_tests.cpp)
+set(LAIGE_CORE_TEST_SOURCES laige-core_tests.cpp result_status_tests.cpp
+                            logging_tests.cpp)
+# M0-CORE-02: the test-only allocation counter overrides the global
+# operator new/new[]; the sanitizer runtimes define their own new/delete
+# (strong symbols in the Clang/GCC TSan runtime archives, interposed by
+# ASan), so the counter is excluded from the sanitizer trees. There, the
+# step's zero-allocation property is covered by the leak-free sanitizer
+# run of the same spam loop plus the LogPerformance timing property —
+# the fallback the roadmap names for this step.
+if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN)
+  list(APPEND LAIGE_CORE_TEST_SOURCES logging_alloc_counter.cpp)
+endif()
+
+add_executable(laige-core_tests ${LAIGE_CORE_TEST_SOURCES})
+if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN)
+  target_compile_definitions(laige-core_tests PRIVATE LAIGE_ALLOC_COUNTER=1)
+endif()
 laige_apply_engine_policy(laige-core_tests)
 
 # Links the library under test (the link itself is the static/shared check)
@@ -39,9 +55,18 @@ add_test(NAME result_status
          COMMAND laige-core_tests
          --gtest_filter="ResultStatus.*:Status.*:ErrorCodeRegistry.*")
 
+# M0-CORE-02: structured logging facade. The step's Verify command is
+# `ctest -R logging`; this entry selects exactly the logging suites
+# from the shared laige-core_tests executable.
+add_test(NAME logging
+         COMMAND laige-core_tests
+         --gtest_filter="LogGate.*:LogRecord.*:LogSinks.*:LogRateLimit.*:"
+                        "LogFatal.*:LogCrash.*:LogConcurrency.*:"
+                        "LogPerformance.*")
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
-  set_tests_properties(laige-core_tests result_status
+  set_tests_properties(laige-core_tests result_status logging
     PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

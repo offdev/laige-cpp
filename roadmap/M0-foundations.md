@@ -278,15 +278,79 @@ No rendering, no physics, no networking yet — `laige-core` only.
     headers carry the full AGENTS §9 API contracts and the registry
     pre-renders its grammar line next to its fields — cohesive, not split)
 
-- [ ] **M0-CORE-02 · Structured logging facade**
+- [x] **M0-CORE-02 · Structured logging facade**
   - **Refs:** AGENTS.md §14 (LOG-001…LOG-007); FR-12.2
   - **Depends:** M0-CORE-01
   - **Scope:**
     - One logging facade: severity (Trace…Fatal per §14), stable subsystem+event names, lazy field/message evaluation (no formatting/allocation when disabled — LOG-003), per-subsystem level filters.
     - Sink interface with a console sink and a file sink; per-subsystem scopes; rate limiting with suppressed-count summary (LOG-004); crash/shutdown flush (LOG-007).
     - Unit tests: disabled levels allocate nothing (assert with allocation counter from M0-CORE-05 if available, else ASan leak-free + timing property test); rate-limit summary emitted after N repeats.
-  - **Verify:** `ctest -R logging` green; trace-level spam in a disabled-subsystem test shows zero allocations (ASan/alloc counter).
-  - **Size:** ~350 lines + tests
+  - **Decision (2026-09-10):** single process-lifetime Meyers-singleton
+    facade `laige::log::Logger` (thread-safe construction) owning the
+    current `Sink` via `unique_ptr`. `LAIGE_LOG_*` macros put the level
+    gate **before** argument evaluation — a disabled event costs one
+    atomic load + branch: no message/field evaluation, no formatting,
+    no allocation, no lock (LOG-003). Gating = atomic global minimum
+    (checked first) + per-subsystem level table (one facade mutex, small
+    linear scan; init-phase mutation only, CONC-001). Fields: scalar
+    values render locale-free into a 64-byte stack buffer via
+    `std::to_chars`; string-like values copy in full; field values must
+    avoid spaces/`=` (the line is `| k=v` machine-parseable, LOG-001).
+    Rate limiting (LOG-004) applies to Warn/Error/Fatal only, per
+    `(subsystem, event, severity)` key: the first event is always
+    recorded (an `everEmitted` flag — a `time_point::min()` sentinel
+    overflowed the window subtraction, CPP-004), repeats are counted
+    and reported as a stable `rate_limited` summary event
+    (`event=<orig>`, `suppressed=N`) at window rollover and at shutdown
+    (pending counts are drained, so a burst right before shutdown still
+    reports). `Fatal` records, flushes, and terminates via
+    `std::abort()` (AGENTS §14 controlled termination). Sinks:
+    `ConsoleSink` (does not own the stream — `stderr` must outlive the
+    process), `FileSink` (owns the `FILE*`; `create()` returns
+    `Result<unique_ptr<FileSink>>`, open failure → `ErrorCode::IoError`;
+    LOG-007 minimal fallback = keep the console sink and report). Crash
+    handling: POSIX `sigaction` (SA_RESETHAND, one-shot) for
+    SIGSEGV/ABRT/BUS/FPE/ILL + raw `write(2)` notice + allocation-free
+    `try_lock` sink flush + re-raise; Windows vectored SEH; registration
+    failure → `Status` (`IoError`), idempotent install. `shutdown()`
+    idempotent (CONC-006): drain summaries → flush → retire (post-shutdown
+    logs discarded). Timestamps: `system_clock`, UTC RFC 3339
+    `YYYY-MM-DDTHH:MM:SS.ffffffZ` rendered with a vendored-in-code
+    Hinnant `civil_from_days` (no libc date functions; thread-safe).
+    Two small additive extensions of M0-CORE-01 shipped with this step:
+    `ErrorCode::IoError` (`5`, `docs/api/errors.md#io-error`) and
+    `Result::takeValue() &&` (move the success value out of an rvalue
+    result — needed to hand a created `FileSink` into `LoggerOptions`);
+    both tested in the `result_status` suite. Test-only process-wide
+    allocation counter (strong global `operator new` overrides in a test
+    TU) proves the zero-alloc property; it is excluded from the ASan/TSan
+    trees (the sanitizer runtimes define their own `new`/`delete`) —
+    there the same spam loop runs leak-free plus the timing property
+    test, which is exactly the fallback the step names.
+  - **Verify:** `ctest -R logging` green — 27 GTest cases across
+    `LogGate` (default/per-subsystem/global gating, disabled event
+    reaches no sink), `LogRecord` (scalar field formatting, full string
+    copy, identity + timestamp format), `LogSinks` (exact console/file
+    line format, dtor flush, create failure → `IoError`), `LogRateLimit`
+    (suppression, summary after window with `suppressed=N`, window edge,
+    key independence, Warn/Error/Fatal only, opt-out, shutdown drains
+    pending summaries), `LogFatal` (gate; forked child emits + flushes +
+    dies on SIGABRT with the line in the file), `LogCrash` (install
+    idempotence, shutdown flush, post-shutdown discard),
+    `LogConcurrency` (4 threads × 250 emits, all recorded), and
+    `LogPerformance` (100k disabled Trace events → **0 allocations** via
+    the allocation counter; disabled ≈46 ns/event vs ≈1207 ns/event
+    enabled, N=200000). Verified locally 2026-09-10 (GCC 16.2.1: static,
+    shared, ASan/UBSan, TSan trees — all 8/8 ctest, zero warnings; fresh
+    Clang 22.1.8 static + shared trees — all 8/8 ctest, zero warnings;
+    `ctest -R logging` green in every tree). CI: pending observation.
+  - **Size:** ~1034 lines implementation (`logging.h` 538 — full AGENTS
+    §9 contracts, facade, macros — `logging.cpp` 496) + ~860 lines tests
+    (`logging_tests.cpp` 743, allocation counter 115) + ~300 lines
+    docs/CMake (over the ~350-lines estimate, same pattern as
+    M0-CORE-01 and M0-CI-03: the header carries the API contract and the
+    tests prove the step's Verify clauses — zero-alloc, rate-limit
+    summary, Fatal termination — cohesive, not split)
 
 - [ ] **M0-CORE-03 · SimMath interface + `fp32_pinned` backend**
   - **Refs:** PRD §10.3, S-7; ADR 0002 (`fp32_pinned` backend); AGENTS CORE-005
