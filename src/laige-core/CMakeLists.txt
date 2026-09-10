@@ -14,12 +14,19 @@
 # smoke test in tests/laige-core/ verifies the library in both variants.
 
 if(LAIGE_BUILD_SHARED)
-  add_library(laige-core SHARED version.cpp errors.cpp logging.cpp)
+  add_library(laige-core SHARED version.cpp errors.cpp logging.cpp
+                             sim_math.cpp)
 else()
-  add_library(laige-core STATIC version.cpp errors.cpp logging.cpp)
+  add_library(laige-core STATIC version.cpp errors.cpp logging.cpp
+                             sim_math.cpp)
 endif()
 
 laige_apply_engine_policy(laige-core)
+
+# M0-CORE-03: laige-core carries the SimMath deterministic-math interface
+# (include/laige/sim_math.h); pin its IEEE float semantics (ADR 0002,
+# PRD §10.3). Every later sim module passes through this same policy.
+laige_apply_simmath_policy(laige-core)
 
 # Public header root. Only this directory is exposed to consumers
 # (CPP-010: no transitive leakage).

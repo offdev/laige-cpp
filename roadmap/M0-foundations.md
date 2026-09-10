@@ -357,7 +357,7 @@ No rendering, no physics, no networking yet — `laige-core` only.
     tests prove the step's Verify clauses — zero-alloc, rate-limit
     summary, Fatal termination — cohesive, not split)
 
-- [ ] **M0-CORE-03 · SimMath interface + `fp32_pinned` backend**
+- [x] **M0-CORE-03 · SimMath interface + `fp32_pinned` backend**
   - **Refs:** PRD §10.3, S-7; ADR 0002 (`fp32_pinned` backend); AGENTS CORE-005
   - **Depends:** M0-DEC-02, M0-CORE-01
   - **Scope:**

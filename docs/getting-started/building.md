@@ -117,6 +117,26 @@ Every engine target is passed through `laige_apply_engine_policy()`
   flags do not (CPP-010 — a game linking the engine keeps its own compiler
   policy).
 
+## SimMath pinned-math policy (M0-CORE-03, ADR 0002)
+
+Every target that carries deterministic sim math is passed through
+`laige_apply_simmath_policy()` (root `CMakeLists.txt`) — in M0 that is
+`laige-core` and the `laige-core_tests` executable; from M1 on, every
+sim module joins the list (e.g. `laige-sim`). The flags pin the
+IEEE float semantics of the `fp32_pinned` backend
+(`src/laige-core/include/laige/sim_math.h` is the source of truth for the
+pinned set and the NaN/Inf policy):
+
+- GCC/Clang/AppleClang: `-ffp-contract=off -fno-associative-math`
+  (no FMA contraction of `a*b+c`, no reassociation — the pinned set is
+  visible on every compile line).
+- MSVC 2022: `/fp:precise` (MSVC does not FMA-contract C expressions and
+  never reassociates at this setting).
+- Banned in sim translation units: `-ffast-math` /
+  `-funsafe-math-optimizations` / `/fp:fast`, floating-point
+  intrinsics, rounding-mode changes, FP exception modes (re-audited at
+  every toolchain upgrade, ADR 0002).
+
 ## Current status (M0)
 
 - `laige-core` builds as a static library (default) or a shared library
@@ -125,10 +145,15 @@ Every engine target is passed through `laige_apply_engine_policy()`
   engine code from M0-CORE-01: `laige::Result<T,E>` / `laige::Status` and
   the error-code registry (`include/laige/result.h`,
   `include/laige/errors.h`, `errors.cpp`; error text follows the NFR-13.3
-  5-field grammar — see [docs/api/errors.md](../api/errors.md)), and the
+  5-field grammar — see [docs/api/errors.md](../api/errors.md)), the
   structured logging facade from M0-CORE-02 (`include/laige/logging.h`,
   `logging.cpp`; API contract in
-  [docs/api/logging.md](../api/logging.md)).
+  [docs/api/logging.md](../api/logging.md)), and the SimMath
+  deterministic-math interface with the `fp32_pinned` backend from
+  M0-CORE-03 (`include/laige/sim_math.h`, `sim_math.cpp`; API contract
+  and NaN/Inf policy in
+  [docs/api/sim_math.md](../api/sim_math.md), pinned flags via
+  `laige_apply_simmath_policy()`).
 - `tests/laige-core/laige-core_tests` is a CTest link smoke test (a
   GoogleTest suite since M0-DEP-01) that runs in every build tree above: it
   verifies the static/shared link and checks the NFR-8.10 policy flags with
@@ -142,6 +167,10 @@ Every engine target is passed through `laige_apply_engine_policy()`
   `LogRateLimit`, `LogFatal`, `LogCrash`, `LogConcurrency`, and
   `LogPerformance` suites — the step's Verify command is
   `ctest -R logging`.
+- `math_float` is the M0-CORE-03 CTest entry: a filtered view of the same
+  executable covering the `SimMathBasics`, `SimMathNanInf`,
+  `SimMathProperties`, and `SimMathDispatch` suites — the step's Verify
+  command is `ctest -R math_float`.
 - Every configure verifies the vendored dependency lock
   (`cmake/laige-deps-lock.cmake` against `deps.lock`); a tampered or
   unlisted file under `deps/` fails the configure loudly. GoogleTest is the

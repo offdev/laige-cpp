@@ -11,7 +11,7 @@
 # their own CTest entries (M0-CORE-01 adds `result_status`; later
 # M0-CORE-xx steps follow the same pattern).
 set(LAIGE_CORE_TEST_SOURCES laige-core_tests.cpp result_status_tests.cpp
-                            logging_tests.cpp)
+                             logging_tests.cpp math_float_tests.cpp)
 # M0-CORE-02: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own new/delete
 # (strong symbols in the Clang/GCC TSan runtime archives, interposed by
@@ -28,6 +28,11 @@ if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN)
   target_compile_definitions(laige-core_tests PRIVATE LAIGE_ALLOC_COUNTER=1)
 endif()
 laige_apply_engine_policy(laige-core_tests)
+# M0-CORE-03: the fp32_pinned SimMath backend is instantiated in this test
+# executable, so it must carry the same pinned flag set as laige-core
+# (ADR 0002, PRD §10.3) — the runtime FMA canaries in
+# math_float_tests.cpp depend on it.
+laige_apply_simmath_policy(laige-core_tests)
 
 # Links the library under test (the link itself is the static/shared check)
 # plus the dev-only test framework; gtest_main provides main().
@@ -46,6 +51,14 @@ endif()
 
 add_test(NAME laige-core_tests COMMAND laige-core_tests)
 
+# The gtest filter is always one UNQUOTED argument. CTest passes quoted
+# arguments through with the literal quote characters still attached, and
+# gtest's colon-split of the filter then drops the quote-attached
+# patterns — silently under-running the step's Verify scope (CORE-008).
+# (Fixed in M0-CORE-03, where this defect was found under
+# `ctest -R math_float`; it affected the result_status and logging
+# entries inherited from M0-CORE-01/02 as well.)
+
 # M0-CORE-01: Result<T,E>/Status + error registry. The step's Verify
 # command is `ctest -R result_status`; this entry selects exactly the
 # ResultStatus/Status/ErrorCodeRegistry suites from the shared
@@ -53,20 +66,26 @@ add_test(NAME laige-core_tests COMMAND laige-core_tests)
 # as part of the full module suite).
 add_test(NAME result_status
          COMMAND laige-core_tests
-         --gtest_filter="ResultStatus.*:Status.*:ErrorCodeRegistry.*")
+         --gtest_filter=ResultStatus.*:Status.*:ErrorCodeRegistry.*)
 
 # M0-CORE-02: structured logging facade. The step's Verify command is
 # `ctest -R logging`; this entry selects exactly the logging suites
 # from the shared laige-core_tests executable.
 add_test(NAME logging
          COMMAND laige-core_tests
-         --gtest_filter="LogGate.*:LogRecord.*:LogSinks.*:LogRateLimit.*:"
-                        "LogFatal.*:LogCrash.*:LogConcurrency.*:"
-                        "LogPerformance.*")
+         --gtest_filter=LogGate.*:LogRecord.*:LogSinks.*:LogRateLimit.*:LogFatal.*:LogCrash.*:LogConcurrency.*:LogPerformance.*)
+
+# M0-CORE-03: SimMath interface + fp32_pinned backend. The step's Verify
+# command is `ctest -R math_float`; this entry selects exactly the
+# SimMath* suites (SimMathBasics, SimMathNanInf, SimMathProperties,
+# SimMathDispatch) from the shared laige-core_tests executable.
+add_test(NAME math_float
+         COMMAND laige-core_tests
+         --gtest_filter=SimMathBasics.*:SimMathNanInf.*:SimMathProperties.*:SimMathDispatch.*)
 
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
-  set_tests_properties(laige-core_tests result_status logging
+  set_tests_properties(laige-core_tests result_status logging math_float
     PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()
