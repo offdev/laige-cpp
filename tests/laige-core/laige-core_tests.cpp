@@ -42,7 +42,16 @@ static_assert(false,
               "(NFR-8.10); see laige_apply_engine_policy().");
 #endif
 
-#if __cplusplus < 202002L
+// MSVC never updates __cplusplus from /std (it stays 199711L, a legacy
+// compatibility value); the active standard is reported by _MSVC_LANG.
+// Every other supported compiler (NFR-8.10) sets __cplusplus from -std.
+#if defined(_MSC_VER)
+#  define LAIGE_TESTS_ACTIVE_CPLUSPLUS _MSVC_LANG
+#else
+#  define LAIGE_TESTS_ACTIVE_CPLUSPLUS __cplusplus
+#endif
+
+#if LAIGE_TESTS_ACTIVE_CPLUSPLUS < 202002L
 static_assert(false,
               "laige-core_tests must be built as C++20 (NFR-8.10); "
               "see laige_apply_engine_policy().");

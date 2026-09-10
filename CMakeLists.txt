@@ -26,6 +26,17 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# MSVC: CMake's Windows platform module adds /EHsc to CMAKE_CXX_FLAGS by
+# default (CMP0117 NEW, CMake >= 3.20). The engine's no-exception policy
+# (NFR-8.10) supplies /EHs- /EHc- per target via
+# laige_apply_engine_policy(); leaving the platform /EHsc in place makes
+# the two collide on every engine target's command line (cl D9025). Strip
+# the platform default so each target's policy flags are the single source
+# of truth for the exception model.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+  string(REGEX REPLACE "([/-])EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+endif()
+
 # Both the static (default) and shared (LAIGE_BUILD_SHARED) library variants
 # are position-independent so they link identically into games and tools
 # (NFR-8.9).

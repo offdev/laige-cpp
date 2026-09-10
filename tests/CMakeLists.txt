@@ -33,7 +33,26 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/deps/googletest
 if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
   set(_laige_gtest_flags -fno-exceptions -fno-rtti)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-  set(_laige_gtest_flags /EHs- /EHc- /GR-)
+  # /GR- only. GTest's own MSVC flags enable exceptions in its targets
+  # (-EHsc -D_HAS_EXCEPTIONS=1, cmake/internal_utils.cmake); appending
+  # /EHs- /EHc- after them leaves both on the command line (cl D9025) and
+  # keeps the MS STL in exception mode although the compiler does not
+  # unwind (warning C4530) — an inconsistent exception model between the
+  # gtest library and the engine test TUs. Instead, the exception block of
+  # GTest's flags is rewritten to GTest's documented no-exception set
+  # (/EHs-c- -D_HAS_EXCEPTIONS=0, the same flags GTest's own
+  # gtest_no_exception targets use), so one consistent model applies
+  # everywhere and no conflicting flags appear on the command line.
+  set(_laige_gtest_flags /GR-)
+  foreach(_t IN ITEMS gtest gtest_main)
+    get_target_property(_laige_gtest_compile_flags ${_t} COMPILE_FLAGS)
+    string(REPLACE "-EHsc -D_HAS_EXCEPTIONS=1"
+                  "/EHs-c- -D_HAS_EXCEPTIONS=0"
+                  _laige_gtest_compile_flags
+                  "${_laige_gtest_compile_flags}")
+    set_target_properties(${_t} PROPERTIES
+      COMPILE_FLAGS "${_laige_gtest_compile_flags}")
+  endforeach()
 endif()
 foreach(_t IN ITEMS gtest gtest_main)
   target_compile_options(${_t} PRIVATE ${_laige_gtest_flags})
