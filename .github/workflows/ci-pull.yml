@@ -1,0 +1,121 @@
+# ============================================================================
+# Laige CI — P0 platform matrix on pull request (M0-CI-01)
+#
+# Roadmap:  roadmap/M0-foundations.md, step M0-CI-01
+# PRD refs: §6 (P0 platforms, AC-6.1), §14 (cadence), §8.1 (build budget)
+#
+# Cadence (PRD §14: "one per PR, all per merge"): each pull request runs
+# exactly ONE P0 OS, selected by the PR's ci:* label; the default (no
+# label) is Linux. Merges to master run ALL P0 OSes via ci.yml, which is
+# the "all per merge" half of the cadence.
+#
+# Label selector (apply at most one per PR; if several are present the
+# highest-priority label wins, so exactly one P0 OS always runs):
+#
+#   ci:macos    → macos-arm64 + macos-intel jobs
+#   ci:windows  → windows-msvc job
+#   ci:linux    → linux-gcc + linux-clang jobs (also the no-label default)
+#
+# NOTE: the labels must be created once in the repository settings
+# (GitHub does not create labels from workflows). A PR with an unknown
+# or missing ci:* label simply falls back to the Linux default.
+#
+# Jobs, runner images, steps, and the 10-minute budget timeout are the
+# same as in ci.yml (see its header for the full matrix documentation
+# and the Windows multi-config note).
+#
+# Fork PRs: this workflow uses the pull_request event, which runs on the
+# merge ref with a read-only token; checkout + build + ctest need nothing
+# beyond contents:read.
+# ============================================================================
+
+name: CI (pull request)
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  linux-gcc:
+    name: Linux x64 (g++)
+    if: >-
+      !contains(github.event.pull_request.labels.*.name, 'ci:macos') &&
+      !contains(github.event.pull_request.labels.*.name, 'ci:windows')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (unit)
+        run: ctest --test-dir build --output-on-failure
+
+  linux-clang:
+    name: Linux x64 (clang++)
+    if: >-
+      !contains(github.event.pull_request.labels.*.name, 'ci:macos') &&
+      !contains(github.event.pull_request.labels.*.name, 'ci:windows')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (unit)
+        run: ctest --test-dir build --output-on-failure
+
+  windows-msvc:
+    name: Windows x64 (MSVC 2022)
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'ci:windows') &&
+      !contains(github.event.pull_request.labels.*.name, 'ci:macos')
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        # CMAKE_BUILD_TYPE is ignored by the multi-config VS generator; the
+        # Debug configuration is pinned on the build/test steps below.
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build --config Debug -j
+      - name: Test (unit)
+        run: ctest --test-dir build -C Debug --output-on-failure
+
+  macos-arm64:
+    name: macOS arm64 (AppleClang)
+    if: contains(github.event.pull_request.labels.*.name, 'ci:macos')
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (unit)
+        run: ctest --test-dir build --output-on-failure
+
+  macos-intel:
+    name: macOS Intel (AppleClang)
+    if: contains(github.event.pull_request.labels.*.name, 'ci:macos')
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (unit)
+        run: ctest --test-dir build --output-on-failure

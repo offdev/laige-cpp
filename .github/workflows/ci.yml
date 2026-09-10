@@ -1,0 +1,121 @@
+# ============================================================================
+# Laige CI — P0 platform matrix on merge (M0-CI-01)
+#
+# Roadmap:  roadmap/M0-foundations.md, step M0-CI-01
+# PRD refs: §6 (P0 platforms, AC-6.1), §14 (cadence), §8.1 (build budget)
+#
+# Cadence (PRD §14: "one per PR, all per merge"):
+#   * this workflow runs on every push to the default branch (master) —
+#     i.e. on merge — and on manual workflow_dispatch:
+#     ALL five P0 OS/variant jobs run.
+#   * Pull requests run exactly ONE P0 OS (label-selectable, default
+#     Linux) in the companion workflow .github/workflows/ci-pull.yml.
+#
+# One job per P0 OS/variant (PRD §6). Each job runs the canonical flow from
+# docs/getting-started/building.md — configure → build → ctest (unit tests
+# only in M0):
+#
+#   linux-gcc     Linux x64, g++            (ubuntu-24.04)
+#   linux-clang   Linux x64, clang++        (ubuntu-24.04)
+#   windows-msvc  Windows x64, MSVC 2022    (windows-2022)
+#   macos-arm64   macOS arm64, AppleClang   (macos-15)
+#   macos-intel   macOS Intel, AppleClang   (macos-14)
+#
+# Build budget (PRD §8.1: clean build ≤ 10 min on CI; roadmap M0-CI-01
+# "matrix runs in < 10 min"): every job carries timeout-minutes: 10, so a
+# job (and therefore the whole matrix, which runs the jobs in parallel)
+# longer than the budget fails instead of dragging on.
+#
+# Windows note: CMake's default generator there is the multi-config
+# "Visual Studio 17 2022" generator, which ignores CMAKE_BUILD_TYPE and
+# would build every configuration from the canonical `cmake --build build
+# -j`. The Windows job therefore pins the canonical Debug configuration
+# explicitly on the build and test steps (--config Debug / -C Debug); the
+# single-config platforms run the canonical commands verbatim.
+#
+# AC-6.1 (same source tree, same feature set, no per-OS feature flags): no
+# job passes feature flags; every job builds the identical tree with the
+# only variation being the platform/compiler.
+# ============================================================================
+
+name: CI (merge)
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-gcc:
+    name: Linux x64 (g++)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (unit)
+        run: ctest --test-dir build --output-on-failure
+
+  linux-clang:
+    name: Linux x64 (clang++)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (unit)
+        run: ctest --test-dir build --output-on-failure
+
+  windows-msvc:
+    name: Windows x64 (MSVC 2022)
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        # CMAKE_BUILD_TYPE is ignored by the multi-config VS generator; the
+        # Debug configuration is pinned on the build/test steps below.
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build --config Debug -j
+      - name: Test (unit)
+        run: ctest --test-dir build -C Debug --output-on-failure
+
+  macos-arm64:
+    name: macOS arm64 (AppleClang)
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (unit)
+        run: ctest --test-dir build --output-on-failure
+
+  macos-intel:
+    name: macOS Intel (AppleClang)
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (unit)
+        run: ctest --test-dir build --output-on-failure
