@@ -15,6 +15,7 @@
 
 #include <array>
 #include <chrono>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -37,6 +38,10 @@
 #include <csignal>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
+
+#if defined(_MSC_VER)
+#include <share.h>  // _SH_DENYNO: plain-fopen sharing for the _fsopen below
 #endif
 
 // ---------------------------------------------------------------------------
@@ -215,14 +220,16 @@ std::string tempFilePath(const char* name) {
 
 // Portable file open/remove for the log-file tests (CPP-009 compile-time
 // platform boundary): MSVC's CRT deprecates plain `fopen` (C4996, an error
-// under the engine's /WX policy) in favor of the secure variant `fopen_s` —
-// same success semantics, via an out-parameter and an errno_t return.
-// `remove` has no secure variant in the Windows 10+ UCRT (and is not
-// deprecated), so both branches use the standard `std::remove`.
+// under the engine's /WX policy). As with the library's openFile (see
+// src/laige-core/logging.cpp), the MSVC path uses `_fsopen(path, mode,
+// _SH_DENYNO)` rather than `fopen_s`: `fopen_s` opens with `_SH_SECURE`
+// and would deny even a same-process read-only re-open of a file the
+// sink still holds. `remove` has no secure variant in the Windows 10+
+// UCRT (and is not deprecated), so both branches use the standard
+// `std::remove`.
 #if defined(_MSC_VER)
 std::FILE* openLogFile(const char* path, const char* mode) {
-  std::FILE* stream = nullptr;
-  return (::fopen_s(&stream, path, mode) == 0) ? stream : nullptr;
+  return ::_fsopen(path, mode, _SH_DENYNO);
 }
 #else
 std::FILE* openLogFile(const char* path, const char* mode) {
@@ -233,7 +240,16 @@ bool removeLogFile(const char* path) { return std::remove(path) == 0; }
 
 std::string readWholeFile(const std::string& path) {
   std::FILE* f = openLogFile(path.c_str(), "rb");
-  if (f == nullptr) return {};
+  if (f == nullptr) {
+    // Never let an open failure masquerade as an empty file (CORE-008):
+    // the two read identically downstream, and that ambiguity is what
+    // the Windows CI runs of M0-CORE-02 hid (a fopen_s/_SH_SECURE
+    // sharing violation printing no bytes at all).
+    std::fprintf(stderr, "readWholeFile: open(\"%s\", \"rb\") failed "
+                         "(errno=%d)\n",
+                 path.c_str(), errno);
+    return {};
+  }
   std::string out;
   char buf[4096];
   std::size_t n;

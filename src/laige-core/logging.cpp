@@ -43,6 +43,10 @@
 #include <unistd.h>
 #endif
 
+#if defined(_MSC_VER)
+#include <share.h>  // _SH_DENYNO: plain-fopen sharing for the _fsopen below
+#endif
+
 namespace laige::log {
 
 namespace {
@@ -110,15 +114,22 @@ void formatTimestamp(std::chrono::system_clock::time_point tp, char* out) {
                 h, m, s, frac);
 }
 
-// Portable file open (CPP-009 compile-time platform boundary): MSVC's
-// CRT deprecates plain `fopen` (C4996, an error under the engine's
-// /WX policy) in favor of the secure variant `fopen_s` — same semantics
-// (NULL stream on failure), reported via an out-parameter. Every other
-// supported compiler uses the standard `std::fopen`.
+// Portable file open (CPP-009 compile-time platform boundary).
+//
+// MSVC's CRT deprecates plain `fopen` (C4996, an error under the
+// engine's /WX policy). The secure variant `fopen_s` cannot be used
+// here: it opens with the `_SH_SECURE` sharing mode, which denies
+// *all* sharing for write access (the UCRT maps `_SH_SECURE` to
+// share=0 unless the access is read-only). A file sink opened that
+// way cannot even be re-opened read-only by the same process while it
+// holds the file — the windows-msvc CI runs of M0-CORE-02 read back an
+// empty file for exactly that reason. `_fsopen(path, mode,
+// _SH_DENYNO)` is the CRT's documented way to open with plain-`fopen`
+// sharing semantics (concurrent read/write sharing allowed), which is
+// the behavior every other supported compiler's `fopen` provides.
 #if defined(_MSC_VER)
 std::FILE* openFile(const char* path, const char* mode) {
-  std::FILE* stream = nullptr;
-  return (::fopen_s(&stream, path, mode) == 0) ? stream : nullptr;
+  return ::_fsopen(path, mode, _SH_DENYNO);
 }
 #else
 std::FILE* openFile(const char* path, const char* mode) {

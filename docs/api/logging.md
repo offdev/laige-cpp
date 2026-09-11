@@ -129,7 +129,11 @@ Warn)` do not share a window.
   guarantee this (all arguments are literals/locals alive for the
   `do { … }` statement).
 - `FileSink` **owns** the `FILE*` it opens (closed on destruction,
-  after a final flush). `ConsoleSink` does **not** own its stream
+  after a final flush). The file is opened with standard shared access
+  (plain-`fopen` semantics), so it may be read — or appended —
+  concurrently while the sink holds it, on every platform including
+  Windows (the secure `fopen_s` opening would deny even a same-process
+  read-only re-open). `ConsoleSink` does **not** own its stream
   (`stderr` must outlive the process).
 - `init()` takes `LoggerOptions` **by value** and consumes the sink
   ownership — call it with an rvalue.
