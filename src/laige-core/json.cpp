@@ -371,6 +371,13 @@ bool parseObject(ParserState& p, JsonValue& out) {
 
 bool parseObjectMembers(ParserState& p, JsonValue& obj) {
   for (;;) {
+    // Whitespace is legal between tokens (the header grammar), including
+    // after the ',' of the previous member: the key goes through
+    // parseString directly (not parseValue), so it needs its own skip.
+    // (Found by M0-CORE-08: the repo-root budgets.json — a hand-formatted
+    // document with ", " between members — was rejected; regression tests
+    // in the ConfigJsonInvalid/Valid suites.)
+    skipWhitespace(p);
     JsonValue key;
     if (!parseString(p, key)) return false;  // keys must be quoted strings
     skipWhitespace(p);

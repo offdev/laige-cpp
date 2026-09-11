@@ -647,15 +647,107 @@ No rendering, no physics, no networking yet — `laige-core` only.
     prove the step's Verify clauses — depth/size bounds, the malformed
     corpus, round-trip, value semantics — in one suite)
 
-- [ ] **M0-CORE-08 · Budget harness (histogram + budget checks)**
+- [x] **M0-CORE-08 · Budget harness (histogram + budget checks)**
   - **Refs:** PRD §8.1, CORE-001; AGENTS §12 (benchmark report requirements)
   - **Depends:** M0-CORE-01
   - **Scope:**
     - `laige::histogram`: fixed-capacity histogram with p50/p95/p99/mean/min/max (no allocation after construction).
     - `laige::timeit` scope timer; `laige::budget_check(name, histogram, budget.json entry)`: returns pass/fail with before/after numbers formatted per AGENTS §12 report fields (hardware/OS/compiler/build/workload recorded by the caller harness).
     - `budgets.json` schema at repo root with the PRD §8.1 numbers as named entries (values may start as `0` = "not yet measured" for M2+ budgets).
-  - **Verify:** `ctest -R budget_harness` green: synthetic workload produces percentiles; budget check fails loudly when a threshold is exceeded.
-  - **Size:** ~250 lines + tests
+  - **Decision (2026-09-11):** three-piece harness in `laige-core` plus the
+    `laige-bench` tool — `docs/getting-started/building.md` reserved the
+    canonical command `./build/bin/laige-bench --suite=<name>` for this
+    step, and M0-EXIT-01 needs a runnable end-to-end harness.
+    `laige::Histogram`: fixed-capacity **rolling window** — `record()`
+    is O(1) and allocation-free (one index arithmetic + one store); a
+    full window drops the oldest sample and `totalRecorded()` exposes
+    the truncation (CORE-008: no silent drop); `stats()` is a cold-path
+    O(n log n) pass with **no allocation** (sorts a pre-allocated
+    scratch buffer) and yields exact min/mean/p50/p95/p99/max over the
+    stored window with **nearest-rank percentiles** (rank =
+    ceil(p·n/100) in exact integer math — no fractional indices,
+    bit-identical on every platform); an empty window is `n = 0` with
+    NaN statistics. `laige::TimeIt`: `steady_clock` scope timer in
+    milliseconds, no allocation, immutable start point (safe const
+    reads). `loadBudgets`: file I/O + bounded parse (ADR 0003 — the 1 MiB
+    bound is enforced before the read) + **strict schema v1 validation**
+    (ARCH-007: unsupported version, unknown/missing field, bad
+    name/metric/unit charset, duplicate name, negative or non-finite
+    number all rejected — `MalformedInput`; unreadable file →
+    `IoError`; no new error codes). `budgetCheck` is total (it cannot
+    fail as an operation): empty histogram → `passed = false` + loud
+    `NO_SAMPLES` (a workload that recorded nothing is a broken harness,
+    CORE-008); `target > 0` → `measured <= target` (every PRD §8.1 budget
+    is an at-most upper bound); `target == 0` is a **hard-zero budget**
+    (e.g. `sim_heap_allocs`: zero steady-state heap allocations per
+    frame), **not** "not set" — the "not yet measured" marker lives in
+    `measured` (initial 0, the M0 convention). Report: stable 4-line
+    machine-greppable text (LOG-001) —
+    `budget=<name> result=<PASS|FAIL|NO_SAMPLES> metric=<m> unit=<u>` /
+    `after=<v> before=<v> target=<v>` / stats line via
+    `laige::formatStatsLine` (the single source of the stats text) /
+    `context: workload=… build=… machine=… warmup=…` — the AGENTS §12
+    machine/build facts are recorded by the caller's harness (the tool
+    supplies compiler + build type; the operator supplies the machine via
+    `LAIGE_BENCH_MACHINE`). `budgets.json` (repo root, schema v1):
+    **all 15 PRD §8.1 targets** as named entries (sim tick, 50k-sprite
+    scene, cold start, build time, and the zone server each carry two
+    budgets); `measured: 0` = not yet measured until their subsystems
+    land (M1+). `laige-bench`: `--suite` registry (M0: `synthetic` — a
+    deterministic, allocation-free 4096-step LCG + double stand-in
+    workload with the named Marsaglia LCG64 constants, no RNG),
+    `--runs`/`--warmup` (defaults 1000/100), `--budget=<name>` check with
+    `--budgets` path resolution (argument → `LAIGE_BUDGETS_PATH` env →
+    `budgets.json`), `--report=<path>` append; exit codes 0 pass / 1
+    usage or load failure / **2 budget check failure** (CI-gateable —
+    PRD §8.1 policy). API contract: `docs/api/budget_harness.md`.
+    **Bug fix found by this step's Verify run (M0-CORE-07):** the JSON
+    parser rejected object members separated by `", "` — the object key
+    goes through `parseString` directly (not `parseValue`, which does
+    the whitespace skip), so `parseObjectMembers` was missing one
+    `skipWhitespace`; the repo-root `budgets.json` (hand-formatted)
+    demonstrated it. Fixed in `json.cpp` with a regression test
+    (`ConfigJsonValid.ObjectMemberWhitespace`, fails pre-fix) — the
+    documented grammar ("whitespace only between tokens") was already
+    correct; the implementation did not match it.
+  - **Verify:** `ctest -R budget_harness` green — **22 GTest cases**:
+    `BudgetHarnessHistogram` (known percentiles on 1..100; single-sample
+    window; full ring dropping the oldest with observable churn;
+    capacity-0 drop-all; empty → NaN stats; ordering invariants over a
+    20k-sample deterministic PRNG window; reset/churn semantics; stable
+    `formatStatsLine` text), `BudgetHarnessTimeIt` (non-negative and
+    monotonic; positive after bounded work; restart on reset),
+    `BudgetHarnessCheck` (PASS under target; **loud FAIL when a
+    threshold is exceeded** — the step's Verify clause, with a distinct
+    structured `result=FAIL` report; loud `NO_SAMPLES` on an empty
+    histogram; hard-zero-target budget semantics; named-metric dispatch;
+    caller context in the report; stable first report line),
+    `BudgetHarnessTable` (the repo-root `budgets.json` loads with 15
+    well-formed entries — `frame_time_render` p95 8.3 ms,
+    `sim_heap_allocs` target 0 — and a 13-case schema-rejection corpus:
+    malformed JSON, bad version, root not an object, missing field,
+    unknown field, bad metric, duplicate name, negative target,
+    non-finite `1e999` target, empty name, bad name charset, bad unit,
+    empty workload; missing file → `IoError`; an empty budgets array is
+    valid). The **synthetic workload producing percentiles** is also
+    exercised end-to-end by the `laige_bench_smoke` CTest entry
+    (`laige-bench --suite=synthetic --runs=50`, output must carry
+    `stats: n=50`). Verified locally 2026-09-11: full `ctest` (16/16
+    entries, zero warnings under the NFR-8.10 policy) on GCC 16.2.1
+    (`build` static, `build-shared` shared, `build-asan` ASan+UBSan
+    fatal, `build-tsan` TSan `halt_on_error=1`) and Clang 22.1.8
+    (`build-clang`). CI will additionally prove MSVC (windows lane) and
+    AppleClang (macos lane) compilation of the new sources.
+  - **Size:** ~350 lines header (`budget_harness.h`, full AGENTS §9
+    contract) + ~330 lines `budget_harness.cpp` + ~250 lines
+    `laige-bench.cpp` + CMake (~30) + ~560 lines tests + ~210 lines docs
+    + ~110 lines `budgets.json` + a 6-line `json.cpp` fix and a 39-line
+    regression test (over the ~250-line estimate: the header carries the
+    API contract, the tests prove the Verify clauses — percentiles, loud
+    FAIL on exceeded threshold, the schema corpus — and `laige-bench`
+    implements the canonical command this step reserved in
+    `building.md`, so M0-EXIT-01 has a runnable harness; cohesive, not
+    split — same pattern as M0-CORE-01…07)
 
 ## Tooling
 
