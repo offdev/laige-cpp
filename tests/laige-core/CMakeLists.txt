@@ -12,7 +12,8 @@
 # M0-CORE-xx steps follow the same pattern).
 set(LAIGE_CORE_TEST_SOURCES laige-core_tests.cpp result_status_tests.cpp
                              logging_tests.cpp math_float_tests.cpp
-                             math_fixed_tests.cpp pools_tests.cpp)
+                             math_fixed_tests.cpp pools_tests.cpp
+                              prng_tests.cpp)
 # M0-CORE-02: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own new/delete
 # (strong symbols in the Clang/GCC TSan runtime archives, interposed by
@@ -98,10 +99,20 @@ add_test(NAME pools
          COMMAND laige-core_tests
          --gtest_filter=ArenaPoolBasics.*:ArenaPoolBudget.*:PoolBasics.*:PoolBudget.*:PoolStale.*:PoolDestruction.*:PoolStats.*:PoolMove.*)
 
+# M0-CORE-06: deterministic PRNG (xorshift128+ with splitmix64 seeding
+# and per-substream derivation). The step's Verify command is
+# `ctest -R prng`; this entry selects exactly the Prng* suites. The
+# PrngPeriod suite carries the committed period proof (state map's
+# characteristic polynomial is primitive of degree 128 => every nonzero
+# state has period 2^128 - 1).
+add_test(NAME prng
+         COMMAND laige-core_tests
+         --gtest_filter=PrngGolden.*:PrngRange.*:PrngFloat01.*:PrngSubstreams.*:PrngPeriod.*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
   set_tests_properties(
-    laige-core_tests result_status logging math_float math_fixed pools
+    laige-core_tests result_status logging math_float math_fixed pools prng
     PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

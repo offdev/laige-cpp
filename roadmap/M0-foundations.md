@@ -500,15 +500,78 @@ No rendering, no physics, no networking yet — `laige-core` only.
     Verify clauses — exhaustion, reset, stale handles, accounting —
     cohesive, not split)
 
-- [ ] **M0-CORE-06 · Deterministic PRNG**
+- [x] **M0-CORE-06 · Deterministic PRNG**
   - **Refs:** PRD §10.3 (seeded, per-substream); AGENTS ARCH-010
   - **Depends:** M0-CORE-01
   - **Scope:**
     - `laige::Prng`: xorshift128+ (or equivalent, documented), seed from a 64-bit value; per-substream derivation via documented hash (substream id, e.g. subsystem id).
     - API: `next_u64()`, `next_range(min, max)`, `next_float01()` — all deterministic, documented bit-exactness scope per ADR 0002.
     - Unit tests: golden vector (fixed seed → fixed first N outputs, checked in), substream independence sanity, period sanity (no short cycles).
-  - **Verify:** `ctest -R prng` green; golden-vector test fails if the algorithm changes (intentional — algorithm is part of the determinism contract).
-  - **Size:** ~150 lines + tests
+  - **Decision (2026-09-11):** header-only
+    `include/laige/prng.h`. Core: xorshift128+ transcribed from and
+    verified against the reference implementation (lemire/SIMDxorshift
+    `xorshift128plus.c`) — state `(part1, part2)`, step
+    `part1=o1; t=o0^(o0<<23); part2=t^o1^(t>>18)^(o1>>5); out=part2+o1`
+    (unsigned wrap), all-zero state excluded. Seeding: first two
+    splitmix64 outputs from `seed + K` (`K = 0x9E3779B97F4A7C15`, named
+    `kSplitmix64Increment`; mix constants named) — a bijection, so no
+    seed reaches the zero state. Substreams: documented derivation
+    `deriveSubstream(seed, id) == Prng(seed + id*K)` (id 0 == master;
+    composes: `derive(derive(s,i),j) == derive(s,i+j)`). `next_range`:
+    Lemire unbiased reduction (reject `r >= 2^64 - (2^64 mod n)`; fast
+    path when `n | 2^64`); `min >= max` is a debug assert / documented
+    UB. `next_float01`: `next_u64() >> 40 * 2^-24` — exactly
+    `k*2^-24` (24-bit resolution, `[0,1)`, bit-exact; the only float in
+    the API, multiplied by the exactly representable `kFloat01Unit`).
+    `seedState`/`stepState` are public statics for determinism
+    verification and M1 save/replay (a saved stream is
+    `(seed, part1, part2)`). Value type (copy = shared stream position,
+    documented), single-owner, not thread-safe (CONC-001), no
+    allocation, no exceptions/RTTI (NFR-8.10). Determinism scope
+    (ARCH-010/ADR 0002): pure unsigned integer arithmetic + one exact
+    power-of-two scale => cross-platform bit-exact; the golden vectors
+    are replay fixtures and intentionally fail on algorithm change.
+    **Period: every nonzero state has period exactly 2^128 - 1 —
+    proven, not sampled:** the test reconstructs the state map's
+    characteristic polynomial over GF(2) from a 512-bit probe orbit via
+    Berlekamp-Massey (C is the *reciprocal* of the characteristic
+    polynomial — the recurrence relates `p[t]` to lower indices),
+    checks `P(A)=0` on all 128 basis states, then verifies `P`
+    irreducible (Ruffini: `x^(2^128)≡x` and
+    `gcd(x^(2^d)-x,P)=1` for `d∈{1,2,4,8,16,32,64}`) and primitive
+    (`P | x^(2^128-1)-1`, no `q`-th root for the 9 prime factors of
+    `2^128-1 = 3·5·17·257·641·65537·6700417·274177·67280421310721`,
+    primality by Miller-Rabin, factorization by portable 128-bit
+    multiply — no `__int128`/builtins, MSVC-compatible). API contract:
+    `docs/api/prng.md`.
+  - **Verify:** `ctest -R prng` green — 18 GTest cases across
+    `PrngGolden` (32-draw golden KAT on seed `0x1234567890ABCDEF`,
+    FNV-1a-of-first-4096 replay hash `0xB64E76173859B6D8`, 10^4-step
+    reference transcription check, zero-state seeding spot check over
+    100k seeds), `PrngRange` (5 KATs incl. the power-of-two fast path,
+    span-1 identity, 110k in-bounds draws over 10 spans, unbiasedness:
+    2^18 draws over 8-way and 3-way spans within ~10 sigma),
+    `PrngFloat01` (8-draw KAT, 2^16 draws: dyadic exactness, `[0,1)`
+    bounds, mean 0.5 ± 14 sigma), `PrngSubstreams` (8 id KATs, id-0 ==
+    master, derivation composition, same-id determinism, 2^16-draw
+    cross-substream overlap check), `PrngPeriod` (the committed
+    characteristic-polynomial proof above + empirical screen: no
+    duplicate in 4M draws and no period-q window pattern for the 8 small
+    prime factors of 2^128-1). The golden-vector KATs are intentionally
+    algorithm-sensitive (the algorithm is the determinism contract).
+    Verified locally 2026-09-11: full 12/12 ctest (incl. `prng`) on
+    GCC 16.2.1 (`build` static, `build-shared` shared, `build-asan`
+    ASan+UBSan fatal, `build-tsan` TSan `halt_on_error=1`) and Clang
+    22.1.8 (`build-clang`) — the KAT constants are identical across the
+    two compilers (local two-compiler run; CI hookup lands in
+    M1-DET-04), zero warnings under the NFR-8.10 policy.
+  - **Size:** 255 lines header (`prng.h` — full AGENTS §9 contracts
+    next to the code) + 809 lines tests (incl. the self-contained
+    portable GF(2)/BM/Miller-Rabin proof machinery) + 195 lines docs +
+    ~12 lines CMake (over the ~150-line estimate, same pattern as
+    M0-CORE-01…05: the header carries the API contract; the period
+    proof — the step's "period sanity" clause — is a full algebraic
+    proof rather than a sample check, which the GF(2) machinery costs)
 
 - [ ] **M0-CORE-07 · Config JSON: value type + parser**
   - **Refs:** FR-1.5 (M1 consumes it), M0-DEC-03; PRD §8.2 (NFR-8.7 fuzz), AGENTS TEST-005
