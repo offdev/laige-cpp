@@ -214,23 +214,22 @@ std::string tempFilePath(const char* name) {
 }
 
 // Portable file open/remove for the log-file tests (CPP-009 compile-time
-// platform boundary): MSVC's CRT deprecates plain `fopen`/`remove`
-// (C4996, an error under the engine's /WX policy) in favor of the secure
-// variants `fopen_s`/`remove_s` — same success semantics, via an
-// out-parameter and an errno_t return. Other compilers use the standard
-// `std::fopen`/`std::remove`.
+// platform boundary): MSVC's CRT deprecates plain `fopen` (C4996, an error
+// under the engine's /WX policy) in favor of the secure variant `fopen_s` —
+// same success semantics, via an out-parameter and an errno_t return.
+// `remove` has no secure variant in the Windows 10+ UCRT (and is not
+// deprecated), so both branches use the standard `std::remove`.
 #if defined(_MSC_VER)
 std::FILE* openLogFile(const char* path, const char* mode) {
   std::FILE* stream = nullptr;
   return (::fopen_s(&stream, path, mode) == 0) ? stream : nullptr;
 }
-bool removeLogFile(const char* path) { return ::remove_s(path) == 0; }
 #else
 std::FILE* openLogFile(const char* path, const char* mode) {
   return std::fopen(path, mode);
 }
-bool removeLogFile(const char* path) { return std::remove(path) == 0; }
 #endif
+bool removeLogFile(const char* path) { return std::remove(path) == 0; }
 
 std::string readWholeFile(const std::string& path) {
   std::FILE* f = openLogFile(path.c_str(), "rb");
