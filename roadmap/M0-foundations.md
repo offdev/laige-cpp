@@ -487,10 +487,12 @@ No rendering, no physics, no networking yet — `laige-core` only.
     `pools` and the real-tree include-lint) on GCC 16.2.1 (`build`
     static, `build-shared` shared, `build-asan` ASan+UBSan fatal,
     `build-tsan` TSan `halt_on_error=1`) and a Clang 22.1.8 tree
-    (`build-clang`), zero warnings under the NFR-8.10 policy. CI:
-    pending observation of the PR's `ci-pull.yml` lane (linux-gcc,
-    linux-clang, linux-asan, linux-tsan, include-lint); the Windows
-    job additionally proves MSVC compilation of this header.
+    (`build-clang`), zero warnings under the NFR-8.10 policy. CI
+    observed 2026-09-11 via the GitHub API — PR #5 `ci-pull.yml` run
+    34593510387 green (5/5 executed: linux-gcc, linux-clang,
+    linux-asan, linux-tsan, include-lint; macOS/Windows are merge-lane
+    jobs, skipped on PRs — the Windows job will additionally prove MSVC
+    compilation of this header at merge).
   - **Size:** 458 lines header (`pools.h` — full AGENTS §9 contracts
     next to the code) + 584 lines tests + 228 lines docs + ~7 lines
     CMake (over the ~300-line estimate, same pattern as M0-CORE-01…04:
