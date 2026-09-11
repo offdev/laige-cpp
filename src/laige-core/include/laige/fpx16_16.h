@@ -88,6 +88,7 @@
 #pragma once
 
 #include <cmath>
+#include <compare>
 #include <cstdint>
 #include <limits>
 
