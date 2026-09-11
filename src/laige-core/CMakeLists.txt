@@ -15,10 +15,10 @@
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-core SHARED version.cpp errors.cpp logging.cpp
-                             sim_math.cpp sim_math_fixed.cpp)
+                              sim_math.cpp sim_math_fixed.cpp json.cpp)
 else()
   add_library(laige-core STATIC version.cpp errors.cpp logging.cpp
-                             sim_math.cpp sim_math_fixed.cpp)
+                              sim_math.cpp sim_math_fixed.cpp json.cpp)
 endif()
 
 laige_apply_engine_policy(laige-core)

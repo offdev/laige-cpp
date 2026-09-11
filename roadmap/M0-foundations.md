@@ -573,7 +573,7 @@ No rendering, no physics, no networking yet — `laige-core` only.
     proof — the step's "period sanity" clause — is a full algebraic
     proof rather than a sample check, which the GF(2) machinery costs)
 
-- [ ] **M0-CORE-07 · Config JSON: value type + parser**
+- [x] **M0-CORE-07 · Config JSON: value type + parser**
   - **Refs:** FR-1.5 (M1 consumes it), M0-DEC-03; PRD §8.2 (NFR-8.7 fuzz), AGENTS TEST-005
   - **Depends:** M0-CORE-01, M0-DEC-03
   - **Scope:**
@@ -581,8 +581,71 @@ No rendering, no physics, no networking yet — `laige-core` only.
     - Serializer for round-trip of simple structures.
     - Fuzz target `json_parse` registered with the fuzz runner.
     - Unit tests: valid/invalid/malformed corpus (nested depth limit, huge number, truncated input, encoding edge cases).
-  - **Verify:** `ctest -R config_json` green; `laige-fuzz json_parse --runs=1000` clean under ASan.
-  - **Size:** ~400 lines + tests (split here if the parser exceeds budget: `M0-CORE-07a` parser, `M0-CORE-07b` serializer+fuzz)
+  - **Decision (2026-09-11):** hand-rolled bounded parser in
+    `laige-core` — no dependency (ADR 0003). Recursive descent with an
+    RAII depth guard; bounds from `JsonOptions` (defaults: 1 MiB document,
+    depth 32, both inclusive; `maxDepth <= 0` rejects every container).
+    **Every** parse failure — grammar, bad escapes, duplicate object
+    keys, raw control characters, invalid UTF-8 (overlong / raw
+    surrogate / > U+10FFFF), lone surrogate halves in `\uXXXX`, over
+    size/depth — is `ErrorCode::MalformedInput` (3): no new codes,
+    because the registry entry for code 3 already names the ADR 0003
+    bounds (CORE-004). Numbers: JSON number → `double` via
+    `std::strtod`; a well-formed overflow token (e.g. `1e999`) stores
+    ±inf — a *valid parse result*, callers must reject non-finite
+    (config validation, M1); integer literals beyond ±2^53 lose
+    precision (documented policy). `JsonValue`: plain members; deep
+    copy (O(size)), O(1) move with moved-from == Null (documented);
+    the "owns exactly the payload its kind names" invariant is kept by
+    `clearPayload()` on every kind change and every assignment.
+    Equality: deep; objects order-insensitive, arrays order-sensitive,
+    NaN != NaN. Serializer: canonical compact ASCII (control chars and
+    every codepoint > 0x7F as `\uXXXX`, surrogate pairs above U+FFFF;
+    numbers the shortest correctly rounded decimal via a `%.*g`
+    search over p = 1..17 — deliberately *not* `std::to_chars`, which
+    AppleClang 15 (macos-14 lane) lacks for floats; `-0.0` → `0`);
+    `parse(serialize(v)) == v` for all finite values; serializing a
+    non-finite number is a documented precondition violation.
+    `laige-fuzz`: the *minimal* deterministic fuzz runner lands in this
+    step because the Verify gate requires it (Prng-seeded, default
+    seed `0x1F055EED`, `--runs`/`--seed`, three input modes — mutate /
+    truncate / random bytes — over a 19-document ASCII corpus; any
+    Status is acceptable, only a crash fails); target `json_parse`
+    registered. M0-TEST-01 extends it (CI lane semantics, nightly long
+    runs, seed documentation). API contract: `docs/api/json.md`.
+  - **Verify:** `ctest -R config_json` green — 25 GTest cases across
+    `ConfigJsonValid` (all six kinds; DBL_MAX / denorm_min / ±inf
+    overflow / 2^53+1 rounding; escapes, surrogate pairs, strict
+    UTF-8, DEL; containers, document order, depth-32 and 1 MiB
+    boundary documents), `ConfigJsonInvalid` (empty/trailing data,
+    truncation, bad numbers, bad escapes, lone surrogates, raw
+    controls, invalid UTF-8, duplicate keys, depth 33, 1 MiB+2 —
+    every case asserts `MalformedInput`, not merely an error),
+    `ConfigJsonRoundTrip` (parse→serialize→parse value stability and
+    serializer idempotence over a corpus incl. 32-deep nesting and
+    escaped strings; canonical forms pinned), `ConfigJsonValue`
+    (factories, deep copy, moved-from Null, in-place replacement, kind
+    transitions, deep equality incl. NaN != NaN and object
+    order-insensitivity, total `findMember`, churn), and
+    `ConfigJsonOptions` (maxDepth 1/2; maxDocumentBytes inclusive bound
+    and 0). `laige-fuzz json_parse --runs=1000` clean under ASan: the
+    instrumented `fuzz_json_parse` CTest entry passed in the ASan tree
+    and a direct `ASAN_OPTIONS=detect_leaks=1:halt_on_error=1` run is
+    clean (1000 deterministic Prng-driven runs, no crash, no sanitizer
+    report). Verified locally 2026-09-11: full 14/14 ctest on
+    GCC 16.2.1 (`build` static, `build-shared` shared, `build-asan`
+    ASan+UBSan fatal, `build-tsan` TSan `halt_on_error=1`) and a
+    Clang 22.1.8 tree — zero warnings under the NFR-8.10 policy;
+    CI will additionally prove MSVC (windows lane) and AppleClang
+    (macos lane) compilation of the new sources.
+  - **Size:** 270 lines header (`json.h` — full AGENTS §9 contracts
+    next to the code) + 826 lines implementation + 620 lines tests +
+    208 lines fuzz runner + ~22 lines fuzz CMake + ~12 lines CMake
+    wiring (over the ~400-line estimate; kept cohesive rather than
+    split into `M0-CORE-07a/07b`, same pattern as
+    M0-CORE-01…06: the header carries the API contract and the tests
+    prove the step's Verify clauses — depth/size bounds, the malformed
+    corpus, round-trip, value semantics — in one suite)
 
 - [ ] **M0-CORE-08 · Budget harness (histogram + budget checks)**
   - **Refs:** PRD §8.1, CORE-001; AGENTS §12 (benchmark report requirements)

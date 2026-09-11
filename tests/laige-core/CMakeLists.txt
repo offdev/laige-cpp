@@ -13,7 +13,8 @@
 set(LAIGE_CORE_TEST_SOURCES laige-core_tests.cpp result_status_tests.cpp
                              logging_tests.cpp math_float_tests.cpp
                              math_fixed_tests.cpp pools_tests.cpp
-                              prng_tests.cpp)
+                              prng_tests.cpp
+                              config_json_tests.cpp)
 # M0-CORE-02: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own new/delete
 # (strong symbols in the Clang/GCC TSan runtime archives, interposed by
@@ -109,10 +110,20 @@ add_test(NAME prng
          COMMAND laige-core_tests
          --gtest_filter=PrngGolden.*:PrngRange.*:PrngFloat01.*:PrngSubstreams.*:PrngPeriod.*)
 
+# M0-CORE-07: bounded JSON parser + serializer (ADR 0003). The step's
+# Verify command is `ctest -R config_json`; this entry selects exactly
+# the ConfigJson* suites from the shared laige-core_tests executable.
+# The fuzz gate of the step is the `fuzz_json_parse` entry registered in
+# tools/fuzz (runs instrumented in the ASan tree).
+add_test(NAME config_json
+         COMMAND laige-core_tests
+         --gtest_filter=ConfigJson*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
   set_tests_properties(
     laige-core_tests result_status logging math_float math_fixed pools prng
+    config_json
     PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

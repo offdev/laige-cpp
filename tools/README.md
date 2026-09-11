@@ -2,7 +2,11 @@
 
 Engine tools and CI scripts, each landing with its roadmap step:
 
-- `laige-fuzz` — fuzz runner (M0-TEST-01)
+- `laige-fuzz` — deterministic bounded fuzz runner (minimal form from
+  M0-CORE-07, in `tools/fuzz`: the `json_parse` target, `--runs`/`--seed`,
+  built with `LAIGE_BUILD_TESTS=ON`, registered as the `fuzz_json_parse`
+  CTest entry — bounded fuzz in every commit, PRD §14; M0-TEST-01
+  extends it: CI lane semantics, nightly long runs, seed documentation)
 - `laige-include-lint` — include-graph lint + vendored-dependency-count
   metric over `src/**` (M0-CI-03). Pure Python 3 stdlib; run it as
   `python3 tools/laige-include-lint [--root REPO_ROOT]`. Enforces the PRD
