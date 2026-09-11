@@ -14,7 +14,8 @@ set(LAIGE_CORE_TEST_SOURCES laige-core_tests.cpp result_status_tests.cpp
                              logging_tests.cpp math_float_tests.cpp
                              math_fixed_tests.cpp pools_tests.cpp
                               prng_tests.cpp
-                              config_json_tests.cpp)
+                              config_json_tests.cpp
+                               budget_harness_tests.cpp)
 # M0-CORE-02: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own new/delete
 # (strong symbols in the Clang/GCC TSan runtime archives, interposed by
@@ -119,11 +120,32 @@ add_test(NAME config_json
          COMMAND laige-core_tests
          --gtest_filter=ConfigJson*)
 
+# M0-CORE-08: budget harness (Histogram, TimeIt, budgetCheck,
+# loadBudgets). The step's Verify command is `ctest -R budget_harness`;
+# this entry selects exactly the BudgetHarness* suites from the shared
+# laige-core_tests executable. The table-load tests read the repo-root
+# budgets.json through LAIGE_BUDGETS_PATH (set for the full module
+# suite too, so both entries behave identically); the "budgets.json"
+# fallback only works from the source root.
+add_test(NAME budget_harness
+         COMMAND laige-core_tests
+         --gtest_filter=BudgetHarness*)
+# NB: CTest's ENVIRONMENT property is replaced (not appended) by a later
+# set_tests_properties call on the same test — the LAIGE_TSAN block below
+# therefore re-states LAIGE_BUDGETS_PATH alongside TSAN_OPTIONS.
+set_tests_properties(laige-core_tests budget_harness
+  PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
   set_tests_properties(
     laige-core_tests result_status logging math_float math_fixed pools prng
-    config_json
-    PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
+    config_json budget_harness
+    # ENVIRONMENT is replaced (not appended) by a later set_tests_properties
+    # call on the same test, so restate the budgets path here (see the note
+    # above the first set_tests_properties). List value = one semicolon-
+    # joined string (CTest's ENVIRONMENT is a ';'-separated list).
+    PROPERTIES ENVIRONMENT
+    "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 endif()

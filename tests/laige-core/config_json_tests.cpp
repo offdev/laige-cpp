@@ -282,6 +282,46 @@ TEST(ConfigJsonValid, Containers) {
   }
 }
 
+// M0-CORE-08 regression: whitespace after the ',' of an object member
+// must be accepted (the grammar allows whitespace between tokens). The
+// object key goes through parseString directly (not parseValue, which
+// does the skipping), so the key needs its own whitespace skip — the old
+// parseObjectMembers rejected {"a": 1, "b": 2}. Found when the
+// hand-formatted repo-root budgets.json was rejected (M0-CORE-08).
+TEST(ConfigJsonValid, ObjectMemberWhitespace) {
+  {
+    const auto r = Parse(R"({"a": 1, "b": 2})");
+    ASSERT_TRUE(r.ok());
+    const JsonValue* a = r.value().findMember("a");
+    ASSERT_NE(nullptr, a);
+    EXPECT_EQ(1.0, a->asNumber());
+    const JsonValue* b = r.value().findMember("b");
+    ASSERT_NE(nullptr, b);
+    EXPECT_EQ(2.0, b->asNumber());
+  }
+  // Hand-formatted (multi-line) document — the shape of budgets.json:
+  // newlines + indentation between members.
+  {
+    const auto r = Parse("{\n  \"version\": 1,\n  \"budgets\": []\n}");
+    ASSERT_TRUE(r.ok());
+    const JsonValue* v = r.value().findMember("version");
+    ASSERT_NE(nullptr, v);
+    EXPECT_EQ(1.0, v->asNumber());
+    const JsonValue* budgets = r.value().findMember("budgets");
+    ASSERT_NE(nullptr, budgets);
+    EXPECT_TRUE(budgets->isArray());
+    EXPECT_TRUE(budgets->asArray().empty());
+  }
+  // Whitespace before the closing brace after the last member.
+  {
+    const auto r = Parse(R"({"a": 1 })");
+    ASSERT_TRUE(r.ok());
+    const JsonValue* a = r.value().findMember("a");
+    ASSERT_NE(nullptr, a);
+    EXPECT_EQ(1.0, a->asNumber());
+  }
+}
+
 TEST(ConfigJsonValid, DepthAtLimit) {
   // Default maxDepth is 32: exactly 32 nested containers parse, and the
   // walk reaches the null leaf at level 32.

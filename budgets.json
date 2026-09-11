@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "description": "Laige performance budgets (PRD 8.1). Each entry names one hard budget: 'target' is the limit in 'unit' (every budget is an at-most upper bound; target 0 is a hard zero budget, not 'unset'), 'measured' is the last recorded value of that budget (0 = not yet measured, the M0 convention), and 'metric' is the histogram statistic the check evaluates. Schema: docs/api/budget_harness.md, section 'budgets.json schema'.",
+  "budgets": [
+    {
+      "name": "frame_time_render",
+      "metric": "p95",
+      "unit": "ms",
+      "target": 8.3,
+      "measured": 0,
+      "workload": "worst-case isometric reference scene @ 1080p, mid-range laptop (PRD 8.1)"
+    },
+    {
+      "name": "sim_tick_avg",
+      "metric": "mean",
+      "unit": "ms",
+      "target": 3.0,
+      "measured": 0,
+      "workload": "10k entities, 2k dynamic bodies (PRD 8.1)"
+    },
+    {
+      "name": "sim_tick_p99",
+      "metric": "p99",
+      "unit": "ms",
+      "target": 5.0,
+      "measured": 0,
+      "workload": "10k entities, 2k dynamic bodies (PRD 8.1)"
+    },
+    {
+      "name": "sprites_50k_draw_calls",
+      "metric": "max",
+      "unit": "draw_calls",
+      "target": 30,
+      "measured": 0,
+      "workload": "50k visible sprites (worst-case isometric overlap), 3 parallax layers, UI (PRD 8.1)"
+    },
+    {
+      "name": "sprites_50k_cpu",
+      "metric": "mean",
+      "unit": "ms",
+      "target": 2.0,
+      "measured": 0,
+      "workload": "50k visible sprites (worst-case isometric overlap), 3 parallax layers, UI (PRD 8.1)"
+    },
+    {
+      "name": "iso_depthkey_rebuild",
+      "metric": "mean",
+      "unit": "ms",
+      "target": 0.2,
+      "measured": 0,
+      "workload": "10k dirty cells after a terrain edit (PRD 8.1)"
+    },
+    {
+      "name": "iso_picking",
+      "metric": "mean",
+      "unit": "ms",
+      "target": 0.01,
+      "measured": 0,
+      "workload": "one isometric screen-to-grid pick, O(1) (PRD 8.1)"
+    },
+    {
+      "name": "sim_heap_allocs",
+      "metric": "max",
+      "unit": "allocs_per_frame",
+      "target": 0,
+      "measured": 0,
+      "workload": "steady-state sim loop heap allocations, asserted in debug builds (PRD 8.1)"
+    },
+    {
+      "name": "engine_base_rss",
+      "metric": "max",
+      "unit": "mb",
+      "target": 100,
+      "measured": 0,
+      "workload": "engine base memory, empty scene running (PRD 8.1, all P0 platforms)"
+    },
+    {
+      "name": "cold_start_ssd",
+      "metric": "max",
+      "unit": "s",
+      "target": 2.0,
+      "measured": 0,
+      "workload": "game process to first frame on SSD (PRD 8.1, P0 platforms)"
+    },
+    {
+      "name": "cold_start_cold",
+      "metric": "max",
+      "unit": "s",
+      "target": 5.0,
+      "measured": 0,
+      "workload": "cold start (PRD 8.1, P0 platforms)"
+    },
+    {
+      "name": "build_time_ci",
+      "metric": "max",
+      "unit": "min",
+      "target": 10,
+      "measured": 0,
+      "workload": "clean build, engine + sample (PRD 8.1, CI)"
+    },
+    {
+      "name": "build_time_local",
+      "metric": "max",
+      "unit": "min",
+      "target": 5,
+      "measured": 0,
+      "workload": "warm local build, engine + sample (PRD 8.1)"
+    },
+    {
+      "name": "zone_server_tick_p95",
+      "metric": "p95",
+      "unit": "ms",
+      "target": 8.0,
+      "measured": 0,
+      "workload": "zone server, 2k players @ 20 Hz (PRD 8.1, 8-core server class)"
+    },
+    {
+      "name": "zone_server_ram",
+      "metric": "max",
+      "unit": "gb",
+      "target": 4,
+      "measured": 0,
+      "workload": "zone server RAM, 2k players @ 20 Hz (PRD 8.1, 8-core server class)"
+    }
+  ]
+}
