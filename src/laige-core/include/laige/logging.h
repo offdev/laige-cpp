@@ -297,8 +297,10 @@ class ConsoleSink : public Sink {
 // NFR-13.3 registry text. The sink owns the FILE* it opens.
 class FileSink : public Sink {
  public:
-  // Opens `path` in append mode. Never throws (NFR-8.10): a failed open
-  // is a Status carrying ErrorCode::IoError.
+  // Opens `path` in binary append mode (platform-stable on-disk
+  // format: LF-terminated lines, no Windows text-mode CRLF
+  // translation). Never throws (NFR-8.10): a failed open is a Status
+  // carrying ErrorCode::IoError.
   [[nodiscard]] static laige::Result<std::unique_ptr<FileSink>>
   create(std::string path);
 

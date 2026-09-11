@@ -393,7 +393,11 @@ TEST(LogRecord, IdentityAndTimestamp) {
 
 TEST(LogSinks, ConsoleSinkLineFormat) {
   const std::string path = tempFilePath("console");
-  std::FILE* f = openLogFile(path.c_str(), "w+");
+  // Binary capture stream: this test asserts the sink's exact byte
+  // output (the sink's contract is '\n'-terminated lines written to
+  // the stream); a Windows text-mode stream would translate the
+  // sink's '\n' to '\r\n' before the bytes reach the file.
+  std::FILE* f = openLogFile(path.c_str(), "wb+");
   ASSERT_NE(f, nullptr);
   {
     laige::log::ConsoleSink sink(f);

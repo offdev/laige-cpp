@@ -205,7 +205,11 @@ void ConsoleSink::flush() {
 // ---------------------------------------------------------------------------
 
 laige::Result<std::unique_ptr<FileSink>> FileSink::create(std::string path) {
-  std::FILE* stream = openFile(path.c_str(), "a");
+  // Binary append mode: the on-disk format is platform-stable — every
+  // line ends with a single '\n' (LF) on every platform, never
+  // translated to '\r\n' by Windows text mode (the machine-searchable
+  // format of LOG-001; see docs/api/logging.md, "Line format").
+  std::FILE* stream = openFile(path.c_str(), "ab");
   if (stream == nullptr) {
     // LOG-007 minimal fallback: the caller keeps its current sink
     // (console) and reports the failure; the Status carries the

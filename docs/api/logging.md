@@ -70,6 +70,12 @@ Each record is one line (see `ConsoleSinkLineFormat` /
   (ARCH-009).
 - **Severity token:** the stable lowercase name (`trace` … `fatal`).
 - **Fields:** ` | k=v` per field, in call order.
+- **Line ending:** sinks terminate every line with a single `\n`.
+  `FileSink` opens its file in **binary** append mode, so the on-disk
+  format is identical on every platform (LF only — Windows text-mode
+  CRLF translation never occurs). `ConsoleSink` writes `\n` to its
+  stream; a Windows console stream performs its own display
+  translation.
 - A `rate_limited` summary event (below) uses the event fields
   `event=<original event>` and `suppressed=<count>`.
 
@@ -155,7 +161,7 @@ Warn)` do not share a window.
 | Enabled event | one mutex section + one sink write | Field value strings (only when fields given); one rate-state entry per distinct key (amortized, bounded by distinct event names); one summary record per window rollover | mutex + sink I/O |
 | `flush()` | one sink flush | none | sink I/O (file write) |
 | `shutdown()` | drains pending summaries + one flush | summary records for pending counts | sink I/O |
-| `FileSink::create()` | one `fopen` (append) | the sink object | file open |
+| `FileSink::create()` | one `fopen` (binary append) | the sink object | file open |
 | `installCrashHandling()` | one `sigaction` per signal (POSIX) / one handler (Windows) | none | none |
 
 Hot-path budget (CORE-002): the disabled path is the budgeted one —
