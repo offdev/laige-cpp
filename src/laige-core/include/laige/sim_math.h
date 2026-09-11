@@ -15,7 +15,7 @@
 //                                                        failing pair is declared unsupported
 //                                                        for this backend.
 //   Fpx16_16       "fixed_point_16_16"   Q16.16 in `int32_t`,       Bit-exact across all builds,
-//   (M0-CORE-04)                     `int64_t` intermediates         platforms, ISAs, and compilers
+//   (this step)                     `int64_t` intermediates         platforms, ISAs, and compilers
 //                                                        by the language standard. The default
 //                                                        backend; required for lockstep and
 //                                                        authoritative MMO.
@@ -133,6 +133,8 @@
 #include <cmath>
 #include <limits>
 
+#include "laige/fpx16_16.h"
+
 namespace laige::sim {
 
 // ---------------------------------------------------------------------------
@@ -144,13 +146,15 @@ namespace laige::sim {
 // implementations). Contract:
 //
 //   - `Scalar`: the backend's storage/operation type.
-//   - `add` / `sub` / `mul` / `div` / `sqrt`: the five pinned arithmetic
+//   - `add` / `sub` / `mul` / `div` / `sqrt`: the five arithmetic
 //     primitives. Each must be one correctly-rounded operation of the
 //     backend's format (no fused or reassociated sequence),
 //     deterministic by the scope documented in the backend.
+//   - `isNaN` / `isInf`: the backend's value classification (IEEE for
+//     floating-point backends; fixed-point backends have no NaN/Inf and
+//     report false).
 //
-// Adding a backend is an additive change (ADR 0002 review conditions);
-// `Fpx16_16` lands in M0-CORE-04.
+// Adding a backend is an additive change (ADR 0002 review conditions).
 
 // IEEE-754 binary32 with pinned semantics (ADR 0002). See the header
 // preamble for the pinned flag set and the full NaN/Inf policy.
@@ -169,6 +173,46 @@ struct Fp32Pinned {
   // Correctly-rounded binary32 square root (SSE2 vsqrtss / NEON vsqrt).
   // sqrt of a negative value is NaN (IEEE); no trap.
   static Scalar sqrt(Scalar a) noexcept { return std::sqrt(a); }
+
+  // IEEE classification (the raw `==`/`!=` below are the deliberate
+  // bit-level comparisons the pinned NaN/Inf policy requires — the
+  // -Wfloat-equal heuristic is scoped away, CORE-010: no global
+  // suppression).
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wfloat-equal"
+#endif
+  static bool isNaN(Scalar x) noexcept { return x != x; }
+  static bool isInf(Scalar x) noexcept {
+    const Scalar inf = std::numeric_limits<Scalar>::infinity();
+    return x == inf || x == -inf;
+  }
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic pop
+#endif
+};
+
+// Q16.16 fixed-point (ADR 0002). Bit-exact across all builds,
+// platforms, ISAs, and compilers by the C++20 language standard — no
+// pinned flags required. The DEFAULT backend; required for lockstep
+// and authoritative MMO. The full policy (saturating overflow,
+// round-to-nearest ties-to-even, divide-by-zero, conversions,
+// no NaN/Inf) is documented in laige/fpx16_16.h.
+struct Fpx16_16 {
+  using Scalar = fpx16_16;
+
+  static Scalar add(Scalar a, Scalar b) noexcept { return fpx16_16::add(a, b); }
+  static Scalar sub(Scalar a, Scalar b) noexcept { return fpx16_16::sub(a, b); }
+  // Rounded (ties-to-even) and saturating — see fpx16_16.h.
+  static Scalar mul(Scalar a, Scalar b) noexcept { return fpx16_16::mul(a, b); }
+  // Divide by zero is defined (x/0 → ±max, 0/0 → +0) — never traps.
+  static Scalar div(Scalar a, Scalar b) noexcept { return fpx16_16::div(a, b); }
+  // sqrt of a negative value is defined as +0 (no NaN exists).
+  static Scalar sqrt(Scalar a) noexcept { return fpx16_16::sqrt(a); }
+
+  // Q16.16 has no NaN and no infinity: total order, always finite.
+  static bool isNaN(Scalar) noexcept { return false; }
+  static bool isInf(Scalar) noexcept { return false; }
 };
 
 // ---------------------------------------------------------------------------
@@ -239,9 +283,13 @@ struct SimMath {
   // Length / normalize
   // ------------------------------------------------------------------
   // length is exactly sqrt(x*x + y*y): two muls, one add, one
-  // correctly-rounded sqrt, in that order (pinned -ffp-contract=off
-  // keeps x*x + y*y from FMA-contraction, which would round once and
-  // change the result).
+  // correctly-rounded sqrt, in that order. fp32_pinned: the pinned
+  // -ffp-contract=off keeps x*x + y*y from FMA-contraction, which would
+  // round once and change the result. fpx16_16: the squarings and the
+  // sum are saturating Q16.16 ops, so length is accurate while
+  // x*x + y*y stays inside the Q16.16 range (|v| ≲ 181.02 per
+  // component; beyond that the result saturates — defined,
+  // deterministic, documented in fpx16_16.h and docs/api/sim_math.md).
   [[nodiscard]] static Scalar length(Vec2 v) noexcept {
     return Backend::sqrt(
         Backend::add(Backend::mul(v.x, v.x), Backend::mul(v.y, v.y)));
@@ -252,18 +300,20 @@ struct SimMath {
         Backend::mul(v.z, v.z)));
   }
 
-  // Unit vector: v / length(v), component-wise IEEE division. The zero
-  // vector is defined to normalize to the zero vector (SimMath never
-  // injects NaN from a zero-length input). NaN/inf components propagate
-  // per IEEE (an infinite vector can normalize to NaN components).
+  // Unit vector: v / length(v), component-wise division in the
+  // backend's format. The zero vector is defined to normalize to the
+  // zero vector (SimMath never injects NaN from a zero-length input;
+  // the fixed-point backend has no NaN at all). NaN/inf components
+  // propagate per the backend's policy (fp32_pinned: IEEE — an infinite
+  // vector can normalize to NaN components).
   [[nodiscard]] static Vec2 normalize(Vec2 v) noexcept {
     const Scalar len = length(v);
-    if (equals(len, Scalar{0.0})) return Vec2{};
+    if (equals(len, Scalar{})) return Vec2{};
     return Vec2{div(v.x, len), div(v.y, len)};
   }
   [[nodiscard]] static Vec3 normalize(Vec3 v) noexcept {
     const Scalar len = length(v);
-    if (equals(len, Scalar{0.0})) return Vec3{};
+    if (equals(len, Scalar{})) return Vec3{};
     return Vec3{div(v.x, len), div(v.y, len), div(v.z, len)};
   }
 
@@ -323,16 +373,16 @@ struct SimMath {
   static bool notEquals(Scalar a, Scalar b) noexcept { return ne(a, b); }
   // True iff neither operand is NaN (IEEE 754-2008 `totalOrder`
   // predicate, i.e. the negation of `isunordered` — not the negation of
-  // the arithmetic != operator).
+  // the arithmetic != operator). Always true for fixed-point backends
+  // (total order).
   static bool isOrdered(Scalar a, Scalar b) noexcept {
     return !isNaN(a) && !isNaN(b);
   }
-  // IEEE classifications.
-  static bool isNaN(Scalar x) noexcept { return ne(x, x); }
-  static bool isInf(Scalar x) noexcept {
-    const Scalar inf = std::numeric_limits<Scalar>::infinity();
-    return eq(x, inf) || eq(x, -inf);
-  }
+  // Value classification, delegated to the backend: IEEE for
+  // floating-point backends; fixed-point backends have no NaN/Inf
+  // (isNaN/isInf always false, isFinite always true).
+  static bool isNaN(Scalar x) noexcept { return Backend::isNaN(x); }
+  static bool isInf(Scalar x) noexcept { return Backend::isInf(x); }
   static bool isFinite(Scalar x) noexcept { return !isNaN(x) && !isInf(x); }
 
   // Vector equality (component-wise; treats ±0 as equal, per IEEE).
@@ -346,8 +396,17 @@ struct SimMath {
   static bool notEquals(Vec3 a, Vec3 b) noexcept { return !equals(a, b); }
 };
 
-// The `fp32_pinned` SimMath (this step; `determinism.math` config id
-// "float_pinned_32"). `SimMathFpx16_16` follows in M0-CORE-04.
+// The `fpx16_16` SimMath (this step; `determinism.math` config id
+// "fixed_point_16_16"). The DEFAULT backend (ADR 0002); required for
+// lockstep (AC-10.3) and authoritative MMO. The `determinism.math`
+// config plumbing lands with the config step (FR-1.5); until then,
+// deterministic/lockstep engine code targets SimMathFpx16 and
+// opt-in IEEE-float zones target SimMathFp32.
+using SimMathFpx16 = SimMath<Fpx16_16>;
+
+// The `fp32_pinned` SimMath (M0-CORE-03; `determinism.math` config id
+// "float_pinned_32"). Opt-in for single-player / non-lockstep zones
+// that want IEEE float semantics (ADR 0002).
 using SimMathFp32 = SimMath<Fp32Pinned>;
 
 }  // namespace laige::sim

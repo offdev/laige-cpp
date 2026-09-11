@@ -11,7 +11,8 @@
 # their own CTest entries (M0-CORE-01 adds `result_status`; later
 # M0-CORE-xx steps follow the same pattern).
 set(LAIGE_CORE_TEST_SOURCES laige-core_tests.cpp result_status_tests.cpp
-                             logging_tests.cpp math_float_tests.cpp)
+                             logging_tests.cpp math_float_tests.cpp
+                             math_fixed_tests.cpp)
 # M0-CORE-02: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own new/delete
 # (strong symbols in the Clang/GCC TSan runtime archives, interposed by
@@ -83,9 +84,17 @@ add_test(NAME math_float
          COMMAND laige-core_tests
          --gtest_filter=SimMathBasics.*:SimMathNanInf.*:SimMathProperties.*:SimMathDispatch.*)
 
+# M0-CORE-04: SimMath fpx16_16 backend (default). The step's Verify
+# command is `ctest -R math_fixed`; this entry selects exactly the
+# FixedPoint* suites from the shared laige-core_tests executable.
+add_test(NAME math_fixed
+         COMMAND laige-core_tests
+         --gtest_filter=FixedPointBasics.*:FixedPointRounding.*:FixedPointSaturation.*:FixedPointConversions.*:FixedPointSimMath.*:FixedPointDispatch.*:FixedPointDeterminism.*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
-  set_tests_properties(laige-core_tests result_status logging math_float
+  set_tests_properties(
+    laige-core_tests result_status logging math_float math_fixed
     PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()
