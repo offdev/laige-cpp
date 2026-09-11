@@ -155,7 +155,10 @@ pinned set and the NaN/Inf policy):
   `sim_math.cpp`, `sim_math_fixed.cpp`; API contract, NaN/Inf policy,
   and the fpx16_16 rounding/saturation policy in
   [docs/api/sim_math.md](../api/sim_math.md), pinned flags via
-  `laige_apply_simmath_policy()`).
+  `laige_apply_simmath_policy()`), and the memory pools from M0-CORE-05
+  (`include/laige/pools.h`: `laige::ArenaPool<T>` and `laige::Pool<T>`
+  with `laige::PoolStats` accounting; API contract in
+  [docs/api/pools.md](../api/pools.md)).
 - `tests/laige-core/laige-core_tests` is a CTest link smoke test (a
   GoogleTest suite since M0-DEP-01) that runs in every build tree above: it
   verifies the static/shared link and checks the NFR-8.10 policy flags with
@@ -178,6 +181,13 @@ pinned set and the NaN/Inf policy):
   `FixedPointSaturation`, `FixedPointConversions`, `FixedPointSimMath`,
   `FixedPointDispatch`, and `FixedPointDeterminism` suites — the step's
   Verify command is `ctest -R math_fixed` (verified under ASan+UBSan).
+- `pools` is the M0-CORE-05 CTest entry: a filtered view of the same
+  executable covering the `ArenaPoolBasics`, `ArenaPoolBudget`,
+  `PoolBasics`, `PoolBudget`, `PoolStale`, `PoolDestruction`,
+  `PoolStats`, and `PoolMove` suites — the step's Verify command is
+  `ctest -R pools` (budget exhaustion, reset semantics, and
+  generation-checked stale handles; the stale-handle assert runs in a
+  forked child on the POSIX jobs).
 - Every configure verifies the vendored dependency lock
   (`cmake/laige-deps-lock.cmake` against `deps.lock`); a tampered or
   unlisted file under `deps/` fails the configure loudly. GoogleTest is the

@@ -424,7 +424,7 @@ No rendering, no physics, no networking yet — `laige-core` only.
     saturation, conversions, and the two-implementation determinism
     property — cohesive, not split)
 
-- [ ] **M0-CORE-05 · Pools: `ArenaPool<T>` and `Pool<T>`**
+- [x] **M0-CORE-05 · Pools: `ArenaPool<T>` and `Pool<T>`**
   - **Refs:** PRD §9.1 (S-2), §10.4; AGENTS PERF-003, CPP-002/007
   - **Depends:** M0-CORE-01
   - **Scope:**
@@ -432,8 +432,71 @@ No rendering, no physics, no networking yet — `laige-core` only.
     - `laige::Pool<T>`: stable-handle pool (handle = index + generation, CPP-007), bounded, overflow → `Status::BudgetExhausted` (never grows silently).
     - Both report bytes/counts to a simple accounting sink (feeds the M1 profiler).
     - Unit tests: budget exhaustion returns error; reset semantics; generation-checked stale handle detection in debug.
-  - **Verify:** `ctest -R pools` green; exhaustion test asserts `Status` error, no crash, no leak (ASan).
-  - **Size:** ~300 lines + tests
+  - **Decision (2026-09-11):** header-only `include/laige/pools.h`
+    (no new .cpp: both pools are templates). `ArenaPool<T>`: one
+    contiguous aligned block, bump cursor, `reset()` destroys the live
+    prefix and rewinds (O(inUse), idempotent); slots are `uint32_t`,
+    valid until the next `reset()`; no free list (in-frame recycling is
+    not an arena property). `Pool<T>`: one element block + per-slot
+    generation table (starts at 1; 0 reserved — the default handle is
+    never valid) + LIFO free-list stack + alive flag; `destroy()`
+    bumps the generation (a stale handle can never pass again, except a
+    defined 2^32 unsigned wrap of one slot — documented as the one case
+    the scheme does not rule out) and recycles the slot (O(1));
+    `handle = {index, generation}` (CPP-007); `clear()` is O(capacity)
+    (reset-per-frame workloads use the arena). Both: `Options{capacity}`
+    (uint32, the declared budget, S-6/API-006) fixed at construction —
+    the only backing allocation (setup path); every hot-path op O(1),
+    allocation-free, lock-free, noexcept (PERF-003/006); overflow →
+    `ErrorCode::BudgetExhausted` (4, already registered — no new code),
+    `destroy()` on an invalid/stale handle → `ErrorCode::InvalidArgument`
+    (2); the pool does not log — the owning system logs the failure
+    under its subsystem name (LOG-002, G-R1), keeping a failing create
+    a branch on the cold path. Move-only (O(1) pointer swap; a
+    moved-from pool is a valid empty pool; move assignment destroys the
+    destination's current elements first); the destructor destroys
+    every live element (no leak). Accounting: `stats()` returns
+    `laige::PoolStats` — capacity/inUse/peakInUse (FR-11.4 peak
+    tracking), totalCreated churn (G-R4), bytesCapacity (element slots
+    + per-slot bookkeeping) and bytesInUse — a plain value the M1
+    profiler (FR-11.4) pulls; no registration/callback (CORE-004: the
+    sink interface lands with the profiler). Element storage is a plain
+    `ElementSlot<T>` struct (`alignas(T) std::byte[...]`) — not
+    `std::aligned_storage`, which is deprecated since C++23 and whose
+    layout changed across implementations (GCC 16's C++26-era
+    libstdc++ makes the outer class an empty 1-byte wrapper — using it
+    directly would silently allocate 1-byte slots; caught by this
+    step's byte-accounting tests). Single-owner, not thread-safe
+    (CONC-001; M1 defines the cross-thread boundaries, CONC-002);
+    deterministic by construction (pure integer bookkeeping, ARCH-010).
+    API contract: `docs/api/pools.md`.
+  - **Verify:** `ctest -R pools` green — 25 GTest cases across
+    `ArenaPoolBasics` (slots, read-back, reset semantics, peak/churn
+    survival, zero budget, move), `ArenaPoolBudget`, `PoolBasics`
+    (LIFO recycle, slot stability), `PoolBudget`, `PoolStale`
+    (destroy/clear/reuse/default handles; generation bump `gen+1`;
+    double-destroy; the stale-handle `at()` assert proven in a forked
+    child dying on SIGABRT — POSIX jobs; Windows skips with a reason),
+    `PoolDestruction` (destructor/clear/reset destroy counts balanced —
+    leak-free), `PoolStats` (element/byte counts incl. the aligned-
+    stride case), `PoolMove`. The exhaustion tests assert the `Status`
+    error (`BudgetExhausted`), no crash, no growth, and reusability
+    after reset/destroy. `Tracked` ctor/dtor counters prove every
+    placement-new has a matching destroy (independently leak-free under
+    ASan). Verified locally 2026-09-11: full 11/11 ctest (incl.
+    `pools` and the real-tree include-lint) on GCC 16.2.1 (`build`
+    static, `build-shared` shared, `build-asan` ASan+UBSan fatal,
+    `build-tsan` TSan `halt_on_error=1`) and a Clang 22.1.8 tree
+    (`build-clang`), zero warnings under the NFR-8.10 policy. CI:
+    pending observation of the PR's `ci-pull.yml` lane (linux-gcc,
+    linux-clang, linux-asan, linux-tsan, include-lint); the Windows
+    job additionally proves MSVC compilation of this header.
+  - **Size:** 458 lines header (`pools.h` — full AGENTS §9 contracts
+    next to the code) + 584 lines tests + 228 lines docs + ~7 lines
+    CMake (over the ~300-line estimate, same pattern as M0-CORE-01…04:
+    the header carries the API contract and the tests prove the step's
+    Verify clauses — exhaustion, reset, stale handles, accounting —
+    cohesive, not split)
 
 - [ ] **M0-CORE-06 · Deterministic PRNG**
   - **Refs:** PRD §10.3 (seeded, per-substream); AGENTS ARCH-010
