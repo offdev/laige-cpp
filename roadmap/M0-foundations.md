@@ -367,15 +367,62 @@ No rendering, no physics, no networking yet — `laige-core` only.
   - **Verify:** `ctest -R math_float` green; documented NaN/Inf policy exists in header docs; pinned flag set documented and applied to sim targets.
   - **Size:** ~250 lines + tests
 
-- [ ] **M0-CORE-04 · SimMath `fpx16_16` backend (default)**
+- [x] **M0-CORE-04 · SimMath `fpx16_16` backend (default)**
   - **Refs:** PRD §10.3, FR-3.3 (fixed-point option); ADR 0002 (`fpx16_16` backend); M0-DEC-02
   - **Depends:** M0-CORE-03
   - **Scope:**
     - `laige::fpx16_16`: signed Q16.16; add/sub/mul (rounded, documented), divide, negate, compare, convert from/to `int32_t`/`float`; overflow defined (saturate) and documented; no UB under any input (CPP-004).
     - Wire it in as the **default** SimMath backend (ADR 0002) with the same op surface as M0-CORE-03.
     - Unit tests including exhaustive edge cases (min/max, wrap candidates, rounding ties).
-  - **Verify:** `ctest -R math_fixed` green under ASan+UBSan; property test: same op sequence on two different compiler builds produces identical results (run locally in M1-DET-04 CI hookup).
-  - **Size:** ~350 lines + tests
+  - **Decision (2026-09-10):** `laige::fpx16_16` — `int32_t raw`,
+    value = raw / 2^16, range [-32768, 32767.99998474], resolution 2^-16.
+    All ops compute in `int64_t` and **saturate** (defined for every
+    input — CPP-004, no UB); rounding is **round-to-nearest,
+    ties-to-even** for mul/div/toInt32/fromFloat (the fixed-point
+    analogue of IEEE round-to-nearest-even; no ties exist for
+    sqrt-of-integer), divide by zero is defined (`x/0 → ±max`, sign of
+    x; `0/0 → +0` — the saturation analogue of IEEE ±inf), and
+    `negate(min) = max`. No NaN/Inf exist: comparisons are a total
+    order, `isFinite` always true. The type has no implicit scalar
+    constructors and no arithmetic operators (construct via
+    `fromInt32`/`fromFloat`; compute via the SimMath ops). `Fpx16_16`
+    is the backend (delegates to the type's static ops) and
+    `SimMathFpx16` the alias — the DEFAULT backend per ADR 0002 (the
+    `determinism.math` config plumbing lands with the config step,
+    FR-1.5). The M0-CORE-03 template gained two backend-classification
+    methods (`isNaN`/`isInf`, delegated — additive; fp32 semantics
+    unchanged) and `Scalar{0.0}` → `Scalar{}` in `normalize`
+    (identical for both backends). Documented accuracy bound:
+    `length` is accurate while the sum of squares stays in the Q16.16
+    range (|v| ≲ 181.02 per axis-aligned component), saturating
+    beyond — local sim math stays inside; world-span distances belong
+    to M1-DET-02.
+  - **Verify:** `ctest -R math_fixed` green — 24 GTest cases across
+    `FixedPointBasics` (exact values, identities, total order),
+    `FixedPointRounding` (exhaustive ties-to-even cases for mul/div/
+    toInt32/fromFloat, sqrt rounding — no ties possible),
+    `FixedPointSaturation` (min/max, wrap candidates, divide-by-zero,
+    conversion saturation), `FixedPointConversions` (int/float round
+    trips, 20k-raw LCG scan), `FixedPointSimMath` (op surface,
+    lerp/clamp/normalize, the length accuracy bound),
+    `FixedPointDispatch` (stateless compile-time dispatch, `noexcept`
+    contract, backend contract), and `FixedPointDeterminism` (a fixed
+    4096-tick op sequence run through the SimMath ops and through an
+    independent raw-int64 reference agree bit-for-bit, and the
+    sequence's FNV-1a state hash equals the committed known-answer
+    constant 0xF02728762777C581). Verified locally 2026-09-10: green
+    under ASan+UBSan (`build-asan`, canonical `LAIGE_ASAN=ON`), and the
+    known-answer hash is identical on **two different compiler builds**
+    — g++ 16.2.1 (`build`) and clang++ 22.1.8 (`build-clang`), each
+    10/10 ctest (the CI hookup for this property lands in M1-DET-04).
+    Static + shared (NFR-8.9) and TSan trees also green.
+  - **Size:** 251 lines `fpx16_16.h` + ~60 lines `sim_math.h` additions
+    + 22 lines `sim_math_fixed.cpp` (implementation) + 677 lines tests
+    + ~150 lines docs/CMake (over the ~350-line estimate: the header
+    carries the full rounding/saturation/overflow policy next to the
+    code, and the test suite proves the step's Verify clauses — ties,
+    saturation, conversions, and the two-implementation determinism
+    property — cohesive, not split)
 
 - [ ] **M0-CORE-05 · Pools: `ArenaPool<T>` and `Pool<T>`**
   - **Refs:** PRD §9.1 (S-2), §10.4; AGENTS PERF-003, CPP-002/007

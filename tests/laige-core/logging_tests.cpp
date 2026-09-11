@@ -213,8 +213,27 @@ std::string tempFilePath(const char* name) {
   return std::string("laige_logging_test_") + name + ".log";
 }
 
+// Portable file open/remove for the log-file tests (CPP-009 compile-time
+// platform boundary): MSVC's CRT deprecates plain `fopen`/`remove`
+// (C4996, an error under the engine's /WX policy) in favor of the secure
+// variants `fopen_s`/`remove_s` — same success semantics, via an
+// out-parameter and an errno_t return. Other compilers use the standard
+// `std::fopen`/`std::remove`.
+#if defined(_MSC_VER)
+std::FILE* openLogFile(const char* path, const char* mode) {
+  std::FILE* stream = nullptr;
+  return (::fopen_s(&stream, path, mode) == 0) ? stream : nullptr;
+}
+bool removeLogFile(const char* path) { return ::remove_s(path) == 0; }
+#else
+std::FILE* openLogFile(const char* path, const char* mode) {
+  return std::fopen(path, mode);
+}
+bool removeLogFile(const char* path) { return std::remove(path) == 0; }
+#endif
+
 std::string readWholeFile(const std::string& path) {
-  std::FILE* f = std::fopen(path.c_str(), "rb");
+  std::FILE* f = openLogFile(path.c_str(), "rb");
   if (f == nullptr) return {};
   std::string out;
   char buf[4096];
@@ -375,7 +394,7 @@ TEST(LogRecord, IdentityAndTimestamp) {
 
 TEST(LogSinks, ConsoleSinkLineFormat) {
   const std::string path = tempFilePath("console");
-  std::FILE* f = std::fopen(path.c_str(), "w+");
+  std::FILE* f = openLogFile(path.c_str(), "w+");
   ASSERT_NE(f, nullptr);
   {
     laige::log::ConsoleSink sink(f);
@@ -389,7 +408,7 @@ TEST(LogSinks, ConsoleSinkLineFormat) {
   }
   std::fclose(f);
   const std::string content = readWholeFile(path);
-  std::remove(path.c_str());
+  removeLogFile(path.c_str());
 
   const std::string expected1 =
       "[warn] network/packet_dropped: Dropped packet outside receive "
@@ -407,7 +426,7 @@ TEST(LogSinks, ConsoleSinkDoesNotOwnStream) {
   // A ConsoleSink must leave its stream usable after destruction
   // (LOG-007: stderr must stay usable for crash diagnostics).
   const std::string path = tempFilePath("console2");
-  std::FILE* f = std::fopen(path.c_str(), "w+");
+  std::FILE* f = openLogFile(path.c_str(), "w+");
   ASSERT_NE(f, nullptr);
   {
     laige::log::ConsoleSink sink(f);
@@ -417,12 +436,12 @@ TEST(LogSinks, ConsoleSinkDoesNotOwnStream) {
   const int n = std::fputc('\n', f);
   EXPECT_NE(n, EOF);
   std::fclose(f);
-  std::remove(path.c_str());
+  removeLogFile(path.c_str());
 }
 
 TEST(LogSinks, FileSinkLineFormat) {
   const std::string path = tempFilePath("file");
-  std::remove(path.c_str());
+  removeLogFile(path.c_str());
   const laige::Result<std::unique_ptr<laige::log::FileSink>> created =
       laige::log::FileSink::create(path);
   ASSERT_TRUE(created.ok());
@@ -434,7 +453,7 @@ TEST(LogSinks, FileSinkLineFormat) {
   created.value()->flush();
   EXPECT_EQ(created.value()->failedWrites(), 0u);
   const std::string content = readWholeFile(path);
-  std::remove(path.c_str());
+  removeLogFile(path.c_str());
 
   const std::string expected1 =
       "[error] assets/decode_failed: bad texture\n";
@@ -450,7 +469,7 @@ TEST(LogSinks, FileSinkFlushesOnDestruction) {
   // LOG-007 safe fallback: a destroyed sink must not drop buffered
   // output even without an explicit flush().
   const std::string path = tempFilePath("destructor");
-  std::remove(path.c_str());
+  removeLogFile(path.c_str());
   {
     const auto created = laige::log::FileSink::create(path);
     ASSERT_TRUE(created.ok());
@@ -459,7 +478,7 @@ TEST(LogSinks, FileSinkFlushesOnDestruction) {
     // no explicit flush
   }  // destructor flushes
   const std::string content = readWholeFile(path);
-  std::remove(path.c_str());
+  removeLogFile(path.c_str());
   ASSERT_TRUE(hasTimestampPrefix(content));
   EXPECT_NE(content.find("[info] s/e: m\n"), std::string::npos) << content;
 }
@@ -615,7 +634,7 @@ TEST(LogFatal, ChildEmitsFlushesAndTerminates) {
 // file sink. POSIX only (fork); the Windows jobs skip with a reason.
 #if defined(__unix__)
   const std::string path = tempFilePath("fatal");
-  std::remove(path.c_str());
+  removeLogFile(path.c_str());
   const pid_t pid = fork();
   ASSERT_GE(pid, 0);
   if (pid == 0) {
@@ -636,7 +655,7 @@ TEST(LogFatal, ChildEmitsFlushesAndTerminates) {
       << "child should die on SIGABRT (controlled termination after "
          "emit + flush)";
   const std::string content = readWholeFile(path);
-  std::remove(path.c_str());
+  removeLogFile(path.c_str());
   EXPECT_NE(content.find("[fatal] crash_test/fatal_child"), std::string::npos)
       << content;
 #else

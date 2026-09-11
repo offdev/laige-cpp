@@ -149,9 +149,11 @@ pinned set and the NaN/Inf policy):
   structured logging facade from M0-CORE-02 (`include/laige/logging.h`,
   `logging.cpp`; API contract in
   [docs/api/logging.md](../api/logging.md)), and the SimMath
-  deterministic-math interface with the `fp32_pinned` backend from
-  M0-CORE-03 (`include/laige/sim_math.h`, `sim_math.cpp`; API contract
-  and NaN/Inf policy in
+  deterministic-math interface with both backends — `fp32_pinned` from
+  M0-CORE-03 and the default `fpx16_16` from M0-CORE-04
+  (`include/laige/sim_math.h`, `include/laige/fpx16_16.h`,
+  `sim_math.cpp`, `sim_math_fixed.cpp`; API contract, NaN/Inf policy,
+  and the fpx16_16 rounding/saturation policy in
   [docs/api/sim_math.md](../api/sim_math.md), pinned flags via
   `laige_apply_simmath_policy()`).
 - `tests/laige-core/laige-core_tests` is a CTest link smoke test (a
@@ -171,6 +173,11 @@ pinned set and the NaN/Inf policy):
   executable covering the `SimMathBasics`, `SimMathNanInf`,
   `SimMathProperties`, and `SimMathDispatch` suites — the step's Verify
   command is `ctest -R math_float`.
+- `math_fixed` is the M0-CORE-04 CTest entry: a filtered view of the same
+  executable covering the `FixedPointBasics`, `FixedPointRounding`,
+  `FixedPointSaturation`, `FixedPointConversions`, `FixedPointSimMath`,
+  `FixedPointDispatch`, and `FixedPointDeterminism` suites — the step's
+  Verify command is `ctest -R math_fixed` (verified under ASan+UBSan).
 - Every configure verifies the vendored dependency lock
   (`cmake/laige-deps-lock.cmake` against `deps.lock`); a tampered or
   unlisted file under `deps/` fails the configure loudly. GoogleTest is the

@@ -77,10 +77,14 @@ The `laige-core` library builds now: static by default, shared with
 `-DLAIGE_BUILD_SHARED=ON` (NFR-8.9), verified by a CTest link smoke test in
 both variants. It carries the first functional engine code:
 `laige::Result<T,E>` / `laige::Status` plus the error-code registry
-(M0-CORE-01, `ctest -R result_status`) and the structured logging facade
+(M0-CORE-01, `ctest -R result_status`), the structured logging facade
 (M0-CORE-02, `ctest -R logging`, API contract in
-[docs/api/logging.md](docs/api/logging.md)). Engine targets compile with
-`-Wall -Werror` and with exceptions and RTTI disabled (NFR-8.10).
+[docs/api/logging.md](docs/api/logging.md)), and the SimMath
+deterministic-math interface (M0-CORE-03 `fp32_pinned`,
+`ctest -R math_float`; M0-CORE-04 default `fpx16_16`,
+`ctest -R math_fixed` — API contract in
+[docs/api/sim_math.md](docs/api/sim_math.md)). Engine targets compile
+with `-Wall -Werror` and with exceptions and RTTI disabled (NFR-8.10).
 
 ## Documentation
 
