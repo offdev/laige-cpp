@@ -169,6 +169,48 @@ function(laige_apply_engine_policy target)
 endfunction()
 
 # ---------------------------------------------------------------------------
+# SimMath pinned-math policy (M0-CORE-03; ADR 0002, PRD §10.3)
+# ---------------------------------------------------------------------------
+# Every target that carries deterministic sim math MUST be passed through
+# laige_apply_simmath_policy(). In M0 that is laige-core (the SimMath
+# home) and its tests; from M1 on, every sim module (laige-sim, and
+# authoritative-sim code in laige-net/laige-server) joins the list.
+#
+# The flags implement ADR 0002's pinned set for the fp32_pinned backend
+# (full rationale in src/laige-core/include/laige/sim_math.h):
+#
+#   GCC / Clang / AppleClang:
+#     -ffp-contract=off      a*b+c is never fused into a single-rounding
+#                            FMA (protects SimMath::lerp / ::length's
+#                            documented two-rounding)
+#     -fno-associative-math  sums are never reassociated (already the
+#                            default; passed explicitly so the pinned set
+#                            is visible on every compile line)
+#   MSVC 2022:
+#     /fp:precise            the documented precision model; MSVC does not
+#                            FMA-contract C expressions and never
+#                            reassociates at this setting (passed
+#                            explicitly — it is the default — so the
+#                            pinned set is visible on every compile line)
+#
+#   Banned in sim translation units, all compilers: -ffast-math /
+#   -funsafe-math-optimizations / /fp:fast, floating-point intrinsics,
+#   rounding-mode changes, and FP exception modes (re-audited at every
+#   toolchain upgrade, ADR 0002).
+function(laige_apply_simmath_policy target)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(${target} PRIVATE
+      -ffp-contract=off -fno-associative-math)
+  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(${target} PRIVATE /fp:precise)
+  else()
+    message(FATAL_ERROR
+      "laige: no simmath compiler policy for '${CMAKE_CXX_COMPILER_ID}'; "
+      "supported: GNU, Clang/AppleClang, MSVC 2022 (PRD §6).")
+  endif()
+endfunction()
+
+# ---------------------------------------------------------------------------
 # Modules (PRD §10.1 module map)
 # ---------------------------------------------------------------------------
 # One directory per module. Only laige-core is populated (M0-BUILD-01);
