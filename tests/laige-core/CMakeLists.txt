@@ -12,7 +12,7 @@
 # M0-CORE-xx steps follow the same pattern).
 set(LAIGE_CORE_TEST_SOURCES laige-core_tests.cpp result_status_tests.cpp
                              logging_tests.cpp math_float_tests.cpp
-                             math_fixed_tests.cpp)
+                             math_fixed_tests.cpp pools_tests.cpp)
 # M0-CORE-02: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own new/delete
 # (strong symbols in the Clang/GCC TSan runtime archives, interposed by
@@ -91,10 +91,17 @@ add_test(NAME math_fixed
          COMMAND laige-core_tests
          --gtest_filter=FixedPointBasics.*:FixedPointRounding.*:FixedPointSaturation.*:FixedPointConversions.*:FixedPointSimMath.*:FixedPointDispatch.*:FixedPointDeterminism.*)
 
+# M0-CORE-05: memory pools (ArenaPool<T>, Pool<T>). The step's Verify
+# command is `ctest -R pools`; this entry selects exactly the pool
+# suites from the shared laige-core_tests executable.
+add_test(NAME pools
+         COMMAND laige-core_tests
+         --gtest_filter=ArenaPoolBasics.*:ArenaPoolBudget.*:PoolBasics.*:PoolBudget.*:PoolStale.*:PoolDestruction.*:PoolStats.*:PoolMove.*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
   set_tests_properties(
-    laige-core_tests result_status logging math_float math_fixed
+    laige-core_tests result_status logging math_float math_fixed pools
     PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()
