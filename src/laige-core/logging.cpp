@@ -110,6 +110,22 @@ void formatTimestamp(std::chrono::system_clock::time_point tp, char* out) {
                 h, m, s, frac);
 }
 
+// Portable file open (CPP-009 compile-time platform boundary): MSVC's
+// CRT deprecates plain `fopen` (C4996, an error under the engine's
+// /WX policy) in favor of the secure variant `fopen_s` — same semantics
+// (NULL stream on failure), reported via an out-parameter. Every other
+// supported compiler uses the standard `std::fopen`.
+#if defined(_MSC_VER)
+std::FILE* openFile(const char* path, const char* mode) {
+  std::FILE* stream = nullptr;
+  return (::fopen_s(&stream, path, mode) == 0) ? stream : nullptr;
+}
+#else
+std::FILE* openFile(const char* path, const char* mode) {
+  return std::fopen(path, mode);
+}
+#endif
+
 // Render one full line into `stream` (see the file header for the
 // format). Returns 0 on success, -1 if any write failed.
 int writeLine(std::FILE* stream, const LogRecord& r) {
@@ -189,7 +205,7 @@ void ConsoleSink::flush() {
 // ---------------------------------------------------------------------------
 
 laige::Result<std::unique_ptr<FileSink>> FileSink::create(std::string path) {
-  std::FILE* stream = std::fopen(path.c_str(), "a");
+  std::FILE* stream = openFile(path.c_str(), "a");
   if (stream == nullptr) {
     // LOG-007 minimal fallback: the caller keeps its current sink
     // (console) and reports the failure; the Status carries the
