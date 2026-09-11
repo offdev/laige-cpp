@@ -222,4 +222,7 @@ add_subdirectory(src/laige-core)
 # ---------------------------------------------------------------------------
 if(LAIGE_BUILD_TESTS)
   add_subdirectory(tests)
+  # Dev tools that need the built engine library (gated with tests: a
+  # library-only build does not need them).
+  add_subdirectory(tools/fuzz)
 endif()

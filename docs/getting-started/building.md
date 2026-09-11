@@ -42,7 +42,9 @@ Notes:
 
 - `Debug` is the canonical `CMAKE_BUILD_TYPE`; `Release` is supported.
 - The four rows above the lint row name tools that land in later M0 steps —
-  `laige-fuzz` (M0-TEST-01), `laige-bench` (M0-CORE-08), `laige-detcheck`
+  `laige-fuzz` (minimal form from M0-CORE-07: the `json_parse` target and
+  deterministic bounded runs; M0-TEST-01 extends it with CI lane semantics
+  and nightly long runs), `laige-bench` (M0-CORE-08), `laige-detcheck`
   (M0-TOOL-02), target `laige-api` (M0-TOOL-01). Their command forms are
   fixed here now so later steps cannot drift.
 - Include-graph lint (M0-CI-03): platform-independent (Python 3 stdlib
@@ -156,10 +158,7 @@ pinned set and the NaN/Inf policy):
   and the fpx16_16 rounding/saturation policy in
   [docs/api/sim_math.md](../api/sim_math.md), pinned flags via
   `laige_apply_simmath_policy()`), and the memory pools from M0-CORE-05
-  (`include/laige/pools.h`: `laige::ArenaPool<T>` and `laige::Pool<T>`
-  with `laige::PoolStats` accounting; API contract in
-  [docs/api/pools.md](../api/pools.md)).
-- `tests/laige-core/laige-core_tests` is a CTest link smoke test (a
+  (`include/laige/pools.h`: `laige::ArenaPool<T>` and `laige::Pool<T>`  with `laige::PoolStats` accounting; API contract in  [docs/api/pools.md](../api/pools.md)), and the bounded JSON parser +  serializer from M0-CORE-07 (`include/laige/json.h`, `json.cpp`:  `laige::JsonValue`, `parseJson`, `serializeJson`, `JsonOptions`;  API contract in [docs/api/json.md](../api/json.md)).- `tests/laige-core/laige-core_tests` is a CTest link smoke test (a
   GoogleTest suite since M0-DEP-01) that runs in every build tree above: it
   verifies the static/shared link and checks the NFR-8.10 policy flags with
   `static_assert` (a policy violation fails the build).
@@ -188,6 +187,16 @@ pinned set and the NaN/Inf policy):
   `ctest -R pools` (budget exhaustion, reset semantics, and
   generation-checked stale handles; the stale-handle assert runs in a
   forked child on the POSIX jobs).
+- `config_json` is the M0-CORE-07 CTest entry: a filtered view of the
+  same `laige-core_tests` executable covering the `ConfigJsonValid`,
+  `ConfigJsonInvalid`, `ConfigJsonRoundTrip`, `ConfigJsonValue`, and
+  `ConfigJsonOptions` suites — the step's Verify command is
+  `ctest -R config_json`.
+- `fuzz_json_parse` is the M0-CORE-07 bounded-fuzz CTest entry
+  (`laige-fuzz json_parse --runs=1000`, registered in `tools/fuzz`): it
+  runs in every build tree — in the ASan tree it is instrumented and is
+  the step's sanitizer gate (NFR-8.7; PRD §14: fuzz "every commit
+  (bounded), nightly (long)").
 - Every configure verifies the vendored dependency lock
   (`cmake/laige-deps-lock.cmake` against `deps.lock`); a tampered or
   unlisted file under `deps/` fails the configure loudly. GoogleTest is the
