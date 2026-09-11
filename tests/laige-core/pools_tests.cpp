@@ -99,10 +99,18 @@ class Tracked {
 };
 
 // An element with non-trivial alignment: pins the ElementSlot stride
-// (max(sizeof(T), alignof(T))) in the bytes accounting.
+// (max(sizeof(T), alignof(T))) in the bytes accounting. The four floats
+// fill exactly 16 bytes, so alignas(16) contributes alignment without
+// adding padding: MSVC C4324 ("structure was padded due to alignment
+// specifier") fires only when the alignment specifier pads the struct
+// and is fatal under the engine's /W4 /WX (NFR-8.10, Windows CI job).
+// A shorter member list (e.g. float + char) re-introduces that padding
+// and breaks the Windows build.
 struct alignas(16) Padded {
   float a{};
-  char b{};
+  float b{};
+  float c{};
+  float d{};
 };
 
 }  // namespace
@@ -534,7 +542,8 @@ TEST(PoolStats, AlignedElementsUseAlignedStride) {
   Tracked::resetCounters();
   laige::Pool<Padded> pool(laige::Pool<Padded>::Options{2});
   ASSERT_TRUE(pool.create().ok());
-  // sizeof(Padded) == 16 (alignas(16)); the slot stride matches.
+  // sizeof(Padded) == 16, alignof(Padded) == 16 (alignas(16)); the slot
+  // stride matches.
   EXPECT_EQ(pool.stats().bytesInUse, 16u);
   EXPECT_EQ(pool.stats().bytesCapacity, 2u * (16u + 9u));
   EXPECT_EQ(pool.at(pool.create().value()).a, 0.0f);
