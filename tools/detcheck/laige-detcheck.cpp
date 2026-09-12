@@ -1174,7 +1174,7 @@ int main(int argc, char** argv) {
     }
 #ifdef _WIN32
     diagf("laige-detcheck: diag begin pid=%lu %s argv=%s\n",
-          static_cast<unsigned long>(GetProcessId()),
+          static_cast<unsigned long>(GetCurrentProcessId()),
           parentProcessInfo().c_str(), cmdLine.c_str());
 #else
     diagf("laige-detcheck: diag begin pid=%d %s argv=%s\n",

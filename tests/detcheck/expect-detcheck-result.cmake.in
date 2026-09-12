@@ -80,15 +80,17 @@ foreach(_tok IN LISTS _cmd)
   list(APPEND _args "${_tok}")
 endforeach()
 
-# LAIGE_DETCHECK_CALLER tags THIS detcheck invocation (M0-TEST-01 Windows
-# CI diagnosis): the tool's env dump logs the marker, so the per-test diag
-# file reveals which process wrote it.
+# LAIGE_DETCHECK_CALLER tags THIS detcheck invocation (M0-TEST-01
+# Windows CI diagnosis): it arrives in the test's ENVIRONMENT property
+# (tests/detcheck/CMakeLists.txt) and is inherited by execute_process,
+# which has no environment options on the cmake versions some CI
+# runners provide. The tool's env dump logs the marker, so the per-test
+# diag file reveals which process wrote it.
 execute_process(
   COMMAND "${_detcheck}" ${_args}
   RESULT_VARIABLE _rc
   OUTPUT_VARIABLE _out
   ERROR_VARIABLE _err
-  ENVIRONMENT_MODIFICATION "LAIGE_DETCHECK_CALLER=set:check-script"
 )
 
 set(_text "${_out}

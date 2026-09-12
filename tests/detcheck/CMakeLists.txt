@@ -68,6 +68,14 @@ string(APPEND LAIGE_DETCHECK_TEST_ENV
        "LAIGE_DETCHECK_FIX_FAIL=$<TARGET_FILE:detcheck-fixture-scenario-fail>;")
 string(APPEND LAIGE_DETCHECK_TEST_ENV
        "LAIGE_DETCHECK_FIX_SHORT=$<TARGET_FILE:detcheck-fixture-scenario-short>")
+# M0-TEST-01 Windows CI diagnosis: tag every check-script detcheck
+# invocation. The tool's env dump logs it, so a per-test diag file reveals
+# whether its writer was the check script's own invocation. (The cmake
+# versions some CI runners provide give execute_process no environment
+# options, so the tag rides in the test's ENVIRONMENT property and is
+# inherited by the spawned tool.)
+string(APPEND LAIGE_DETCHECK_TEST_ENV
+       ";LAIGE_DETCHECK_CALLER=check-script")
 
 # --- The tests ---------------------------------------------------------------
 # Same shape as the tests/api helper: a generated cmake -P check script
