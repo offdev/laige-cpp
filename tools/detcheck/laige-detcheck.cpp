@@ -307,7 +307,16 @@ std::wstring quoteArg(std::string_view arg) {
 RunResult runScenario(const std::string& exe,
                       const std::vector<std::string>& args) {
   RunResult r;
-  std::wstring cmd = toWide(exe);
+  const std::wstring exeW = toWide(exe);
+  // Diagnostics (LOG-002): a failed scenario run must say WHICH binary was
+  // attempted and whether it exists, not just a numeric exit code.
+  const DWORD attrs = GetFileAttributesW(exeW.c_str());
+  if (attrs == INVALID_FILE_ATTRIBUTES) {
+    r.error = "scenario executable not found (lastError=" +
+              std::to_string(GetLastError()) + "): " + exe;
+    return r;
+  }
+  std::wstring cmd = exeW;
   for (const std::string& a : args) cmd += L" " + quoteArg(a);
 
   SECURITY_ATTRIBUTES sa{};
@@ -370,7 +379,8 @@ RunResult runScenario(const std::string& exe,
   r.exitCode = static_cast<int>(code);
   finishPending(r.lines, pending, r);
   if (r.exitCode != 0 && r.error.empty()) {
-    r.error = "scenario process exited with code " + std::to_string(code);
+    r.error = "scenario process exited with code " + std::to_string(code) +
+              " (command: " + exe + ")";
   }
   r.ok = r.error.empty();
   return r;
