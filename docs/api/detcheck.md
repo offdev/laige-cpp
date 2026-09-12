@@ -95,6 +95,13 @@ ends early, the tick lines become stream-length notes
 | 1 | divergence detected (a determinism failure — loud, CORE-008) |
 | 2 | usage error, unknown scenario, a scenario run failed (non-zero exit, spawn failure), or a scenario violated the output contract (malformed line, tick gap, unbounded output) |
 
+Windows only: a scenario run that produces no output and exits with an OS
+image-load failure code (e.g. `259` `ERROR_FILE_NOT_FOUND`, seen right
+after a fresh build while a file filter still scans the new `.exe`) is
+retried exactly once after a short delay before being reported. The retry
+cannot mask scenario behavior: a deterministic scenario fails identically
+on the retry and the failure is still reported as exit 2.
+
 ## The built-in synthetic workload
 
 32 bodies of Q16.16 position/velocity (the default deterministic backend,

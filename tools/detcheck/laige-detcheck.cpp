@@ -85,6 +85,11 @@
 //      exit or spawn failure), or a scenario violated the output
 //      contract (malformed line / tick gap / unbounded output)
 //
+// Windows only: a scenario run that produced no output and exited with an
+// OS image-load failure code (see isTransientSpawnFailure — e.g. 259
+// ERROR_FILE_NOT_FOUND right after a fresh build while a file filter
+// scans the new .exe) is retried exactly once before being reported.
+//
 // ============================================================================
 // Built-in synthetic workload
 // ============================================================================
@@ -304,9 +309,27 @@ std::wstring quoteArg(std::string_view arg) {
   return q;
 }
 
-RunResult runScenario(const std::string& exe,
-                      const std::vector<std::string>& args) {
-  RunResult r;
+// Windows image-load failure codes as a child process exit code. A freshly
+// written .exe can fail its FIRST process start while a file filter (e.g.
+// Windows Defender real-time scanning) still holds the file; the failure
+// surfaces as the child's exit status instead of a CreateProcessW error.
+// These are OS error/status codes, not scenario exit values (the scenarios
+// in this repo exit 0/1/2/3, and a deterministic scenario exits with the
+// same code on the retry — see runScenario below).
+bool isTransientSpawnFailure(std::uint32_t code) {
+  // 259 ERROR_FILE_NOT_FOUND, 32 ERROR_SHARING_VIOLATION,
+  // 126 ERROR_MOD_NOT_FOUND, 142 0xC0000142 STATUS_FATAL_APP_EXIT,
+  // 193 ERROR_BAD_EXE_FORMAT, 1422 ERROR_APP_INIT_FAILURE.
+  return code == 259u || code == 32u || code == 126u || code == 142u ||
+         code == 193u || code == 1422u;
+}
+
+// One spawn+capture of a scenario binary. Returns true when the run failed
+// transiently (no output captured and the exit code is an OS image-load
+// failure), meaning the caller may retry once.
+bool runScenarioOnce(const std::string& exe,
+                     const std::vector<std::string>& args, RunResult& r) {
+  r = RunResult{};
   const std::wstring exeW = toWide(exe);
   // Diagnostics (LOG-002): a failed scenario run must say WHICH binary was
   // attempted and whether it exists, not just a numeric exit code.
@@ -314,7 +337,7 @@ RunResult runScenario(const std::string& exe,
   if (attrs == INVALID_FILE_ATTRIBUTES) {
     r.error = "scenario executable not found (lastError=" +
               std::to_string(GetLastError()) + "): " + exe;
-    return r;
+    return false;
   }
   std::wstring cmd = exeW;
   for (const std::string& a : args) cmd += L" " + quoteArg(a);
@@ -325,14 +348,14 @@ RunResult runScenario(const std::string& exe,
   HANDLE writeH = INVALID_HANDLE_VALUE;
   if (!CreatePipe(&readH, &writeH, &sa, 0)) {
     r.error = "CreatePipe failed";
-    return r;
+    return false;
   }
   // The child inherits the write end of the pipe.
   if (!SetHandleInformation(writeH, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) {
     r.error = "SetHandleInformation failed";
     CloseHandle(readH);
     CloseHandle(writeH);
-    return r;
+    return false;
   }
   STARTUPINFOW si{};
   si.cb = sizeof si;
@@ -346,7 +369,7 @@ RunResult runScenario(const std::string& exe,
     r.error = "CreateProcessW failed (is the path correct?)";
     CloseHandle(readH);
     CloseHandle(writeH);
-    return r;
+    return false;
   }
   CloseHandle(writeH);
 
@@ -383,6 +406,23 @@ RunResult runScenario(const std::string& exe,
               " (command: " + exe + ")";
   }
   r.ok = r.error.empty();
+  return !r.ok && r.lines.empty() &&
+         isTransientSpawnFailure(static_cast<std::uint32_t>(r.exitCode));
+}
+
+// Bounded first-launch retry (one attempt, short delay): absorbs the
+// Windows first-launch image-load race described above. The retry CANNOT
+// mask scenario behavior: only a run that produced no output and died with
+// an OS image-load code is retried, and a deterministic scenario fails
+// identically on the retry, so the failure is still reported.
+RunResult runScenario(const std::string& exe,
+                      const std::vector<std::string>& args) {
+  RunResult r;
+  const bool transient = runScenarioOnce(exe, args, r);
+  if (transient) {
+    Sleep(250);  // let the file filter settle before the single retry
+    runScenarioOnce(exe, args, r);
+  }
   return r;
 }
 
