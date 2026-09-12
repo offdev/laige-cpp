@@ -573,6 +573,65 @@ void probeControlSpawn() {
   runAttempt(4, nullptr, helperCmd, false, "helper, no redirect (control)");
 }
 
+// Best-effort parent-process identification (M0-TEST-01 Windows CI
+// diagnosis): a diag file can be written by a detcheck invocation OTHER
+// than the check script's; the parent's pid and command line say who
+// launched this process. NtQueryInformationProcess is resolved through
+// GetProcAddress (no new import; both process-info classes are stable on
+// x64). Every step is best-effort: any failure yields (unavailable).
+std::string parentProcessInfo() {
+  struct Pbi {
+    long exitStatus;
+    void* peb;
+    unsigned long long affinity;
+    unsigned char priority;
+    unsigned long pid;
+    unsigned long long inheritedFrom;
+  } pbi = {};
+  typedef long(* NtQIP_t)(HANDLE, int, void*, unsigned long, unsigned long*);
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (!ntdll) return "parent=(unavailable)";
+  const NtQIP_t ntq = reinterpret_cast<NtQIP_t>(
+      GetProcAddress(ntdll, "NtQueryInformationProcess"));
+  if (!ntq) return "parent=(unavailable)";
+  if (ntq(GetCurrentProcess(), 0, &pbi, sizeof pbi, nullptr) != 0) {
+    return "parent=(unavailable)";
+  }
+  std::string s = "parent=" +
+                  std::to_string(static_cast<unsigned long>(pbi.inheritedFrom));
+  std::string cmd;
+  HANDLE ph = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE,
+                          static_cast<DWORD>(pbi.inheritedFrom));
+  if (ph) {
+    struct Us {
+      unsigned short length;
+      unsigned short maximumLength;
+      wchar_t* buffer;
+    } us = {};
+    unsigned long need = 0;
+    if (ntq(ph, 60, &us, sizeof us, &need) != 0 && need > sizeof us) {
+      std::vector<wchar_t> buf(need / 2 + 1, 0);
+      us.buffer = buf.data();
+      us.maximumLength = static_cast<unsigned short>(need);
+      if (ntq(ph, 60, &us, sizeof us, nullptr) == 0 && us.length > 0) {
+        const int n = WideCharToMultiByte(CP_UTF8, 0, buf.data(),
+                                           static_cast<int>(us.length / 2),
+                                           nullptr, 0, nullptr, nullptr);
+        if (n > 0) {
+          cmd.resize(static_cast<std::size_t>(n));
+          WideCharToMultiByte(CP_UTF8, 0, buf.data(),
+                              static_cast<int>(us.length / 2), cmd.data(), n,
+                              nullptr, nullptr);
+        }
+      }
+    }
+    CloseHandle(ph);
+  }
+  s += cmd.empty() ? " parent-cmd=(unavailable)"
+                  : " parent-cmd=\"" + cmd + "\"";
+  return s;
+}
+
 RunResult runScenario(const std::string& exe,
                       const std::vector<std::string>& args) {
   RunResult r;
@@ -722,6 +781,31 @@ RunResult runScenario(const std::string& exe,
 }
 
 #else  // POSIX (Linux, macOS)
+
+// POSIX counterpart of the Windows parent-process identification: the
+// parent pid plus its /proc command line (Linux; macOS has no /proc, so
+// only the pid is reported there).
+std::string parentProcessInfo() {
+  const int pp = static_cast<int>(::getppid());
+  std::string s = "parent=" + std::to_string(pp);
+  char path[128];
+  std::snprintf(path, sizeof path, "/proc/%d/cmdline", pp);
+  std::FILE* f = std::fopen(path, "rb");
+  if (!f) {
+    return s + " parent-cmd=(unavailable)";
+  }
+  char buf[1024];
+  const std::size_t n = std::fread(buf, 1, sizeof buf, f);
+  std::fclose(f);
+  std::string cmd(buf, n);
+  for (char& c : cmd) {
+    if (c == '\0') c = ' ';
+  }
+  while (!cmd.empty() && cmd.back() == ' ') cmd.pop_back();
+  s += cmd.empty() ? " parent-cmd=(unavailable)"
+                  : " parent-cmd=\"" + cmd + "\"";
+  return s;
+}
 
 RunResult runScenario(const std::string& exe,
                       const std::vector<std::string>& args) {
@@ -1079,14 +1163,24 @@ int main(int argc, char** argv) {
   // every exit path (ctest hides passing-test output; the file is how
   // those diagnostics reach the CI log).
   DiagFlush diagFlush;
-  // Diagnostic begin marker (identifies the run in the flushed file).
+  // Diagnostic begin marker (identifies the run and its writer in the
+  // flushed file: a diag file can be overwritten by a later detcheck
+  // invocation with the same LAIGE_DETCHECK_DIAG_FILE).
   {
     std::string cmdLine;
     for (int i = 0; i < argc; ++i) {
       if (i > 0) cmdLine += " ";
       cmdLine += argv[i];
     }
-    diagf("laige-detcheck: diag begin argv=%s\n", cmdLine.c_str());
+#ifdef _WIN32
+    diagf("laige-detcheck: diag begin pid=%lu %s argv=%s\n",
+          static_cast<unsigned long>(GetProcessId()),
+          parentProcessInfo().c_str(), cmdLine.c_str());
+#else
+    diagf("laige-detcheck: diag begin pid=%d %s argv=%s\n",
+          static_cast<int>(::getpid()), parentProcessInfo().c_str(),
+          cmdLine.c_str());
+#endif
   }
   Args a;
   if (!parseArgs(argc, argv, a)) {

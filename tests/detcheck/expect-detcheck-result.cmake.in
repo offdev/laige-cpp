@@ -80,15 +80,28 @@ foreach(_tok IN LISTS _cmd)
   list(APPEND _args "${_tok}")
 endforeach()
 
+# LAIGE_DETCHECK_CALLER tags THIS detcheck invocation (M0-TEST-01 Windows
+# CI diagnosis): the tool's env dump logs the marker, so the per-test diag
+# file reveals which process wrote it.
 execute_process(
   COMMAND "${_detcheck}" ${_args}
   RESULT_VARIABLE _rc
   OUTPUT_VARIABLE _out
   ERROR_VARIABLE _err
+  ENVIRONMENT_MODIFICATION "LAIGE_DETCHECK_CALLER=set:check-script"
 )
 
 set(_text "${_out}
 ${_err}")
+
+# TEMP (M0-TEST-01 Windows CI diagnosis): persist this check script's own
+# capture (written by the cmake process, not by detcheck), so it can be
+# compared against detcheck's own diag file, which a different detcheck
+# invocation could have overwritten.
+if(DEFINED ENV{LAIGE_DETCHECK_DIAG_FILE})
+  file(WRITE "$ENV{LAIGE_DETCHECK_DIAG_FILE}.check"
+       "check-script capture rc=${_rc}\n${_out}\n--- err ---\n${_err}\n")
+endif()
 
 set(_problems "")
 if(NOT _rc EQUAL @EXPECT_EXIT@)

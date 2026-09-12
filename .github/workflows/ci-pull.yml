@@ -217,7 +217,7 @@ jobs:
         run: |
           ctest --test-dir build -C Debug --output-on-failure
           $ctestExit = $LASTEXITCODE
-          Get-ChildItem .\build\tests\detcheck\diag -Filter *.txt -ErrorAction SilentlyContinue |
+          Get-ChildItem .\build\tests\detcheck\diag -File -ErrorAction SilentlyContinue |
             Sort-Object Name |
             ForEach-Object {
               Write-Host "===== detcheck diag: $($_.Name) ====="

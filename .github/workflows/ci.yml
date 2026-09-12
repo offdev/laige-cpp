@@ -238,13 +238,16 @@ jobs:
           & "$bin\laige-detcheck-probe.exe"
       - name: Test (unit)
         # ctest hides passing-test output, so the per-test detcheck
-        # diagnostic files (spawn handles, control probes — see
-        # tools/detcheck) are printed here, regardless of the ctest
-        # outcome; the step still exits with ctest's status.
+        # diagnostic files are printed here, regardless of the ctest
+        # outcome; the step still exits with ctest's status. Two files
+        # per test: <name>.txt is detcheck's own spawn diagnostics
+        # (spawn handles, control probes — see tools/detcheck);
+        # <name>.txt.check is the check script's captured output of the
+        # same invocation (written by the cmake process, not detcheck).
         run: |
           ctest --test-dir build -C Debug --output-on-failure
           $ctestExit = $LASTEXITCODE
-          Get-ChildItem .\build\tests\detcheck\diag -Filter *.txt -ErrorAction SilentlyContinue |
+          Get-ChildItem .\build\tests\detcheck\diag -File -ErrorAction SilentlyContinue |
             Sort-Object Name |
             ForEach-Object {
               Write-Host "===== detcheck diag: $($_.Name) ====="
