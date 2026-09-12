@@ -372,24 +372,29 @@ void dumpEnvironmentDiagnostics() {
   FreeEnvironmentStringsW(env);
 }
 
-// Control probe (diagnostic): spawn a known-good command (cmd /c echo)
-// through the exact same pipe machinery used for scenario runs, in this
-// process instance. Its captured line must be exactly the marker; if the
-// probe succeeds while a scenario run captures nothing, the machinery
-// works and the scenario launch itself is the problem — and vice versa.
-void probeControlSpawn() {
+// One probe launch: create pipe, spawn, capture, close. Logs the pipe
+// handle values and their types (a handle whose type is not PIPE, or an
+// invalid value, identifies the mechanism). Returns false only when the
+// spawn itself failed (details in errOut).
+bool probeAttempt(const wchar_t* appname, const std::wstring& cmd,
+                  DWORD& exitCode, std::string& captured, std::string& errOut) {
   SECURITY_ATTRIBUTES sa{};
   sa.nLength = sizeof sa;
   HANDLE readH = INVALID_HANDLE_VALUE;
   HANDLE writeH = INVALID_HANDLE_VALUE;
   if (!CreatePipe(&readH, &writeH, &sa, 0)) {
-    std::fprintf(stderr,
-                 "laige-detcheck: control probe: CreatePipe failed "
-                 "(lastError=%lu)\n",
-                 static_cast<unsigned long>(GetLastError()));
-    return;
+    errOut = "CreatePipe failed (lastError=" + std::to_string(GetLastError()) +
+             ")";
+    return false;
   }
   SetHandleInformation(writeH, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+  DWORD writeInfo = 0;
+  GetHandleInformation(writeH, &writeInfo);
+  std::fprintf(stderr,
+               "laige-detcheck: probe handles read=0x%p write=0x%p "
+               "types=%lu/%lu writeFlags=0x%lx\n",
+               static_cast<void*>(readH), static_cast<void*>(writeH),
+               GetFileType(readH), GetFileType(writeH), writeInfo);
   STARTUPINFOW si{};
   si.cb = sizeof si;
   si.dwFlags = STARTF_USESTDHANDLES;
@@ -397,21 +402,16 @@ void probeControlSpawn() {
   si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
   si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
   PROCESS_INFORMATION pi{};
-  // Non-const so .data() yields wchar_t* for CreateProcessW (C++20).
-  std::wstring controlCmd = L"cmd.exe /c echo LAIGE_DETCHECK_CONTROL_OK";
-  if (!CreateProcessW(nullptr, controlCmd.data(), nullptr, nullptr, TRUE, 0,
+  if (!CreateProcessW(appname, cmd.data(), nullptr, nullptr, TRUE, 0,
                        nullptr, nullptr, &si, &pi)) {
-    std::fprintf(stderr,
-                 "laige-detcheck: control probe: CreateProcessW failed "
-                 "(lastError=%lu)\n",
-                 static_cast<unsigned long>(GetLastError()));
+    errOut = "CreateProcessW failed (lastError=" + std::to_string(GetLastError()) +
+             ")";
     CloseHandle(readH);
     CloseHandle(writeH);
-    return;
+    return false;
   }
   CloseHandle(writeH);
   char buf[256];
-  std::string captured;
   for (;;) {
     if (WaitForSingleObject(readH, INFINITE) != WAIT_OBJECT_0) break;
     DWORD n = 0;
@@ -423,13 +423,53 @@ void probeControlSpawn() {
   }
   CloseHandle(readH);
   WaitForSingleObject(pi.hProcess, INFINITE);
-  DWORD code = 0;
-  GetExitCodeProcess(pi.hProcess, &code);
+  exitCode = 0;
+  GetExitCodeProcess(pi.hProcess, &exitCode);
   CloseHandle(pi.hThread);
   CloseHandle(pi.hProcess);
-  std::fprintf(stderr,
-               "laige-detcheck: control probe: exit=%lu captured='%s'\n",
-               static_cast<unsigned long>(code), captured.c_str());
+  return true;
+}
+
+// Control probe (diagnostic): spawn a known-good command (cmd /c echo)
+// through the exact same pipe machinery used for scenario runs, in this
+// process instance. Attempt 1 resolves cmd.exe from the command line's
+// first token (like the scenario launch); attempt 2, only when attempt 1
+// captures nothing, passes the explicit System32 cmd.exe path as
+// lpApplicationName. If attempt 2 succeeds in the process instances where
+// attempt 1 fails, first-token command-line resolution is the broken side.
+void probeControlSpawn() {
+  // Non-const so .data() yields wchar_t* for CreateProcessW (C++20).
+  std::wstring controlCmd = L"cmd.exe /c echo LAIGE_DETCHECK_CONTROL_OK";
+  const std::wstring marker = "LAIGE_DETCHECK_CONTROL_OK";
+  {
+    DWORD code = 0;
+    std::string captured, err;
+    const bool ok = probeAttempt(nullptr, controlCmd, code, captured, err);
+    if (ok && captured.find(marker) != std::string::npos) {
+      std::fprintf(stderr,
+                   "laige-detcheck: control probe OK: exit=%lu "
+                   "captured='%s'\n",
+                   static_cast<unsigned long>(code), captured.c_str());
+      return;
+    }
+    std::fprintf(stderr, "laige-detcheck: control probe attempt 1 failed "
+                         "(spawned=%d exit=%lu captured='%s' err=%s)\n",
+                 ok ? 1 : 0, static_cast<unsigned long>(code),
+                 captured.c_str(), err.c_str());
+  }
+  wchar_t sysDir[MAX_PATH] = {};
+  const DWORD sysLen = GetSystemDirectoryW(sysDir, MAX_PATH);
+  if (sysLen > 0 && sysLen < MAX_PATH) {
+    const std::wstring app = std::wstring(sysDir, sysLen) + L"\\cmd.exe";
+    DWORD code = 0;
+    std::string captured, err;
+    const bool ok = probeAttempt(app.c_str(), controlCmd, code, captured, err);
+    std::fprintf(stderr,
+                 "laige-detcheck: control probe attempt 2 (explicit app "
+                 "path %ls): spawned=%d exit=%lu captured='%s' err=%s\n",
+                 app.c_str(), ok ? 1 : 0, static_cast<unsigned long>(code),
+                 captured.c_str(), err.c_str());
+  }
 }
 
 RunResult runScenario(const std::string& exe,
@@ -464,6 +504,15 @@ RunResult runScenario(const std::string& exe,
     CloseHandle(writeH);
     return r;
   }
+  // Diagnostics (LOG-002): handle values and types, to distinguish a bad
+  // handle from a bad inheritance in the no-output failure cases.
+  DWORD writeInfo = 0;
+  GetHandleInformation(writeH, &writeInfo);
+  std::fprintf(stderr,
+               "laige-detcheck: scenario handles read=0x%p write=0x%p "
+               "types=%lu/%lu writeFlags=0x%lx\n",
+               static_cast<void*>(readH), static_cast<void*>(writeH),
+               GetFileType(readH), GetFileType(writeH), writeInfo);
   STARTUPINFOW si{};
   si.cb = sizeof si;
   si.dwFlags = STARTF_USESTDHANDLES;
@@ -471,8 +520,10 @@ RunResult runScenario(const std::string& exe,
   si.hStdError = GetStdHandle(STD_ERROR_HANDLE);  // stays visible in the log
   si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
   PROCESS_INFORMATION pi{};
-  if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, 0, nullptr,
-                      nullptr, &si, &pi)) {
+  // Explicit lpApplicationName (the exact exe path) so first-token
+  // command-line resolution cannot substitute another image.
+  if (!CreateProcessW(exeW.c_str(), cmd.data(), nullptr, nullptr, TRUE, 0,
+                       nullptr, nullptr, &si, &pi)) {
     r.error = "CreateProcessW failed (is the path correct?)";
     CloseHandle(readH);
     CloseHandle(writeH);

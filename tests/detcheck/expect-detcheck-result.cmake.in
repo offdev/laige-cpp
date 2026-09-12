@@ -102,3 +102,8 @@ if(NOT _problems STREQUAL "")
     "--- end of laige-detcheck output ---")
 endif()
 message("laige-detcheck check OK: exit @EXPECT_EXIT@, required output present")
+# TEMP (M0-TEST-01 Windows CI diagnosis): print the tool output on success
+# too, so passing and failing process instances can be compared in the CI
+# log (the tool's spawn diagnostics go to stderr).
+message("--- laige-detcheck output (passing) ---\n${_text}\n"
+        "--- end of laige-detcheck output ---")
