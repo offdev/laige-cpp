@@ -107,10 +107,26 @@ std::string WriteTempJson(const char* name, const std::string content) {
 
 // The repo-root budgets.json, wired by CTest (ENVIRONMENT
 // LAIGE_BUDGETS_PATH); the fallback covers running the binary from the
-// source root by hand.
-const char* BudgetsFilePath() {
+// source root by hand. MSVC deprecates plain getenv (C4996, fatal under
+// /WX); getenv_s has the same lookup semantics (CPP-009, pattern:
+// logging.cpp).
+std::string BudgetsFilePath() {
+#if defined(_MSC_VER)
+  // Largest environment value the suite reads (the budgets file path;
+  // fits far inside the bound). Named per CORE-005; a value beyond it is
+  // treated as unset (the documented fallback applies). MSVC-only for the
+  // same reason as above (CORE-010: no unused symbols under -Werror).
+  constexpr std::size_t kEnvValueMaxBytes = 4096;
+  char buf[kEnvValueMaxBytes];
+  std::size_t len = 0;
+  if (getenv_s(&len, buf, sizeof(buf), "LAIGE_BUDGETS_PATH") != 0)
+    return "budgets.json";
+  return (len > 0) ? std::string(buf, len) : std::string("budgets.json");
+#else
   const char* env = std::getenv("LAIGE_BUDGETS_PATH");
-  return (env != nullptr && env[0] != '\0') ? env : "budgets.json";
+  return (env != nullptr && env[0] != '\0') ? std::string(env)
+                                            : std::string("budgets.json");
+#endif
 }
 
 void ExpectMalformedFile(const std::string& path) {

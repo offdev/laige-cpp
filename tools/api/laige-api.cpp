@@ -16,7 +16,9 @@
 //   --root REPO_ROOT   Repository root (default: ".").
 //   --out FILE         Write the regenerated manifest to FILE.
 //   --check FILE       Regenerate in memory and compare with FILE:
-//                     byte-identical -> exit 0; stale -> exit 1 with a
+//                     identical -> exit 0 (CRLF line endings in FILE are
+//                     normalized to LF first - the canonical form is LF,
+//                     see .gitattributes); stale -> exit 1 with a
 //                     symbol-level diff; unreadable/invalid FILE -> exit 2.
 //
 // Exit codes: 0 = OK · 1 = stale manifest (--check) · 2 = error (usage,
@@ -1722,6 +1724,26 @@ int runCheck(const std::string& checkFile, const std::string& manifestText,
     std::cout << "laige-api: error: " << err << std::endl;
     return 2;
   }
+  // Line-ending normalization: the manifest is canonically LF (the
+  // serializer emits LF; the repo's .gitattributes pins eol=lf on every
+  // checkout). CRLF can reach a checked-in copy only as a Windows tooling
+  // artifact (text-mode CMake file(WRITE) test fixtures, editor saves), so
+  // normalize CRLF -> LF before the byte compare. A lone \r is NOT
+  // normalized, so a genuinely corrupted file still fails (CORE-008).
+  {
+    std::string norm;
+    norm.reserve(oldText.size());
+    for (size_t i = 0; i < oldText.size(); ++i) {
+      if (oldText[i] == '\r' && i + 1 < oldText.size() &&
+          oldText[i + 1] == '\n') {
+        norm += '\n';  // fold the CRLF pair to one LF
+        ++i;          // the paired \n belongs to the fold - skip it
+      } else {
+        norm += oldText[i];
+      }
+    }
+    oldText = std::move(norm);
+  }
   if (oldText == manifestText) {
     std::cout << "laige-api: OK — " << checkFile
               << " is up to date (" << symbols.size() << " symbol(s) from the "
@@ -1828,7 +1850,8 @@ void printUsage(std::ostream& os) {
      << "  --root REPO_ROOT   repository root (default: \".\")\n"
      << "  --out FILE         write the regenerated manifest to FILE\n"
      << "  --check FILE       compare the regenerated manifest with FILE:\n"
-     << "                     exit 0 if byte-identical, exit 1 if stale\n"
+     << "                     exit 0 if identical (CRLF normalized to LF),\n"
+     << "                     exit 1 if stale\n"
      << "\n"
      << "Exit codes: 0 = OK · 1 = stale manifest · 2 = error\n";
 }

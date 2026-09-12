@@ -162,6 +162,41 @@ constexpr char kCompilerId[] = "unknown";
 #define LAIGE_BENCH_BUILD_TYPE "unknown"
 #endif
 
+// --- Platform boundary (CPP-009, pattern: logging.cpp) ----------------------
+//
+// MSVC deprecates plain getenv/fopen (C4996, fatal under the engine /WX
+// policy, NFR-8.10); the Windows branch uses the CRT's documented
+// replacements with the same lookup/open semantics every other supported
+// compiler provides. _fsopen(_SH_DENYNO) keeps plain-fopen sharing
+// semantics (no _SH_SECURE re-open denial, see logging.cpp).
+
+#if defined(_MSC_VER)
+// Largest environment value this tool reads (a machine description or a
+// budgets file path; both fit far inside the bound). Named per CORE-005;
+// a value beyond it is treated as unset (the documented fallback applies).
+// MSVC-only: getenv_s needs a caller-sized buffer, so the constant has no
+// use outside this branch (CORE-010: no unused symbols under -Werror).
+constexpr std::size_t kEnvValueMaxBytes = 4096;
+
+std::string envValue(const char* name) {
+  char buf[kEnvValueMaxBytes];
+  std::size_t len = 0;
+  if (getenv_s(&len, buf, sizeof(buf), name) != 0) return {};
+  return std::string(buf, len);
+}
+std::FILE* openReportFile(const char* path, const char* mode) {
+  return ::_fsopen(path, mode, _SH_DENYNO);
+}
+#else
+std::string envValue(const char* name) {
+  const char* v = std::getenv(name);
+  return (v != nullptr) ? std::string(v) : std::string();
+}
+std::FILE* openReportFile(const char* path, const char* mode) {
+  return std::fopen(path, mode);
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -201,7 +236,7 @@ int main(int argc, char** argv) {
   // hardware/OS/compiler/build/workload). The operator may set
   // LAIGE_BENCH_MACHINE for the machine line; the baseline document
   // records the rest (docs/benchmarks/, M0-EXIT-01).
-  const char* envMachine = std::getenv("LAIGE_BENCH_MACHINE");
+  const std::string envMachine = envValue("LAIGE_BENCH_MACHINE");
   const std::string build =
       std::string(kCompilerId) + ", " + LAIGE_BENCH_BUILD_TYPE;
 
@@ -225,7 +260,7 @@ int main(int argc, char** argv) {
     output += " build=";
     output += build;
     output += " machine=";
-    output += (envMachine != nullptr ? envMachine : "");
+    output += envMachine;  // empty when the env var is unset
     output += " warmup=";
     output += std::to_string(cfg.warmup);
     output += "\n";
@@ -234,10 +269,9 @@ int main(int argc, char** argv) {
     // full AGENTS 12 report (pass/fail + before/after + statistics).
     std::string budgetsPath = cfg.budgetsPath;
     if (budgetsPath.empty()) {
-      const char* envPath = std::getenv("LAIGE_BUDGETS_PATH");
-      budgetsPath = (envPath != nullptr && envPath[0] != '\0')
-                        ? std::string(envPath)
-                        : std::string("budgets.json");
+      const std::string envPath = envValue("LAIGE_BUDGETS_PATH");
+      budgetsPath =
+          envPath.empty() ? std::string("budgets.json") : envPath;
     }
     const laige::Result<laige::BudgetTable, laige::ErrorCode> table =
         laige::loadBudgets(budgetsPath);
@@ -257,7 +291,7 @@ int main(int argc, char** argv) {
     BudgetReportContext ctx;
     ctx.workload = entry->workload.c_str();
     ctx.build = build.c_str();
-    ctx.machine = envMachine != nullptr ? envMachine : "";
+    ctx.machine = envMachine.c_str();  // outlives the budgetCheck call below
     ctx.warmup = static_cast<std::uint32_t>(cfg.warmup);
 
     const laige::BudgetCheckResult check =
@@ -271,7 +305,7 @@ int main(int argc, char** argv) {
   std::fflush(stdout);
 
   if (!cfg.reportPath.empty()) {
-    std::FILE* f = std::fopen(cfg.reportPath.c_str(), "a");
+    std::FILE* f = openReportFile(cfg.reportPath.c_str(), "a");
     if (f == nullptr) {
       std::fprintf(stderr, "laige-bench: cannot open report file '%s'\n",
                    cfg.reportPath.c_str());

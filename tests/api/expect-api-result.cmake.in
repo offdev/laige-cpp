@@ -12,9 +12,22 @@
 # The script exits non-zero (failing the CTest test) on any mismatch and
 # prints the full scanner output for diagnosis.
 
+# The scanner executable arrives through the test's ENVIRONMENT property
+# (LAIGE_API_SCANNER = $<TARGET_FILE:laige-api-scanner>, set in
+# tests/api/CMakeLists.txt): CMake resolves it per configuration under
+# multi-config generators (bin/<Config>/laige-api-scanner.exe on the
+# Windows VS generator), where a path baked in at configure time only
+# matches the single-config layout. Read it at test time, never at
+# configure time ($ENV{...} in a configure-time string expands early).
+set(_scanner "$ENV{LAIGE_API_SCANNER}")
+if(_scanner STREQUAL "")
+  message(FATAL_ERROR
+    "LAIGE_API_SCANNER is not set: the test's ENVIRONMENT property must "
+    "carry the scanner path (tests/api/CMakeLists.txt)")
+endif()
 set(_cmd @CMD@)
 execute_process(
-  COMMAND @SCANNER@ ${_cmd}
+  COMMAND "${_scanner}" ${_cmd}
   RESULT_VARIABLE _rc
   OUTPUT_VARIABLE _out
   ERROR_VARIABLE _err

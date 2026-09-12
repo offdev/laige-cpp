@@ -174,7 +174,6 @@ function(laige_add_api_test name expect_exit root mode file)
       "  string(APPEND _problems \"output missing '<${_esc}'>; \")\n"
       "endif()\n")
   endforeach()
-  set(SCANNER "${CMAKE_BINARY_DIR}/bin/laige-api-scanner")
   set(CMD "${_cmd}")
   set(EXPECT_EXIT "${expect_exit}")
   set(OUT_FILE "")
@@ -186,6 +185,13 @@ function(laige_add_api_test name expect_exit root mode file)
                  "${CMAKE_CURRENT_BINARY_DIR}/${name}.cmake" @ONLY)
   add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -P
            "${CMAKE_CURRENT_BINARY_DIR}/${name}.cmake")
+  # The scanner path is carried in the test environment, not in the
+  # command or baked into the script: $<TARGET_FILE> resolves per
+  # configuration under multi-config generators (the Windows VS layout
+  # puts the executable in bin/<Config>/), while a configure-time path
+  # only matches the single-config layout.
+  set_tests_properties(${name} PROPERTIES
+    ENVIRONMENT "LAIGE_API_SCANNER=$<TARGET_FILE:laige-api-scanner>")
 endfunction()
 
 # The scan test also compares the written manifest byte-for-byte against
@@ -194,7 +200,6 @@ set(_scan_out "${CMAKE_CURRENT_BINARY_DIR}/fixture-api.json")
 set(_scan_root "${FX}/api")
 set(_scan_expected "${CMAKE_CURRENT_BINARY_DIR}/expected-fixture-api.json")
 set(_cmd "\"--root\" \"${_scan_root}\" \"--out\" \"${_scan_out}\"")
-set(SCANNER "${CMAKE_BINARY_DIR}/bin/laige-api-scanner")
 set(CMD "${_cmd}")
 set(EXPECT_EXIT "0")
 set(OUT_FILE "${_scan_out}")
@@ -203,6 +208,9 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/expect-api-result.cmake.in"
                "${CMAKE_CURRENT_BINARY_DIR}/api-fixture-scan.cmake" @ONLY)
 add_test(NAME api-fixture-scan COMMAND ${CMAKE_COMMAND} -P
            "${CMAKE_CURRENT_BINARY_DIR}/api-fixture-scan.cmake")
+# Same ENVIRONMENT wiring as laige_add_api_test (see its comment).
+set_tests_properties(api-fixture-scan PROPERTIES
+  ENVIRONMENT "LAIGE_API_SCANNER=$<TARGET_FILE:laige-api-scanner>")
 
 laige_add_api_test(api-check-fresh 0 "${FX}/api" check
   "${CMAKE_CURRENT_BINARY_DIR}/expected-fixture-api.json"
