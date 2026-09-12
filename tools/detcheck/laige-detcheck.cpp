@@ -410,6 +410,29 @@ bool runScenarioOnce(const std::string& exe,
          isTransientSpawnFailure(static_cast<std::uint32_t>(r.exitCode));
 }
 
+// Last-write time of the scenario executable, as Unix-epoch seconds, for
+// the failure diagnostic: distinguishes a file that is still being written
+// (write time after the launch) from a scan/contention window on a
+// finished file. 0 when it cannot be determined.
+std::uint64_t lastWriteUnixSeconds(const std::wstring& exeW) {
+  const HANDLE h = CreateFileW(
+      exeW.c_str(), FILE_READ_ATTRIBUTES,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) return 0;
+  BY_HANDLE_FILE_INFORMATION info{};
+  uint64_t epoch = 0;
+  if (GetFileInformationByHandle(h, &info)) {
+    // FILETIME is 100-ns ticks since 1601-01-01; Unix epoch is 1970-01-01,
+    // 11644473600 s later.
+    const ULARGE_INTEGER ft{info.ftLastWriteTime.dwLowDateTime,
+                            info.ftLastWriteTime.dwHighDateTime};
+    epoch = (ft.QuadPart - 116444736000000000ull) / 10000000ull;
+  }
+  CloseHandle(h);
+  return epoch;
+}
+
 // Bounded first-launch retry (one attempt, short delay): absorbs the
 // Windows first-launch image-load race described above. The retry CANNOT
 // mask scenario behavior: only a run that produced no output and died with
@@ -419,9 +442,22 @@ RunResult runScenario(const std::string& exe,
                       const std::vector<std::string>& args) {
   RunResult r;
   const bool transient = runScenarioOnce(exe, args, r);
+  int attempts = 1;
   if (transient) {
+    std::fprintf(stderr,
+                 "laige-detcheck: first launch transiently failed (exit %d); "
+                 "retrying once after 250 ms\n",
+                 r.exitCode);
     Sleep(250);  // let the file filter settle before the single retry
+    attempts = 2;
     runScenarioOnce(exe, args, r);
+  }
+  if (!r.ok) {
+    const std::uint64_t wrote = lastWriteUnixSeconds(toWide(exe));
+    std::fprintf(stderr,
+                 "laige-detcheck: scenario run failed after %d attempt(s); "
+                 "executable last written at unix %llu\n",
+                 attempts, static_cast<unsigned long long>(wrote));
   }
   return r;
 }
