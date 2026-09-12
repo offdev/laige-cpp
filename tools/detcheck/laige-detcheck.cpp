@@ -335,7 +335,8 @@ void probeControlSpawn() {
   si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
   si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
   PROCESS_INFORMATION pi{};
-  const std::wstring controlCmd = L"cmd.exe /c echo LAIGE_DETCHECK_CONTROL_OK";
+  // Non-const so .data() yields wchar_t* for CreateProcessW (C++20).
+  std::wstring controlCmd = L"cmd.exe /c echo LAIGE_DETCHECK_CONTROL_OK";
   if (!CreateProcessW(nullptr, controlCmd.data(), nullptr, nullptr, TRUE, 0,
                        nullptr, nullptr, &si, &pi)) {
     std::fprintf(stderr,
