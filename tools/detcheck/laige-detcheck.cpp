@@ -314,8 +314,7 @@ std::wstring quoteArg(std::string_view arg) {
 // process instances): the CWD, every environment variable name, and the
 // full values of the test-wiring variables (LAIGE_/CTEST_ prefixes) and
 // PATH. GetEnvironmentStringsW returns a double-NUL-terminated block of
-// "NAME=VALUE" entries; the declaration goes through LPTCH, so it is
-// handled via void* and cast to the actual wide block.
+// "NAME=VALUE" entries.
 void dumpEnvironmentDiagnostics() {
   wchar_t cwd[1024] = {};
   const DWORD cwdLen = GetCurrentDirectoryW(1024, cwd);
@@ -330,12 +329,11 @@ void dumpEnvironmentDiagnostics() {
     }
   }
   std::fprintf(stderr, "laige-detcheck: env cwd=%s\n", cwdUtf8.c_str());
-  const void* rawEnv = GetEnvironmentStringsW();
-  if (rawEnv == nullptr) {
+  LPWCH env = GetEnvironmentStringsW();
+  if (env == nullptr) {
     std::fprintf(stderr, "laige-detcheck: env: unavailable\n");
     return;
   }
-  const wchar_t* env = static_cast<const wchar_t*>(rawEnv);
   for (const wchar_t* block = env; *block != L'\0';) {
     const size_t len = wcslen(block);
     const wchar_t* eq = wcschr(block, L'=');
@@ -371,8 +369,7 @@ void dumpEnvironmentDiagnostics() {
     }
     block += len + 1;
   }
-  FreeEnvironmentStringsW(
-      static_cast<LPTCH>(const_cast<void*>(static_cast<const void*>(rawEnv))));
+  FreeEnvironmentStringsW(env);
 }
 
 // Control probe (diagnostic): spawn a known-good command (cmd /c echo)
