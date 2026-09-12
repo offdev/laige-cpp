@@ -197,6 +197,19 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
       - name: Build
         run: cmake --build build --config Debug -j
+      - name: Warm up scenario binaries
+        # See the same step in ci.yml: first execution of a freshly built
+        # .exe on a Windows runner can be disrupted by the file filter's
+        # first-open scan; absorb it outside the ctest assertions.
+        run: |
+          $bin = ".\build\bin\Debug"
+          & "$bin\laige-detcheck.exe" --scenario=synthetic
+          & "$bin\laige-fuzz.exe" json_parse --runs=1
+          & "$bin\detcheck-fixture-scenario.exe" --ticks=1
+          & "$bin\detcheck-fixture-scenario-perturbed.exe" --ticks=1
+          & "$bin\detcheck-fixture-scenario-bad.exe" --ticks=1
+          & "$bin\detcheck-fixture-scenario-fail.exe" --ticks=1
+          & "$bin\detcheck-fixture-scenario-short.exe" --ticks=1
       - name: Test (unit)
         run: ctest --test-dir build -C Debug --output-on-failure
 
