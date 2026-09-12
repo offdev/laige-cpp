@@ -67,3 +67,7 @@ add_subdirectory(laige-core)
 # Tooling checks (M0-CI-03): the include-graph lint runs against fixture
 # trees and the real repository tree (tests/tools).
 add_subdirectory(tools)
+
+# Public API manifest checks (M0-TOOL-01): the scanner runs against fixture
+# trees and the real repository tree (tests/api).
+add_subdirectory(api)

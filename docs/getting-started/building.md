@@ -197,6 +197,17 @@ pinned set and the NaN/Inf policy):
   runs in every build tree — in the ASan tree it is instrumented and is
   the step's sanitizer gate (NFR-8.7; PRD §14: fuzz "every commit
   (bounded), nightly (long)").
+- `api-fixture-scan`, `api-check-fresh`, `api-check-stale`,
+  `api-unsupported-construct`, `api-root-error`, and `api-real-tree`
+  are the M0-TOOL-01 CTest entries (`tests/api`): the public API
+  manifest scanner (`tools/api/laige-api-scanner`) runs against a
+  synthetic fixture tree (the exact manifest bytes are asserted) and
+  against the real repository tree (`--check laige-api.json`), so a
+  public-header change that misses the manifest fails in every P0 job
+  — and in the dedicated `api-manifest` CI job, which regenerates the
+  manifest and fails on any drift (PRD §9.4, NFR-13.1). The manifest
+  contract (symbol kinds, doc association, exit codes, unsupported
+  constructs) is the header comment of `tools/api/laige-api.cpp`.
 - Every configure verifies the vendored dependency lock
   (`cmake/laige-deps-lock.cmake` against `deps.lock`); a tampered or
   unlisted file under `deps/` fails the configure loudly. GoogleTest is the

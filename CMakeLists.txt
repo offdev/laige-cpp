@@ -226,4 +226,5 @@ if(LAIGE_BUILD_TESTS)
   # library-only build does not need them).
   add_subdirectory(tools/fuzz)
   add_subdirectory(tools/bench)  # M0-CORE-08: laige-bench
+  add_subdirectory(tools/api)    # M0-TOOL-01: laige-api-scanner
 endif()
