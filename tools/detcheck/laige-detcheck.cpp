@@ -310,6 +310,71 @@ std::wstring quoteArg(std::string_view arg) {
   return q;
 }
 
+// Environment diagnostic (CI comparison between failing and passing
+// process instances): the CWD, every environment variable name, and the
+// full values of the test-wiring variables (LAIGE_/CTEST_ prefixes) and
+// PATH. GetEnvironmentStringsW returns a double-NUL-terminated block of
+// "NAME=VALUE" entries; the declaration goes through LPTCH, so it is
+// handled via void* and cast to the actual wide block.
+void dumpEnvironmentDiagnostics() {
+  wchar_t cwd[1024] = {};
+  const DWORD cwdLen = GetCurrentDirectoryW(1024, cwd);
+  std::string cwdUtf8;
+  if (cwdLen > 0) {
+    const int n = WideCharToMultiByte(CP_UTF8, 0, cwd, -1, nullptr, 0,
+                                       nullptr, nullptr);
+    if (n > 0) {
+      cwdUtf8.resize(static_cast<std::size_t>(n - 1));
+      WideCharToMultiByte(CP_UTF8, 0, cwd, -1, cwdUtf8.data(), n, nullptr,
+                          nullptr);
+    }
+  }
+  std::fprintf(stderr, "laige-detcheck: env cwd=%s\n", cwdUtf8.c_str());
+  const void* rawEnv = GetEnvironmentStringsW();
+  if (rawEnv == nullptr) {
+    std::fprintf(stderr, "laige-detcheck: env: unavailable\n");
+    return;
+  }
+  const wchar_t* env = static_cast<const wchar_t*>(rawEnv);
+  for (const wchar_t* block = env; *block != L'\0';) {
+    const size_t len = wcslen(block);
+    const wchar_t* eq = wcschr(block, L'=');
+    const std::wstring name(block, eq ? static_cast<size_t>(eq - block)
+                                      : len);
+    const std::wstring value(eq ? eq + 1 : L"");
+    const bool isTestVar = name.rfind(L"LAIGE_", 0) == 0 ||
+                           name.rfind(L"CTEST_", 0) == 0 ||
+                           name == L"PATH";
+    std::string nameUtf8;
+    {
+      const int n = WideCharToMultiByte(CP_UTF8, 0, name.data(),
+                                         static_cast<int>(name.size()),
+                                         nullptr, 0, nullptr, nullptr);
+      nameUtf8.resize(static_cast<std::size_t>(n));
+      WideCharToMultiByte(CP_UTF8, 0, name.data(),
+                          static_cast<int>(name.size()), nameUtf8.data(), n,
+                          nullptr, nullptr);
+    }
+    if (isTestVar) {
+      std::string valueUtf8;
+      const int n = WideCharToMultiByte(CP_UTF8, 0, value.data(),
+                                         static_cast<int>(value.size()),
+                                         nullptr, 0, nullptr, nullptr);
+      valueUtf8.resize(static_cast<std::size_t>(n));
+      WideCharToMultiByte(CP_UTF8, 0, value.data(),
+                          static_cast<int>(value.size()), valueUtf8.data(), n,
+                          nullptr, nullptr);
+      std::fprintf(stderr, "laige-detcheck: env %s=%s\n", nameUtf8.c_str(),
+                   valueUtf8.c_str());
+    } else {
+      std::fprintf(stderr, "laige-detcheck: env %s\n", nameUtf8.c_str());
+    }
+    block += len + 1;
+  }
+  FreeEnvironmentStringsW(
+      static_cast<LPTCH>(const_cast<void*>(static_cast<const void*>(rawEnv))));
+}
+
 // Control probe (diagnostic): spawn a known-good command (cmd /c echo)
 // through the exact same pipe machinery used for scenario runs, in this
 // process instance. Its captured line must be exactly the marker; if the
@@ -382,6 +447,7 @@ RunResult runScenario(const std::string& exe,
               std::to_string(GetLastError()) + "): " + exe;
     return r;
   }
+  dumpEnvironmentDiagnostics();
   probeControlSpawn();
   std::wstring cmd = exeW;
   for (const std::string& a : args) cmd += L" " + quoteArg(a);
