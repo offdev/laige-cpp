@@ -376,7 +376,7 @@ void dumpEnvironmentDiagnostics() {
 // handle values and their types (a handle whose type is not PIPE, or an
 // invalid value, identifies the mechanism). Returns false only when the
 // spawn itself failed (details in errOut).
-bool probeAttempt(const wchar_t* appname, const std::wstring& cmd,
+bool probeAttempt(const wchar_t* appname, std::wstring cmd,
                   DWORD& exitCode, std::string& captured, std::string& errOut) {
   SECURITY_ATTRIBUTES sa{};
   sa.nLength = sizeof sa;
@@ -440,7 +440,7 @@ bool probeAttempt(const wchar_t* appname, const std::wstring& cmd,
 void probeControlSpawn() {
   // Non-const so .data() yields wchar_t* for CreateProcessW (C++20).
   std::wstring controlCmd = L"cmd.exe /c echo LAIGE_DETCHECK_CONTROL_OK";
-  const std::wstring marker = "LAIGE_DETCHECK_CONTROL_OK";
+  const std::string marker = "LAIGE_DETCHECK_CONTROL_OK";
   {
     DWORD code = 0;
     std::string captured, err;
