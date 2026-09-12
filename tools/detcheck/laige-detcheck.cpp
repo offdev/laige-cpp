@@ -310,6 +310,65 @@ std::wstring quoteArg(std::string_view arg) {
   return q;
 }
 
+// Control probe (diagnostic): spawn a known-good command (cmd /c echo)
+// through the exact same pipe machinery used for scenario runs, in this
+// process instance. Its captured line must be exactly the marker; if the
+// probe succeeds while a scenario run captures nothing, the machinery
+// works and the scenario launch itself is the problem — and vice versa.
+void probeControlSpawn() {
+  SECURITY_ATTRIBUTES sa{};
+  sa.nLength = sizeof sa;
+  HANDLE readH = INVALID_HANDLE_VALUE;
+  HANDLE writeH = INVALID_HANDLE_VALUE;
+  if (!CreatePipe(&readH, &writeH, &sa, 0)) {
+    std::fprintf(stderr,
+                 "laige-detcheck: control probe: CreatePipe failed "
+                 "(lastError=%lu)\n",
+                 static_cast<unsigned long>(GetLastError()));
+    return;
+  }
+  SetHandleInformation(writeH, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+  STARTUPINFOW si{};
+  si.cb = sizeof si;
+  si.dwFlags = STARTF_USESTDHANDLES;
+  si.hStdOutput = writeH;
+  si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+  si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+  PROCESS_INFORMATION pi{};
+  const std::wstring controlCmd = L"cmd.exe /c echo LAIGE_DETCHECK_CONTROL_OK";
+  if (!CreateProcessW(nullptr, controlCmd.data(), nullptr, nullptr, TRUE, 0,
+                       nullptr, nullptr, &si, &pi)) {
+    std::fprintf(stderr,
+                 "laige-detcheck: control probe: CreateProcessW failed "
+                 "(lastError=%lu)\n",
+                 static_cast<unsigned long>(GetLastError()));
+    CloseHandle(readH);
+    CloseHandle(writeH);
+    return;
+  }
+  CloseHandle(writeH);
+  char buf[256];
+  std::string captured;
+  for (;;) {
+    if (WaitForSingleObject(readH, INFINITE) != WAIT_OBJECT_0) break;
+    DWORD n = 0;
+    if (!PeekNamedPipe(readH, buf, sizeof buf, &n, nullptr, nullptr)) break;
+    if (n == 0) break;
+    DWORD got = 0;
+    if (!ReadFile(readH, buf, n, &got, nullptr)) break;
+    captured.append(buf, got);
+  }
+  CloseHandle(readH);
+  WaitForSingleObject(pi.hProcess, INFINITE);
+  DWORD code = 0;
+  GetExitCodeProcess(pi.hProcess, &code);
+  CloseHandle(pi.hThread);
+  CloseHandle(pi.hProcess);
+  std::fprintf(stderr,
+               "laige-detcheck: control probe: exit=%lu captured='%s'\n",
+               static_cast<unsigned long>(code), captured.c_str());
+}
+
 RunResult runScenario(const std::string& exe,
                       const std::vector<std::string>& args) {
   RunResult r;
@@ -322,6 +381,7 @@ RunResult runScenario(const std::string& exe,
               std::to_string(GetLastError()) + "): " + exe;
     return r;
   }
+  probeControlSpawn();
   std::wstring cmd = exeW;
   for (const std::string& a : args) cmd += L" " + quoteArg(a);
 
