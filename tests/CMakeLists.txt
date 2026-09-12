@@ -71,3 +71,8 @@ add_subdirectory(tools)
 # Public API manifest checks (M0-TOOL-01): the scanner runs against fixture
 # trees and the real repository tree (tests/api).
 add_subdirectory(api)
+
+# Determinism checker checks (M0-TOOL-02): the tool runs the synthetic
+# two-run scenario (built-in + fixture scenario binaries) in
+# tests/detcheck.
+add_subdirectory(detcheck)

@@ -224,7 +224,8 @@ if(LAIGE_BUILD_TESTS)
   add_subdirectory(tests)
   # Dev tools that need the built engine library (gated with tests: a
   # library-only build does not need them).
-  add_subdirectory(tools/fuzz)
-  add_subdirectory(tools/bench)  # M0-CORE-08: laige-bench
-  add_subdirectory(tools/api)    # M0-TOOL-01: laige-api-scanner
+  add_subdirectory(tools/fuzz)     # M0-CORE-07: laige-fuzz
+  add_subdirectory(tools/bench)    # M0-CORE-08: laige-bench
+  add_subdirectory(tools/api)      # M0-TOOL-01: laige-api-scanner
+  add_subdirectory(tools/detcheck) # M0-TOOL-02: laige-detcheck
 endif()

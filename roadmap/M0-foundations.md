@@ -796,7 +796,7 @@ No rendering, no physics, no networking yet — `laige-core` only.
     manifest: 376 symbols from 10 headers (all in `laige-core`; the
     other M0 modules have no `include/` directories yet).
 
-- [ ] **M0-TOOL-02 · Determinism checker skeleton**
+- [x] **M0-TOOL-02 · Determinism checker skeleton**
   - **Refs:** FR-11.5; AGENTS ARCH-010, TEST-004
   - **Depends:** M0-CORE-06, M0-CORE-08
   - **Scope:**
@@ -804,7 +804,46 @@ No rendering, no physics, no networking yet — `laige-core` only.
     - Scenario contract documented: scenario binary prints `<tick> <hash>` lines.
     - Wire into CI as a job that is skipped until a real scenario exists (M1-SAMPLE-01), but the tool itself is tested with a synthetic two-run scenario.
   - **Verify:** `laige-detcheck --scenario=synthetic` passes on identical builds and fails when the synthetic scenario is perturbed (test fixture).
-  - **Size:** ~200 lines + test
+  - **Decision (2026-09-12):** `laige-detcheck` in `tools/detcheck`
+    (single C++20 file, over the ~200-line estimate: the normative
+    scenario contract is the file's header comment — same pattern as
+    M0-TOOL-01 — and portable scenario execution needs both fork/exec
+    + pipe capture (POSIX) and CreateProcessW + PeekNamedPipe (Windows)
+    so the tool builds on every P0 platform). Two modes:
+    `--scenario=synthetic|synthetic-perturbed` (built-in 32-body
+    fpx16_16 + Prng workload, two in-process runs — pure integer
+    arithmetic, bit-exact per ADR 0002) and the real M1-DET-04 mode
+    `--run-a=<bin> --run-b=<bin> [-- scenario-args...]` (two builds of
+    one scenario compared). Scenario contract (strict, enforced,
+    bounded): one stdout line per tick `<tick> <hash>` — tick starts at
+    0, step 1, no padding; hash = 16 lowercase hex digits (the 64-bit
+    state hash's canonical text form; the algorithm is NOT part of the
+    contract — lines compare byte-for-byte); trailing newline optional,
+    trailing `\r` tolerated; stderr ignored; exit 0 on completion.
+    Bounds: ≤ 65536 ticks, ≤ 64 bytes/line. Report: stable
+    `detcheck scenario=<name> result=OK|DIVERGED [first_diff_tick=<t>]`
+    + run-a/run-b lines (the diverging tick pair, or stream-length notes
+    when one run ends early). Exit 0 = match · 1 = divergence (loud,
+    CORE-008) · 2 = usage/unknown scenario/scenario failure/contract
+    violation. Contract doc: `docs/api/detcheck.md` (normative text in
+    the tool header). Tests: 9 CTest entries in `tests/detcheck`
+    (synthetic self-check; perturbation fixture — built-in and as a
+    fixture binary; identical/different cross-binary pairs; malformed
+    output; scenario exit failure; stream-length mismatch; unknown
+    scenario), each a generated `cmake -P` check script asserting exit
+    code + output fragments (tests/api pattern; WILL_FAIL inversion and
+    crash-vs-failure reasons as documented there). Fixture: one source,
+    five compiled variants (clean/perturbed/bad/fail/short) — the
+    synthetic two-run scenario. CI: `detcheck` job in ci-pull.yml/ci.yml
+    (every PR and merge, no ci:* condition — tooling check, not a P0 OS
+    build) runs the synthetic self-check and SKIPS the real-scenario
+    step until M1-SAMPLE-01 exists (M1-DET-04 activates the
+    two-configuration comparison). M1-DET-03's world.state_hash
+    replaces the scenarios' ad-hoc FNV computation; the tool's
+    line-comparison is unchanged.
+  - **Size:** ~1,400 lines (over estimate: contract header + dual-
+    platform process execution + 9-test suite + fixture variants +
+    docs/api/detcheck.md; see Decision)
 
 ## Test infrastructure & docs
 
