@@ -380,6 +380,11 @@ bool probeAttempt(const wchar_t* appname, std::wstring cmd,
                   DWORD& exitCode, std::string& captured, std::string& errOut) {
   SECURITY_ATTRIBUTES sa{};
   sa.nLength = sizeof sa;
+  // Inheritable from creation: on the CI Windows runner, a CreatePipe
+  // handle created with bInheritHandle=FALSE did not gain the INHERIT
+  // flag from a later SetHandleInformation (observed writeFlags=0x1,
+  // no 0x80), so the child never received the pipe's write end.
+  sa.bInheritHandle = TRUE;
   HANDLE readH = INVALID_HANDLE_VALUE;
   HANDLE writeH = INVALID_HANDLE_VALUE;
   if (!CreatePipe(&readH, &writeH, &sa, 0)) {
@@ -387,14 +392,17 @@ bool probeAttempt(const wchar_t* appname, std::wstring cmd,
              ")";
     return false;
   }
-  SetHandleInformation(writeH, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+  const BOOL setInherit =
+      SetHandleInformation(writeH, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+  const DWORD setErr = setInherit ? 0 : GetLastError();
   DWORD writeInfo = 0;
   GetHandleInformation(writeH, &writeInfo);
   std::fprintf(stderr,
                "laige-detcheck: probe handles read=0x%p write=0x%p "
-               "types=%lu/%lu writeFlags=0x%lx\n",
+               "types=%lu/%lu writeFlags=0x%lx setInherit=%d setErr=%lu\n",
                static_cast<void*>(readH), static_cast<void*>(writeH),
-               GetFileType(readH), GetFileType(writeH), writeInfo);
+               GetFileType(readH), GetFileType(writeH), writeInfo,
+               setInherit ? 1 : 0, static_cast<unsigned long>(setErr));
   STARTUPINFOW si{};
   si.cb = sizeof si;
   si.dwFlags = STARTF_USESTDHANDLES;
@@ -491,15 +499,25 @@ RunResult runScenario(const std::string& exe,
 
   SECURITY_ATTRIBUTES sa{};
   sa.nLength = sizeof sa;
+  // Inheritable from creation: on the CI Windows runner, a CreatePipe
+  // handle created with bInheritHandle=FALSE did not gain the INHERIT
+  // flag from a later SetHandleInformation (observed writeFlags=0x1,
+  // no 0x80), so the child never received the pipe's write end.
+  sa.bInheritHandle = TRUE;
   HANDLE readH = INVALID_HANDLE_VALUE;
   HANDLE writeH = INVALID_HANDLE_VALUE;
   if (!CreatePipe(&readH, &writeH, &sa, 0)) {
     r.error = "CreatePipe failed";
     return r;
   }
-  // The child inherits the write end of the pipe.
-  if (!SetHandleInformation(writeH, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) {
-    r.error = "SetHandleInformation failed";
+  // The child inherits the write end of the pipe (set at creation; this
+  // call is redundant on success and the failure check stays for
+  // completeness).
+  const BOOL setInherit =
+      SetHandleInformation(writeH, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+  if (!setInherit) {
+    r.error = "SetHandleInformation failed (lastError=" +
+              std::to_string(GetLastError()) + ")";
     CloseHandle(readH);
     CloseHandle(writeH);
     return r;
@@ -510,9 +528,10 @@ RunResult runScenario(const std::string& exe,
   GetHandleInformation(writeH, &writeInfo);
   std::fprintf(stderr,
                "laige-detcheck: scenario handles read=0x%p write=0x%p "
-               "types=%lu/%lu writeFlags=0x%lx\n",
+               "types=%lu/%lu writeFlags=0x%lx setInherit=%d\n",
                static_cast<void*>(readH), static_cast<void*>(writeH),
-               GetFileType(readH), GetFileType(writeH), writeInfo);
+               GetFileType(readH), GetFileType(writeH), writeInfo,
+               setInherit ? 1 : 0);
   STARTUPINFOW si{};
   si.cb = sizeof si;
   si.dwFlags = STARTF_USESTDHANDLES;
