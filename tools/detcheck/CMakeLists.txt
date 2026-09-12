@@ -28,3 +28,12 @@ target_link_libraries(laige-detcheck PRIVATE laige-core)
 # CMake stamps it so the binary does not have to guess.
 target_compile_definitions(laige-detcheck PRIVATE
   LAIGE_DETCHECK_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+
+# Diagnostic child for the M0-TEST-01 Windows CI investigation: reports
+# the std handles the kernel actually assigned to a spawned child, so
+# laige-detcheck can compare the STARTUPINFO request against the
+# delivery. Windows-only; the POSIX path never spawns it.
+if(WIN32)
+  add_executable(laige-detcheck-probe probe-helper.cpp)
+  laige_apply_engine_policy(laige-detcheck-probe)
+endif()

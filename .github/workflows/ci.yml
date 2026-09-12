@@ -235,8 +235,22 @@ jobs:
           & "$bin\detcheck-fixture-scenario-bad.exe" --ticks=1
           & "$bin\detcheck-fixture-scenario-fail.exe" --ticks=1
           & "$bin\detcheck-fixture-scenario-short.exe" --ticks=1
+          & "$bin\laige-detcheck-probe.exe"
       - name: Test (unit)
-        run: ctest --test-dir build -C Debug --output-on-failure
+        # ctest hides passing-test output, so the per-test detcheck
+        # diagnostic files (spawn handles, control probes — see
+        # tools/detcheck) are printed here, regardless of the ctest
+        # outcome; the step still exits with ctest's status.
+        run: |
+          ctest --test-dir build -C Debug --output-on-failure
+          $ctestExit = $LASTEXITCODE
+          Get-ChildItem .\build\tests\detcheck\diag -Filter *.txt -ErrorAction SilentlyContinue |
+            Sort-Object Name |
+            ForEach-Object {
+              Write-Host "===== detcheck diag: $($_.Name) ====="
+              Get-Content $_.FullName
+            }
+          exit $ctestExit
 
   macos-arm64:
     name: macOS arm64 (AppleClang)

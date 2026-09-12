@@ -110,6 +110,16 @@ function(laige_add_detcheck_test name expect_exit cmd)
   # The quoted expansion keeps the ';'-separated pairs in ONE argument.
   set_tests_properties(${name} PROPERTIES
     ENVIRONMENT "${LAIGE_DETCHECK_TEST_ENV}")
+  # Windows CI investigation (M0-TEST-01): the tool flushes its spawn
+  # diagnostics to a per-test file; the Windows CI job cats the files
+  # after ctest (ctest hides passing-test output). POSIX ignores the
+  # variable.
+  if(WIN32)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/diag")
+    set_tests_properties(${name} PROPERTIES
+      ENVIRONMENT
+      "${LAIGE_DETCHECK_TEST_ENV};LAIGE_DETCHECK_DIAG_FILE=${CMAKE_CURRENT_BINARY_DIR}/diag/${name}.txt")
+  endif()
 endfunction()
 
 # (name, expected exit, quoted command list, required output fragments...)
