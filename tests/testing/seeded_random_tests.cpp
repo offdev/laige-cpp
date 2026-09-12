@@ -119,26 +119,37 @@ u64 seedCheck(u64 seed, u32 streamId, const char* label) {
 
 // RAII around LAIGE_TEST_SEED: the override test sets it for the duration
 // of the test body and restores the prior state (absent or present) even
-// on failure. setenv/unsetenv are C99/POSIX entry points available on all
-// P0 toolchains (MSVC exposes them in <cstdlib>; the deprecated _putenv
-// spelling is not used — C4996 is fatal under /WX).
+// on failure. Platform boundary (CPP-009): setenv/unsetenv are C99/POSIX;
+// MSVC's CRT does not provide them, so the Windows branch uses _putenv_s
+// (the documented secure variant — no C4996 under /WX). On Windows,
+// _putenv_s(name, "") is the "unset" equivalent: TestSeed() treats an
+// empty value exactly as unset (the same lookup outcome ReadEnvVar gives
+// on POSIX, where unsetenv removes the variable outright).
 class ScopedTestSeedEnv {
  public:
   explicit ScopedTestSeedEnv(const char* value) {
-    const char* prior = std::getenv(laige::testing::kTestSeedEnvVar);
-    hadPrior_ = prior != nullptr;
-    priorValue_ = hadPrior_ ? std::string(prior) : std::string();
-    ::setenv(laige::testing::kTestSeedEnvVar, value, 1);
+    priorValue_ = laige::testing::ReadEnvVar(laige::testing::kTestSeedEnvVar);
+    hadPrior_ = !priorValue_.empty();
+    SetVar(laige::testing::kTestSeedEnvVar, value);
   }
   ~ScopedTestSeedEnv() {
-    if (hadPrior_) {
-      ::setenv(laige::testing::kTestSeedEnvVar, priorValue_.c_str(), 1);
-    } else {
-      ::unsetenv(laige::testing::kTestSeedEnvVar);
-    }
+    SetVar(laige::testing::kTestSeedEnvVar,
+           hadPrior_ ? priorValue_.c_str() : "");
   }
 
  private:
+  static void SetVar(const char* name, const char* value) {
+#if defined(_MSC_VER)
+    ::_putenv_s(name, value);
+#else
+    if (value == nullptr || value[0] == '\0') {
+      ::unsetenv(name);
+    } else {
+      ::setenv(name, value, 1);
+    }
+#endif
+  }
+
   bool hadPrior_ = false;
   std::string priorValue_;
 };

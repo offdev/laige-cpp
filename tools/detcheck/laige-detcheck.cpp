@@ -128,6 +128,10 @@
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
+// windows.h's WinDef.h defines the min/max macros, which collide with
+// std::min/std::max (MSVC C2589 in compareStreams); NOMINMAX is the
+// documented opt-out (CPP-009: compile-time platform boundary).
+#define NOMINMAX
 #include <windows.h>
 #else
 #include <sys/wait.h>

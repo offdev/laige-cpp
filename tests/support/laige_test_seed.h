@@ -43,14 +43,36 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 #include "gtest/gtest.h"
 #include "laige/prng.h"
 
 namespace laige::testing {
+
+// The value of an environment variable; the empty string when unset.
+// Platform boundary (CPP-009, the pattern of
+// tests/laige-core/budget_harness_tests.cpp and tools/bench/laige-bench.cpp):
+// MSVC deprecates plain getenv (C4996, fatal under /WX); getenv_s has the
+// same lookup semantics. Largest value any caller reads here is a 16-hex
+// seed string; 4096 is far beyond it, and a longer value is treated as
+// unset (the documented fallback applies). Named per CORE-005.
+inline std::string ReadEnvVar(const char* name) {
+#if defined(_MSC_VER)
+  constexpr std::size_t kEnvValueMaxBytes = 4096;
+  char buf[kEnvValueMaxBytes];
+  std::size_t len = 0;
+  if (getenv_s(&len, buf, sizeof(buf), name) != 0) return {};
+  return std::string(buf, len);
+#else
+  const char* v = std::getenv(name);
+  return (v != nullptr) ? std::string(v) : std::string();
+#endif
+}
 
 // The fixed default test seed ("one-fuzz-seed"). Identical to
 // laige-fuzz's kDefaultSeed (tools/fuzz/laige-fuzz.cpp) and never
@@ -84,18 +106,18 @@ inline bool ParseTestSeed(const char* text, std::uint64_t& out) {
 // complete. The test has already failed, so the ctest entry goes red
 // (CORE-008: no silent fallback for an explicit misconfiguration).
 inline std::uint64_t TestSeed() {
-  const char* env = std::getenv(kTestSeedEnvVar);
-  if (env == nullptr || *env == '\0') {
+  const std::string env = ReadEnvVar(kTestSeedEnvVar);
+  if (env.empty()) {
     return kDefaultTestSeed;
   }
   std::uint64_t seed = 0;
-  if (!ParseTestSeed(env, seed)) {
+  if (!ParseTestSeed(env.c_str(), seed)) {
     std::fprintf(stderr,
                  "laige test seed: invalid %s='%s' (use 0x-hex or decimal); "
                  "using the default 0x%llx — the test is already failing\n",
-                 kTestSeedEnvVar, env,
+                 kTestSeedEnvVar, env.c_str(),
                  static_cast<unsigned long long>(kDefaultTestSeed));
-    ADD_FAILURE() << kTestSeedEnvVar << "='" << env
+    ADD_FAILURE() << kTestSeedEnvVar << "='" << env.c_str()
                   << "' is not a valid seed (0x-prefixed hex or decimal); "
                   << "falling back to the default 0x" << kDefaultTestSeed;
     return kDefaultTestSeed;
