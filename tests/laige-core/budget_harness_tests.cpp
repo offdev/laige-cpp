@@ -105,11 +105,6 @@ std::string WriteTempJson(const char* name, const std::string content) {
   return path;
 }
 
-// Largest environment value the suite reads (the budgets file path; fits
-// far inside the bound). Named per CORE-005; a value beyond it is treated
-// as unset (the documented fallback applies).
-constexpr std::size_t kEnvValueMaxBytes = 4096;
-
 // The repo-root budgets.json, wired by CTest (ENVIRONMENT
 // LAIGE_BUDGETS_PATH); the fallback covers running the binary from the
 // source root by hand. MSVC deprecates plain getenv (C4996, fatal under
@@ -117,6 +112,11 @@ constexpr std::size_t kEnvValueMaxBytes = 4096;
 // logging.cpp).
 std::string BudgetsFilePath() {
 #if defined(_MSC_VER)
+  // Largest environment value the suite reads (the budgets file path;
+  // fits far inside the bound). Named per CORE-005; a value beyond it is
+  // treated as unset (the documented fallback applies). MSVC-only for the
+  // same reason as above (CORE-010: no unused symbols under -Werror).
+  constexpr std::size_t kEnvValueMaxBytes = 4096;
   char buf[kEnvValueMaxBytes];
   std::size_t len = 0;
   if (getenv_s(&len, buf, sizeof(buf), "LAIGE_BUDGETS_PATH") != 0)

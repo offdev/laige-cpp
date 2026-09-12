@@ -170,12 +170,14 @@ constexpr char kCompilerId[] = "unknown";
 // compiler provides. _fsopen(_SH_DENYNO) keeps plain-fopen sharing
 // semantics (no _SH_SECURE re-open denial, see logging.cpp).
 
+#if defined(_MSC_VER)
 // Largest environment value this tool reads (a machine description or a
 // budgets file path; both fit far inside the bound). Named per CORE-005;
 // a value beyond it is treated as unset (the documented fallback applies).
+// MSVC-only: getenv_s needs a caller-sized buffer, so the constant has no
+// use outside this branch (CORE-010: no unused symbols under -Werror).
 constexpr std::size_t kEnvValueMaxBytes = 4096;
 
-#if defined(_MSC_VER)
 std::string envValue(const char* name) {
   char buf[kEnvValueMaxBytes];
   std::size_t len = 0;
