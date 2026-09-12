@@ -86,9 +86,12 @@
 //      contract (malformed line / tick gap / unbounded output)
 //
 // Windows only: a scenario run that produced no output and exited with an
-// OS image-load failure code (see isTransientSpawnFailure — e.g. 259
-// ERROR_FILE_NOT_FOUND right after a fresh build while a file filter
-// scans the new .exe) is retried exactly once before being reported.
+// OS process-start failure code (see isTransientSpawnFailure — e.g.
+// 0xC0000142 STATUS_FATAL_APP_EXIT right after a fresh build while a file
+// filter scans the new .exe) is retried exactly once before being
+// reported. The tool waits for the child to terminate (INFINITE) before
+// reading its exit code, so STILL_ACTIVE (259) is never reported as a
+// scenario result.
 //
 // ============================================================================
 // Built-in synthetic workload
@@ -309,19 +312,24 @@ std::wstring quoteArg(std::string_view arg) {
   return q;
 }
 
-// Windows image-load failure codes as a child process exit code. A freshly
-// written .exe can fail its FIRST process start while a file filter (e.g.
-// Windows Defender real-time scanning) still holds the file; the failure
-// surfaces as the child's exit status instead of a CreateProcessW error.
+// Windows process-start failure codes as a child process exit code. A
+// freshly written .exe can fail its first process starts while a file
+// filter (e.g. Windows Defender real-time scanning) still holds the file;
+// the failure surfaces as the child's exit status instead of a
+// CreateProcessW error. (The 259 in the first CI diagnostics was
+// STILL_ACTIVE itself — GetExitCodeProcess was called without waiting;
+// since the WaitForSingleObject in runScenarioOnce, 259 is no longer
+// reachable here and real image-load failures report their real code.)
 // These are OS error/status codes, not scenario exit values (the scenarios
 // in this repo exit 0/1/2/3, and a deterministic scenario exits with the
 // same code on the retry — see runScenario below).
 bool isTransientSpawnFailure(std::uint32_t code) {
-  // 259 ERROR_FILE_NOT_FOUND, 32 ERROR_SHARING_VIOLATION,
-  // 126 ERROR_MOD_NOT_FOUND, 142 0xC0000142 STATUS_FATAL_APP_EXIT,
+  // Win32: 32 ERROR_SHARING_VIOLATION, 126 ERROR_MOD_NOT_FOUND,
   // 193 ERROR_BAD_EXE_FORMAT, 1422 ERROR_APP_INIT_FAILURE.
-  return code == 259u || code == 32u || code == 126u || code == 142u ||
-         code == 193u || code == 1422u;
+  // NTSTATUS: 0xC0000142 STATUS_FATAL_APP_EXIT (DllMain failure),
+  // 0xC0000366 STATUS_DLL_INIT_FAILED.
+  return code == 32u || code == 126u || code == 193u || code == 1422u ||
+         code == 0xC0000142u || code == 0xC0000366u;
 }
 
 // One spawn+capture of a scenario binary. Returns true when the run failed
@@ -395,6 +403,14 @@ bool runScenarioOnce(const std::string& exe,
     }
   }
   CloseHandle(readH);
+  // Wait for the child to actually terminate BEFORE reading its exit code:
+  // GetExitCodeProcess on a process that has not (yet) terminated returns
+  // STILL_ACTIVE (259) — and a process whose image load failed (e.g. a
+  // freshly written .exe still held by a file filter) can sit in that
+  // state. The POSIX path has the same guarantee via waitpid.
+  if (WaitForSingleObject(pi.hProcess, INFINITE) != WAIT_OBJECT_0) {
+    r.error = "WaitForSingleObject failed";
+  }
   DWORD code = 0;
   GetExitCodeProcess(pi.hProcess, &code);
   CloseHandle(pi.hThread);

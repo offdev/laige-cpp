@@ -96,11 +96,14 @@ ends early, the tick lines become stream-length notes
 | 2 | usage error, unknown scenario, a scenario run failed (non-zero exit, spawn failure), or a scenario violated the output contract (malformed line, tick gap, unbounded output) |
 
 Windows only: a scenario run that produces no output and exits with an OS
-image-load failure code (e.g. `259` `ERROR_FILE_NOT_FOUND`, seen right
-after a fresh build while a file filter still scans the new `.exe`) is
-retried exactly once after a short delay before being reported. The retry
-cannot mask scenario behavior: a deterministic scenario fails identically
-on the retry and the failure is still reported as exit 2.
+process-start failure code (e.g. `0xC0000142` `STATUS_FATAL_APP_EXIT`,
+seen right after a fresh build while a file filter still scans the new
+`.exe`) is retried exactly once after a short delay before being
+reported. The tool waits for the child process to terminate before reading
+its exit code, so the `STILL_ACTIVE` sentinel (`259`) is never reported as
+a scenario result. The retry cannot mask scenario behavior: a
+deterministic scenario fails identically on the retry and the failure is
+still reported as exit 2.
 
 ## The built-in synthetic workload
 
