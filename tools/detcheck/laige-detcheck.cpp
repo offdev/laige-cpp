@@ -1081,12 +1081,12 @@ int main(int argc, char** argv) {
   DiagFlush diagFlush;
   // Diagnostic begin marker (identifies the run in the flushed file).
   {
-    std::string argv;
+    std::string cmdLine;
     for (int i = 0; i < argc; ++i) {
-      if (i > 0) argv += " ";
-      argv += argv[i];
+      if (i > 0) cmdLine += " ";
+      cmdLine += argv[i];
     }
-    diagf("laige-detcheck: diag begin argv=%s\n", argv.c_str());
+    diagf("laige-detcheck: diag begin argv=%s\n", cmdLine.c_str());
   }
   Args a;
   if (!parseArgs(argc, argv, a)) {

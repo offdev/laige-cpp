@@ -19,9 +19,8 @@
 static void report(const char* name, HANDLE h) {
   DWORD flags = 0;
   GetHandleInformation(h, &flags);
-  std::fprintf(stderr, " %s=0x%lx type=%lu flags=0x%lx",
-               name,
-               static_cast<unsigned long>(static_cast<unsigned long long>(h)),
+  const unsigned long long hv = reinterpret_cast<unsigned long long>(h);
+  std::fprintf(stderr, " %s=0x%llx type=%lu flags=0x%lx", name, hv,
                GetFileType(h), flags);
 }
 
