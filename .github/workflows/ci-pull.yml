@@ -236,3 +236,23 @@ jobs:
       - uses: actions/checkout@v4
       - name: Lint include graph + report dependency count
         run: python3 tools/laige-include-lint
+
+  api-manifest:
+    # M0-TOOL-01: runs on every PR (no ci:* condition). The checked-in
+    # public API manifest (laige-api.json, PRD §9.4, NFR-13.1) must stay
+    # in sync with the public headers: this job regenerates it from the
+    # current headers with laige-api-scanner and fails on any drift, so
+    # adding a public symbol without regenerating the manifest fails CI.
+    # The CTest suite runs the same check against the real tree in every
+    # P0 job as well (tests/api, test `api-real-tree`).
+    name: Public API manifest drift
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build scanner
+        run: cmake --build build --target laige-api-scanner -j
+      - name: Check manifest drift
+        run: ./build/bin/laige-api-scanner --root . --check laige-api.json

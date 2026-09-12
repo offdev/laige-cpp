@@ -81,7 +81,11 @@ bool decodeUtf8(std::string_view in, std::size_t& pos, std::uint32_t& cp) {
   return false;  // 0x80-0xC1 and 0xF5-0xFF: never valid
 }
 
-bool isValidUtf8(std::string_view s) {
+// [[maybe_unused]]: referenced only from the debug asserts below (the
+// fromString / setString UTF-8 preconditions); with NDEBUG (release
+// builds) those asserts are compiled out and the helper would be unused
+// (CORE-010: no new warnings under -Werror).
+[[maybe_unused]] bool isValidUtf8(std::string_view s) {
   std::size_t pos = 0;
   while (pos < s.size()) {
     std::uint32_t cp = 0;
