@@ -85,13 +85,11 @@
 //      exit or spawn failure), or a scenario violated the output
 //      contract (malformed line / tick gap / unbounded output)
 //
-// Windows only: a scenario run that produced no output and exited with an
-// OS process-start failure code (see isTransientSpawnFailure — e.g.
-// 0xC0000142 STATUS_FATAL_APP_EXIT right after a fresh build while a file
-// filter scans the new .exe) is retried exactly once before being
-// reported. The tool waits for the child to terminate (INFINITE) before
-// reading its exit code, so STILL_ACTIVE (259) is never reported as a
-// scenario result.
+// Windows only: the stdout capture waits for pipe data (or the write end
+// closing) before peeking, and the exit code is read only after the child
+// has terminated — so a still-starting child can never be misread as an
+// empty run, and STILL_ACTIVE (259) is never reported as a scenario exit
+// code.
 //
 // ============================================================================
 // Built-in synthetic workload
@@ -312,32 +310,9 @@ std::wstring quoteArg(std::string_view arg) {
   return q;
 }
 
-// Windows process-start failure codes as a child process exit code. A
-// freshly written .exe can fail its first process starts while a file
-// filter (e.g. Windows Defender real-time scanning) still holds the file;
-// the failure surfaces as the child's exit status instead of a
-// CreateProcessW error. (The 259 in the first CI diagnostics was
-// STILL_ACTIVE itself — GetExitCodeProcess was called without waiting;
-// since the WaitForSingleObject in runScenarioOnce, 259 is no longer
-// reachable here and real image-load failures report their real code.)
-// These are OS error/status codes, not scenario exit values (the scenarios
-// in this repo exit 0/1/2/3, and a deterministic scenario exits with the
-// same code on the retry — see runScenario below).
-bool isTransientSpawnFailure(std::uint32_t code) {
-  // Win32: 32 ERROR_SHARING_VIOLATION, 126 ERROR_MOD_NOT_FOUND,
-  // 193 ERROR_BAD_EXE_FORMAT, 1422 ERROR_APP_INIT_FAILURE.
-  // NTSTATUS: 0xC0000142 STATUS_FATAL_APP_EXIT (DllMain failure),
-  // 0xC0000366 STATUS_DLL_INIT_FAILED.
-  return code == 32u || code == 126u || code == 193u || code == 1422u ||
-         code == 0xC0000142u || code == 0xC0000366u;
-}
-
-// One spawn+capture of a scenario binary. Returns true when the run failed
-// transiently (no output captured and the exit code is an OS image-load
-// failure), meaning the caller may retry once.
-bool runScenarioOnce(const std::string& exe,
-                     const std::vector<std::string>& args, RunResult& r) {
-  r = RunResult{};
+RunResult runScenario(const std::string& exe,
+                      const std::vector<std::string>& args) {
+  RunResult r;
   const std::wstring exeW = toWide(exe);
   // Diagnostics (LOG-002): a failed scenario run must say WHICH binary was
   // attempted and whether it exists, not just a numeric exit code.
@@ -345,7 +320,7 @@ bool runScenarioOnce(const std::string& exe,
   if (attrs == INVALID_FILE_ATTRIBUTES) {
     r.error = "scenario executable not found (lastError=" +
               std::to_string(GetLastError()) + "): " + exe;
-    return false;
+    return r;
   }
   std::wstring cmd = exeW;
   for (const std::string& a : args) cmd += L" " + quoteArg(a);
@@ -356,14 +331,14 @@ bool runScenarioOnce(const std::string& exe,
   HANDLE writeH = INVALID_HANDLE_VALUE;
   if (!CreatePipe(&readH, &writeH, &sa, 0)) {
     r.error = "CreatePipe failed";
-    return false;
+    return r;
   }
   // The child inherits the write end of the pipe.
   if (!SetHandleInformation(writeH, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) {
     r.error = "SetHandleInformation failed";
     CloseHandle(readH);
     CloseHandle(writeH);
-    return false;
+    return r;
   }
   STARTUPINFOW si{};
   si.cb = sizeof si;
@@ -377,19 +352,28 @@ bool runScenarioOnce(const std::string& exe,
     r.error = "CreateProcessW failed (is the path correct?)";
     CloseHandle(readH);
     CloseHandle(writeH);
-    return false;
+    return r;
   }
   CloseHandle(writeH);
 
   char buf[65536];
   std::string pending;
   for (;;) {
+    // Wait for the pipe to signal (data available OR all write ends
+    // closed) BEFORE peeking: a bare PeekNamedPipe can report n==0 while
+    // the child has simply not written yet (it is still starting up),
+    // and breaking on that n==0 would close the pipe under a live child
+    // — its writes then fail and it exits 0 with all output lost.
+    if (WaitForSingleObject(readH, INFINITE) != WAIT_OBJECT_0) {
+      r.error = "WaitForSingleObject(readH) failed";
+      break;
+    }
     DWORD n = 0;
     if (!PeekNamedPipe(readH, buf, sizeof buf, &n, nullptr, nullptr)) {
       r.error = "PeekNamedPipe failed";
       break;
     }
-    if (n == 0) break;  // the scenario closed the pipe
+    if (n == 0) break;  // signaled with no data: the scenario closed the pipe
     if (n > sizeof buf) n = sizeof buf;
     DWORD got = 0;
     if (!ReadFile(readH, buf, n, &got, nullptr)) {
@@ -405,11 +389,10 @@ bool runScenarioOnce(const std::string& exe,
   CloseHandle(readH);
   // Wait for the child to actually terminate BEFORE reading its exit code:
   // GetExitCodeProcess on a process that has not (yet) terminated returns
-  // STILL_ACTIVE (259) — and a process whose image load failed (e.g. a
-  // freshly written .exe still held by a file filter) can sit in that
-  // state. The POSIX path has the same guarantee via waitpid.
+  // STILL_ACTIVE (259), which would be misread as a scenario exit code.
+  // The POSIX path has the same guarantee via waitpid.
   if (WaitForSingleObject(pi.hProcess, INFINITE) != WAIT_OBJECT_0) {
-    r.error = "WaitForSingleObject failed";
+    r.error = "WaitForSingleObject(process) failed";
   }
   DWORD code = 0;
   GetExitCodeProcess(pi.hProcess, &code);
@@ -422,59 +405,6 @@ bool runScenarioOnce(const std::string& exe,
               " (command: " + exe + ")";
   }
   r.ok = r.error.empty();
-  return !r.ok && r.lines.empty() &&
-         isTransientSpawnFailure(static_cast<std::uint32_t>(r.exitCode));
-}
-
-// Last-write time of the scenario executable, as Unix-epoch seconds, for
-// the failure diagnostic: distinguishes a file that is still being written
-// (write time after the launch) from a scan/contention window on a
-// finished file. 0 when it cannot be determined.
-std::uint64_t lastWriteUnixSeconds(const std::wstring& exeW) {
-  const HANDLE h = CreateFileW(
-      exeW.c_str(), FILE_READ_ATTRIBUTES,
-      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (h == INVALID_HANDLE_VALUE) return 0;
-  BY_HANDLE_FILE_INFORMATION info{};
-  uint64_t epoch = 0;
-  if (GetFileInformationByHandle(h, &info)) {
-    // FILETIME is 100-ns ticks since 1601-01-01; Unix epoch is 1970-01-01,
-    // 11644473600 s later.
-    const ULARGE_INTEGER ft{info.ftLastWriteTime.dwLowDateTime,
-                            info.ftLastWriteTime.dwHighDateTime};
-    epoch = (ft.QuadPart - 116444736000000000ull) / 10000000ull;
-  }
-  CloseHandle(h);
-  return epoch;
-}
-
-// Bounded first-launch retry (one attempt, short delay): absorbs the
-// Windows first-launch image-load race described above. The retry CANNOT
-// mask scenario behavior: only a run that produced no output and died with
-// an OS image-load code is retried, and a deterministic scenario fails
-// identically on the retry, so the failure is still reported.
-RunResult runScenario(const std::string& exe,
-                      const std::vector<std::string>& args) {
-  RunResult r;
-  const bool transient = runScenarioOnce(exe, args, r);
-  int attempts = 1;
-  if (transient) {
-    std::fprintf(stderr,
-                 "laige-detcheck: first launch transiently failed (exit %d); "
-                 "retrying once after 250 ms\n",
-                 r.exitCode);
-    Sleep(250);  // let the file filter settle before the single retry
-    attempts = 2;
-    runScenarioOnce(exe, args, r);
-  }
-  if (!r.ok) {
-    const std::uint64_t wrote = lastWriteUnixSeconds(toWide(exe));
-    std::fprintf(stderr,
-                 "laige-detcheck: scenario run failed after %d attempt(s); "
-                 "executable last written at unix %llu\n",
-                 attempts, static_cast<unsigned long long>(wrote));
-  }
   return r;
 }
 

@@ -95,15 +95,11 @@ ends early, the tick lines become stream-length notes
 | 1 | divergence detected (a determinism failure — loud, CORE-008) |
 | 2 | usage error, unknown scenario, a scenario run failed (non-zero exit, spawn failure), or a scenario violated the output contract (malformed line, tick gap, unbounded output) |
 
-Windows only: a scenario run that produces no output and exits with an OS
-process-start failure code (e.g. `0xC0000142` `STATUS_FATAL_APP_EXIT`,
-seen right after a fresh build while a file filter still scans the new
-`.exe`) is retried exactly once after a short delay before being
-reported. The tool waits for the child process to terminate before reading
-its exit code, so the `STILL_ACTIVE` sentinel (`259`) is never reported as
-a scenario result. The retry cannot mask scenario behavior: a
-deterministic scenario fails identically on the retry and the failure is
-still reported as exit 2.
+Windows only: the stdout capture waits for pipe data (or the write end
+closing) before reading, and the exit code is read only after the child
+has terminated — a still-starting child can never be misread as an empty
+run, and the `STILL_ACTIVE` sentinel (`259`) is never reported as a
+scenario exit code.
 
 ## The built-in synthetic workload
 
