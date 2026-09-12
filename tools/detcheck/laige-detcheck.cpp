@@ -354,6 +354,26 @@ RunResult runScenario(const std::string& exe,
     CloseHandle(writeH);
     return r;
   }
+  // Diagnostics (LOG-002): record the child's pid and the image the kernel
+  // actually started — in the failure cases observed in CI the child
+  // exited 0 with no output, so the log must show which process that was.
+  {
+    wchar_t image[1024] = {};
+    DWORD imageLen = 0;
+    std::string imageUtf8;
+    if (QueryFullProcessImageNameW(pi.hProcess, 0, image, &imageLen)) {
+      const int n = WideCharToMultiByte(CP_UTF8, 0, image, -1, nullptr, 0,
+                                         nullptr, nullptr);
+      if (n > 0) {
+        imageUtf8.resize(static_cast<std::size_t>(n - 1));
+        WideCharToMultiByte(CP_UTF8, 0, image, -1, imageUtf8.data(), n,
+                            nullptr, nullptr);
+      }
+    }
+    std::fprintf(stderr, "laige-detcheck: spawned child pid=%lu image=%s\n",
+                 static_cast<unsigned long>(pi.dwProcessId),
+                 imageUtf8.empty() ? "(unavailable)" : imageUtf8.c_str());
+  }
   CloseHandle(writeH);
 
   char buf[65536];
