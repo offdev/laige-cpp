@@ -96,9 +96,12 @@ serializer (`ctest -R config_json`, API contract in
 [docs/api/json.md](docs/api/json.md)), and the budget harness
 (`ctest -R budget_harness`, API contract in
 [docs/api/budget_harness.md](docs/api/budget_harness.md); canonical
-benchmark command `./build/bin/laige-bench --suite=<name>`). Engine
-targets compile with `-Wall -Werror` and with exceptions and RTTI
-disabled (NFR-8.10).
+benchmark command `./build/bin/laige-bench --suite=<name>`). The test
+   infrastructure conventions (M0-TEST-01: test layout,
+   `regress_<short-id>` regression tests, fuzz lane semantics, and seed
+   handling for randomized tests — `ctest -R test_infra`) are in
+   [docs/testing.md](docs/testing.md). Engine targets compile with
+   `-Wall -Werror` and with exceptions and RTTI disabled (NFR-8.10).
 
 ## Documentation
 

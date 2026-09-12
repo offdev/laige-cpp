@@ -31,6 +31,12 @@
 # the ci.yml header for the lane semantics (fatal sanitizer reports,
 # report archiving, toolchain choice).
 #
+# Fuzz lane (PRD §14 "every commit (bounded)"; M0-TEST-01): no separate
+# fuzz job — the `fuzz_json_parse` ctest entry (1000 deterministic runs
+# of laige-fuzz on the json_parse target) runs inside every build
+# job's ctest, instrumented in the ASan tree. Seed and nightly-long-run
+# conventions: docs/testing.md.
+#
 # Include-graph lint (M0-CI-03; NFR-8.11, NFR-8.13): the `include-lint`
 # job runs on EVERY pull request, independent of the ci:* label selector
 # — it is a platform-independent repository check (Python 3 stdlib only),

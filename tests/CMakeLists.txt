@@ -64,6 +64,11 @@ endforeach()
 
 add_subdirectory(laige-core)
 
+# Test-infrastructure checks (M0-TEST-01): the seed-handling convention
+# for randomized tests (tests/support/laige_test_seed.h) is exercised by
+# tests/testing (suite `SeededRandom`, CTest entry `test_infra`).
+add_subdirectory(testing)
+
 # Tooling checks (M0-CI-03): the include-graph lint runs against fixture
 # trees and the real repository tree (tests/tools).
 add_subdirectory(tools)

@@ -33,6 +33,7 @@ The canonical-commands table in [roadmap/README.md](../../roadmap/README.md)
 | TSan build | `cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DLAIGE_TSAN=ON` |
 | Test (TSan tree) | `ctest --test-dir build-tsan --output-on-failure` |
 | Fuzz (bounded) | `./build/bin/laige-fuzz <target> --runs=1000` |
+| Fuzz (long, nightly form) | `./build/bin/laige-fuzz <target> --runs=1000000` |
 | Benchmarks | `./build/bin/laige-bench --suite=<name>` |
 | Determinism check | `./build/bin/laige-detcheck --scenario=<name>` |
 | API manifest | `cmake --build build --target laige-api` |
@@ -42,11 +43,15 @@ Notes:
 
 - `Debug` is the canonical `CMAKE_BUILD_TYPE`; `Release` is supported.
 - The tool rows above the lint row are live targets now: `laige-fuzz`
-  (minimal form from M0-CORE-07: the `json_parse` target and deterministic
-  bounded runs; M0-TEST-01 extends it with CI lane semantics and nightly
-  long runs), `laige-bench` (M0-CORE-08), `laige-detcheck` (M0-TOOL-02),
-  and target `laige-api` (M0-TOOL-01). Their command forms were fixed here
-  when they were reserved, so no step can drift them.
+  (M0-CORE-07: the `json_parse` target and deterministic bounded runs;
+  M0-TEST-01 documents the CI lane semantics — bounded `--runs=1000` in
+  every P0 job's `ctest`, the nightly long-run form above — and the
+  seed-handling rules), `laige-bench` (M0-CORE-08), `laige-detcheck`
+  (M0-TOOL-02), and target `laige-api` (M0-TOOL-01). Their command forms
+  were fixed here when they were reserved, so no step can drift them.
+  Fuzz and randomized-test seeds: fixed default `0x1F055EED`,
+  overridable (`laige-fuzz --seed=…`; tests via the `LAIGE_TEST_SEED`
+  environment variable) — see [docs/testing.md](../testing.md).
 - Include-graph lint (M0-CI-03): platform-independent (Python 3 stdlib
   only, no setup). It parses the `#include` edges of `src/**` and enforces
   the PRD §10.1 rules (laige-core includes nothing internal; arrows only
@@ -226,6 +231,13 @@ pinned set and the NaN/Inf policy):
   the self-check on every PR and merge, with the real-scenario comparison
   (two build configurations) skipped until M1-SAMPLE-01 (M1-DET-04
   activates it).
+- `test_infra` is the M0-TEST-01 CTest entry (`tests/testing`): the
+  `SeededRandom` suite of the `test_infra_tests` executable pins
+  known-answer hashes for the seed-handling convention (the default seed
+  `0x1F055EED`, the `LAIGE_TEST_SEED` override, the loud-failure path of
+  an invalid seed, and substream isolation) and prints the
+  machine-greppable `test-seed-check` lines that let two CI runs of the
+  same commit be compared byte-for-byte (docs/testing.md §4).
 - Every configure verifies the vendored dependency lock
   (`cmake/laige-deps-lock.cmake` against `deps.lock`); a tampered or
   unlisted file under `deps/` fails the configure loudly. GoogleTest is the
