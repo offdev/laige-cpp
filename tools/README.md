@@ -15,5 +15,12 @@ Engine tools and CI scripts, each landing with its roadmap step:
   §11 dependency budget of 10. Runs in CI on every PR and merge
   (job `include-lint`), and as CTest checks in `tests/tools`.
 - `laige-api` — public API manifest generator (M0-TOOL-01)
-- `laige-detcheck` — determinism checker (M0-TOOL-02)
+- `laige-detcheck` — determinism checker skeleton (M0-TOOL-02, in
+  `tools/detcheck`): runs a named scenario in two build configurations
+  and compares the per-tick state-hash streams (scenario contract:
+  `<tick> <hash>` lines — 16 lowercase hex hash digits; full contract in
+  [docs/api/detcheck.md](../docs/api/detcheck.md)). The built-in
+  `synthetic` scenario is the M0 self-check, tested in `tests/detcheck`;
+  the CI `detcheck` job runs it on every PR and merge and skips the
+  real-scenario comparison (M1-SAMPLE-01) until M1-DET-04 activates it.
 - `laige-bench` — budget/benchmark harness (M0-CORE-08)

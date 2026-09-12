@@ -7,9 +7,11 @@
 # Cadence (PRD §14: "one per PR, all per merge"):
 #   * this workflow runs on every push to the default branch (master) —
 #     i.e. on merge — and on manual workflow_dispatch:
-#     ALL eight jobs run (the five P0 OS/variant jobs, the two sanitizer
-#     lanes (M0-CI-02), and the platform-independent include-graph lint
-#     with dependency-count metric, M0-CI-03).
+#     ALL ten jobs run (the five P0 OS/variant jobs, the two sanitizer
+#     lanes (M0-CI-02), and the three platform-independent tooling jobs:
+#     the include-graph lint with dependency-count metric (M0-CI-03),
+#     the public API manifest drift check (M0-TOOL-01), and the
+#     determinism check (M0-TOOL-02)).
 #   * Pull requests run exactly ONE P0 OS (label-selectable, default
 #     Linux) in the companion workflow .github/workflows/ci-pull.yml.
 #
@@ -26,6 +28,7 @@
 #   macos-intel   macOS Intel, AppleClang   (macos-14)
 #   include-lint  Include-graph lint + dependency count (M0-CI-03)
 #   api-manifest  Public API manifest drift check (M0-TOOL-01)
+#   detcheck      Determinism check (M0-TOOL-02)
 #
 # The include-lint job (M0-CI-03; NFR-8.11, NFR-8.13) is platform-
 # independent — it parses the #include edges of src/** (PRD §10.1 rules:
@@ -269,3 +272,42 @@ jobs:
         run: cmake --build build --target laige-api-scanner -j
       - name: Check manifest drift
         run: ./build/bin/laige-api-scanner --root . --check laige-api.json
+
+  detcheck:
+    # M0-TOOL-02 (FR-11.5; AGENTS ARCH-010, TEST-004): the determinism
+    # checker skeleton. This job runs the built-in synthetic scenario
+    # self-check (two in-process runs, per-tick hash comparison — the
+    # step's Verify clause), so a broken checker lands red here before
+    # the real scenarios exist. The real-scenario comparison — two build
+    # configurations of M1-SAMPLE-01's hello scenario (Debug+ASan vs
+    # Release, plus g++ vs clang++ on Linux) — is SKIPPED until that
+    # sample lands; M1-DET-04 activates it and records the result per
+    # ARCH-010. Like include-lint and api-manifest, the job runs on every
+    # PR and merge, independent of the ci:* label selector — it is a
+    # tooling check, not an additional P0 OS build (the PRD §14 cadence
+    # is unchanged).
+    name: Determinism check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build -j
+      - name: Synthetic scenario self-check
+        run: ./build/bin/laige-detcheck --scenario=synthetic
+      - name: Real scenario (M1-SAMPLE-01)
+        # Skipped until M1-SAMPLE-01 lands the hello scenario binary;
+        # M1-DET-04 replaces this step with the two-configuration
+        # comparison, e.g.:
+        #   ./build/bin/laige-detcheck --run-a=build-asan/bin/hello
+        #                              --run-b=build/bin/hello
+        run: |
+          if [ -x samples/hello/bin/hello ]; then
+            ./build/bin/laige-detcheck \
+              --run-a=samples/hello/bin/hello \
+              --run-b=samples/hello/bin/hello
+          else
+            echo "skipped: no real scenario yet (M1-SAMPLE-01)"
+          fi

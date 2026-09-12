@@ -256,3 +256,35 @@ jobs:
         run: cmake --build build --target laige-api-scanner -j
       - name: Check manifest drift
         run: ./build/bin/laige-api-scanner --root . --check laige-api.json
+
+  detcheck:
+    # M0-TOOL-02: runs on every PR (no ci:* condition). The determinism
+    # checker skeleton (FR-11.5): the built-in synthetic scenario
+    # self-check runs here so a broken checker lands red before the real
+    # scenarios exist. The real-scenario comparison (two build
+    # configurations of M1-SAMPLE-01's hello) is skipped until that
+    # sample lands; M1-DET-04 activates it (see the job in ci.yml for
+    # the full note).
+    name: Determinism check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build -j
+      - name: Synthetic scenario self-check
+        run: ./build/bin/laige-detcheck --scenario=synthetic
+      - name: Real scenario (M1-SAMPLE-01)
+        # Skipped until M1-SAMPLE-01 lands the hello scenario binary;
+        # M1-DET-04 replaces this step with the two-configuration
+        # comparison (see the job in ci.yml).
+        run: |
+          if [ -x samples/hello/bin/hello ]; then
+            ./build/bin/laige-detcheck \
+              --run-a=samples/hello/bin/hello \
+              --run-b=samples/hello/bin/hello
+          else
+            echo "skipped: no real scenario yet (M1-SAMPLE-01)"
+          fi

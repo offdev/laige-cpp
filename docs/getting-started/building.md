@@ -41,12 +41,12 @@ The canonical-commands table in [roadmap/README.md](../../roadmap/README.md)
 Notes:
 
 - `Debug` is the canonical `CMAKE_BUILD_TYPE`; `Release` is supported.
-- The four rows above the lint row name tools that land in later M0 steps —
-  `laige-fuzz` (minimal form from M0-CORE-07: the `json_parse` target and
-  deterministic bounded runs; M0-TEST-01 extends it with CI lane semantics
-  and nightly long runs), `laige-bench` (M0-CORE-08), `laige-detcheck`
-  (M0-TOOL-02), target `laige-api` (M0-TOOL-01). Their command forms are
-  fixed here now so later steps cannot drift.
+- The tool rows above the lint row are live targets now: `laige-fuzz`
+  (minimal form from M0-CORE-07: the `json_parse` target and deterministic
+  bounded runs; M0-TEST-01 extends it with CI lane semantics and nightly
+  long runs), `laige-bench` (M0-CORE-08), `laige-detcheck` (M0-TOOL-02),
+  and target `laige-api` (M0-TOOL-01). Their command forms were fixed here
+  when they were reserved, so no step can drift them.
 - Include-graph lint (M0-CI-03): platform-independent (Python 3 stdlib
   only, no setup). It parses the `#include` edges of `src/**` and enforces
   the PRD §10.1 rules (laige-core includes nothing internal; arrows only
@@ -158,7 +158,8 @@ pinned set and the NaN/Inf policy):
   and the fpx16_16 rounding/saturation policy in
   [docs/api/sim_math.md](../api/sim_math.md), pinned flags via
   `laige_apply_simmath_policy()`), and the memory pools from M0-CORE-05
-  (`include/laige/pools.h`: `laige::ArenaPool<T>` and `laige::Pool<T>`  with `laige::PoolStats` accounting; API contract in  [docs/api/pools.md](../api/pools.md)), and the bounded JSON parser +  serializer from M0-CORE-07 (`include/laige/json.h`, `json.cpp`:  `laige::JsonValue`, `parseJson`, `serializeJson`, `JsonOptions`;  API contract in [docs/api/json.md](../api/json.md)).- `tests/laige-core/laige-core_tests` is a CTest link smoke test (a
+  (`include/laige/pools.h`: `laige::ArenaPool<T>` and `laige::Pool<T>`  with `laige::PoolStats` accounting; API contract in  [docs/api/pools.md](../api/pools.md)), and the bounded JSON parser +  serializer from M0-CORE-07 (`include/laige/json.h`, `json.cpp`:  `laige::JsonValue`, `parseJson`, `serializeJson`, `JsonOptions`;  API contract in [docs/api/json.md](../api/json.md)).
+- `tests/laige-core/laige-core_tests` is a CTest link smoke test (a
   GoogleTest suite since M0-DEP-01) that runs in every build tree above: it
   verifies the static/shared link and checks the NFR-8.10 policy flags with
   `static_assert` (a policy violation fails the build).
@@ -208,6 +209,23 @@ pinned set and the NaN/Inf policy):
   manifest and fails on any drift (PRD §9.4, NFR-13.1). The manifest
   contract (symbol kinds, doc association, exit codes, unsupported
   constructs) is the header comment of `tools/api/laige-api.cpp`.
+- `detcheck-synthetic`, `detcheck-synthetic-perturbed`,
+  `detcheck-bin-identical`, `detcheck-bin-identical-args`,
+  `detcheck-bin-diverged`, `detcheck-bin-malformed`,
+  `detcheck-scenario-failure`, `detcheck-stream-mismatch`, and
+  `detcheck-unknown-scenario` are the M0-TOOL-02 CTest entries
+  (`tests/detcheck`): the determinism checker
+  (`tools/detcheck/laige-detcheck`) runs the synthetic two-run scenario —
+  the built-in `synthetic` self-check, the built-in perturbation fixture,
+  and the cross-binary mode against fixture scenario binaries (one source,
+  five compiled variants) — asserting both the exit code and the required
+  output fragments per test (`ctest -R detcheck`). The scenario contract
+  (`<tick> <hash>` lines, 16 lowercase hex hash digits) and the tool's
+  report/exit-code grammar are in
+  [docs/api/detcheck.md](../api/detcheck.md); the CI `detcheck` job runs
+  the self-check on every PR and merge, with the real-scenario comparison
+  (two build configurations) skipped until M1-SAMPLE-01 (M1-DET-04
+  activates it).
 - Every configure verifies the vendored dependency lock
   (`cmake/laige-deps-lock.cmake` against `deps.lock`); a tampered or
   unlisted file under `deps/` fails the configure loudly. GoogleTest is the

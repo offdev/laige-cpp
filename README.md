@@ -55,7 +55,7 @@ The AI-relevant hardware the model runs on:
 | `deps/` | Vendored dependencies, tracked by `deps.lock` (PRD §11) — lands in M0-DEP-01 |
 | `third_party/` | Reserved placeholder for vendored code outside `deps.lock` |
 | `tests/` | Unit/integration tests, mirroring the `src/` module layout |
-| `tools/` | Engine tools and CI scripts (fuzz runner, API manifest, lints) |
+| `tools/` | Engine tools and CI scripts (fuzz runner, API manifest, determinism checker, lints) |
 | `samples/` | Reference game projects (flagship isometric ARPG, platformer, lockstep arena, MMO demo zone) |
 | `docs/` | Documentation; [decision index](docs/decisions/README.md) (full structure lands in M0-DOC-01) |
 

@@ -9,9 +9,8 @@ sections below mark what exists and what is still to land.
 - [Building Laige](getting-started/building.md) — the source of truth for
   the canonical build commands, build trees, options, compiler policy
   (NFR-8.10), sanitizer builds (NFR-8.2), and the current M0 status.
-  Tool commands are reserved there: `laige-fuzz`, `laige-bench`,
-  `laige-detcheck`, the `laige-api` manifest target, and the
-  include-graph lint.
+  Tool commands: `laige-fuzz`, `laige-bench`, `laige-detcheck`, the
+  `laige-api` manifest target, and the include-graph lint.
 
 ## API contracts (per public header)
 
@@ -31,6 +30,9 @@ sections below mark what exists and what is still to land.
   schema (M0-CORE-08).
 - [PRNG](api/prng.md) — `laige::Prng`: the splitmix64/LCG64 hybrid,
   period, and determinism contract (M0-CORE-06).
+- [Determinism checker](api/detcheck.md) — the `laige-detcheck` tool and
+  the scenario hash-line contract (`<tick> <hash>` lines, two build
+  configurations) (M0-TOOL-02).
 
 ## Architecture decisions (ADRs)
 
