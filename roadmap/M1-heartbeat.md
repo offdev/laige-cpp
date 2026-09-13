@@ -49,7 +49,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R archetype` green; churn test reports allocs = 0 via pool accounting.
   - **Size:** ~400 lines + tests (the largest ECS step; split into storage-layout / move-if-exceeding)
 
-- [ ] **M1-ECS-04 · Query API + iteration legality**
+- [x] **M1-ECS-04 · Query API + iteration legality**
   - **Refs:** FR-1.2/FR-1.3 (declared access, iteration legality); AGENTS CORE-008
   - **Depends:** M1-ECS-03
   - **Scope:**

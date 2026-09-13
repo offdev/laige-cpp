@@ -20,5 +20,14 @@ bounded reserve policy, and the 10k-entity zero-alloc churn baseline
 (`include/laige/sim/archetype.h`, `archetype.cpp`; API contract in
 [docs/api/archetype.md](../docs/api/archetype.md), tests under
 [tests/laige-sim](../tests/laige-sim), CTest entry `archetype`).
-Iteration, and the game loop land in the remaining M1-ECS / M1-SYS /
-M1-LOOP steps; physics, input, and animation in M3.
+M1-ECS-04 landed the query API + iteration legality —
+`World::each<T1, T2, ...>(fn, Read/Write tags...)` over the archetype
+rows with per-component access (superset match), the stack-scoped
+iteration-legality guard (assert in debug, `Status` + skip-with-log in
+release), and the 10k-entity zero-allocation iteration window
+(`include/laige/sim/query.h`, `query.cpp`; API contract in
+[docs/api/query.md](../docs/api/query.md), tests under
+[tests/laige-sim](../tests/laige-sim), CTest entry `query`).
+The deterministic iteration contract (M1-ECS-05), the system loop
+(M1-SYS), and the game loop (M1-LOOP) land in the remaining M1 steps;
+physics, input, and animation in M3.

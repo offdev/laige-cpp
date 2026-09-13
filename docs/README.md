@@ -4,7 +4,7 @@ Documentation index and navigation (DOC-001). The engine is at **M1**
 (heartbeat): `laige-core` holds the M0 foundations, and `laige-sim`
 has started (M1-ECS-01: the entity handle and world entity storage;
 M1-ECS-02: the component type registry; M1-ECS-03: archetype SoA
-component storage).
+component storage; M1-ECS-04: the query API + iteration legality).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -38,6 +38,11 @@ still to land.
   ordered component sets with per-column SoA storage,
   `World::get<T>`/`addComponent<T>`/`removeComponent<T>`, the reserve
   policy, and the 10k-entity churn baseline (M1-ECS-03; `laige-sim`).
+- [Query API + iteration legality](api/query.md) —
+  `World::each<T1, T2, ...>(fn, Read/Write tags...)` over the archetype
+  rows: superset match, per-component access, the stack-scoped
+  iteration-legality guard, and the 10k-entity zero-allocation window
+  (M1-ECS-04; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,
@@ -120,8 +125,12 @@ still to land.
   (they land with M1 replay and M6/M7 networking).
 - Per-module API docs for the remaining M1+ modules (`laige-render`,
   `laige-assets`, `laige-net`, `laige-server`, `laige-script`,
-  `laige-editor`) — they land with their modules. (`laige-sim` has its
-  first doc: [entity.md](api/entity.md).)
+  `laige-editor`) — they land with their modules. (`laige-sim` has
+  one per shipped piece:
+  [entity.md](api/entity.md),
+  [component_registry.md](api/component_registry.md),
+  [archetype.md](api/archetype.md),
+  [query.md](api/query.md).)
 
 ## Related
 

@@ -1,16 +1,18 @@
-# laige-sim tests (M1-ECS-01/02/03): entity handle + World entity
-# storage, component type registry, archetype SoA storage.
+# laige-sim tests (M1-ECS-01/02/03/04): entity handle + World entity
+# storage, component type registry, archetype SoA storage, query API +
+# iteration legality.
 #
 # One executable per module (tests/README.md; docs/testing.md is the
 # source of truth): laige-sim_tests links the module under test plus
 # gtest_main. The unfiltered entry runs the whole module; the `entity`,
-# `component_registry`, and `archetype` entries are the M1-ECS-01,
-# M1-ECS-02, and M1-ECS-03 Verify commands (`ctest -R entity`,
-# `ctest -R component_registry`, `ctest -R archetype`), selecting
-# exactly the suites below from the shared executable.
+# `component_registry`, `archetype`, and `query` entries are the
+# M1-ECS-01, M1-ECS-02, M1-ECS-03, and M1-ECS-04 Verify commands
+# (`ctest -R entity`, `ctest -R component_registry`, `ctest -R archetype`,
+# `ctest -R query`), selecting exactly the suites below from the shared
+# executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
-                           archetype_tests.cpp)
+                           archetype_tests.cpp query_tests.cpp)
 # M1-ECS-03: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own
 # new/delete (strong symbols in the Clang/GCC TSan runtime archives,
@@ -70,9 +72,18 @@ add_test(NAME archetype
          COMMAND laige-sim_tests
          --gtest_filter=Archetype*)
 
+# M1-ECS-04: query API + iteration legality. The step's Verify command
+# is `ctest -R query`; this entry selects exactly the Query* suites
+# from the shared laige-sim_tests executable (the 10k-entity
+# zero-alloc window's machine-greppable stats lines land in the ctest
+# output).
+add_test(NAME query
+         COMMAND laige-sim_tests
+         --gtest_filter=Query*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
   set_tests_properties(laige-sim_tests entity component_registry archetype
-    PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
+    query PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

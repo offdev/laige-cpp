@@ -17,8 +17,10 @@
 # M1-ECS-03 (roadmap/M1-heartbeat.md): archetype.cpp adds the archetype
 # SoA storage helpers (find/create/grow/attach/detach + the type-key
 # index); entity.cpp keeps the handle/slot storage and the World
-# lifecycle.
-set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp)
+# lifecycle. M1-ECS-04 adds query.cpp: the iteration-legality guard
+# behind World::each (the query template itself is header-defined in
+# entity.h, next to the component access templates).
+set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})
