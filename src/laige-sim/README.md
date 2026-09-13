@@ -13,6 +13,12 @@ M1-ECS-02 landed the component type registry — `ComponentTypeId`, the
 (`include/laige/sim/component.h`; API contract in
 [docs/api/component_registry.md](../docs/api/component_registry.md),
 tests under [tests/laige-sim](../tests/laige-sim), CTest entry
-`component_registry`). The archetype storage, iteration, and the game
-loop land in the remaining M1-ECS / M1-SYS / M1-LOOP steps; physics,
-input, and animation in M3.
+`component_registry`). M1-ECS-03 landed the archetype SoA component
+storage — archetypes as ordered component sets with per-column SoA
+arrays, `World::get<T>`/`addComponent<T>`/`removeComponent<T>`, the
+bounded reserve policy, and the 10k-entity zero-alloc churn baseline
+(`include/laige/sim/archetype.h`, `archetype.cpp`; API contract in
+[docs/api/archetype.md](../docs/api/archetype.md), tests under
+[tests/laige-sim](../tests/laige-sim), CTest entry `archetype`).
+Iteration, and the game loop land in the remaining M1-ECS / M1-SYS /
+M1-LOOP steps; physics, input, and animation in M3.

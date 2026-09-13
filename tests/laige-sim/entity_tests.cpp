@@ -521,10 +521,11 @@ TEST(WorldStats, StatsTrackBytes) {
   auto r = world.create();
   ASSERT_TRUE(r.ok());
   const auto s = world.stats();
-  // Per-slot footprint: 5 B bookkeeping (2 B generation + 1 B alive
-  // flag + 2 B free-list entry) — see the header and entity.md.
-  EXPECT_EQ(s.bytesCapacity, 4u * 5u);
-  EXPECT_EQ(s.bytesInUse, 1u * 5u);
+  // Per-slot footprint: 11 B bookkeeping (2 B generation + 1 B alive
+  // flag + 2 B free-list entry + 2 B archetype slot + 4 B row index —
+  // M1-ECS-03) — see the header and entity.md.
+  EXPECT_EQ(s.bytesCapacity, 4u * 11u);
+  EXPECT_EQ(s.bytesInUse, 1u * 11u);
 }
 
 // ---------------------------------------------------------------------------

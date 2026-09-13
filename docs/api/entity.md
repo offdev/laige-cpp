@@ -48,16 +48,24 @@ worlds passes `isValid()` in both (the same cross-pool caveat as
 |---|---|---|
 | `World::create(Options)` (static) | Construction (setup path): the storage's only backing allocations. `capacity > Entity::kMaxEntities` → `InvalidArgument` (the world is not created) | setup; allocates 3 arrays of `capacity` slots |
 | `create()` | Create one entity. LIFO slot recycling (deterministic). Beyond the budget → `BudgetExhausted` | O(1), no allocation |
-| `destroy(e)` | Destroy one live entity; bumps the slot generation; returns the slot to the free list. Stale/invalid → debug: **assert** (S-9); release: `InvalidArgument` + warn-once | O(1), no allocation |
+| `destroy(e)` | Destroy one live entity; if it is in an archetype its row is detached first (M1-ECS-03); bumps the slot generation; returns the slot to the free list. Stale/invalid → debug: **assert** (S-9); release: `InvalidArgument` + warn-once | O(1) for a component-less entity; O(tail × row-stride) when it has components — no allocation |
 | `check(e)` | Access validation — the check every entity access performs (M1-ECS-03's component access builds on it). Stale/invalid → `InvalidArgument` + warn-once in **every build**; live → ok | O(1), no allocation |
 | `isValid(e)` | Generation-checked liveness; no side effects | O(1) |
 | `capacity()` / `entityCount()` | Declared budget / live count (the G-R3 numerator) | O(1) |
 | `stats()` | `EntityStats` accounting snapshot (G-R3 and M1-PROF-01 feed) | O(1), no allocation |
-| `clear()` | Destroy every live entity (shutdown path, CONC-006); every handle goes stale; capacity unchanged; world immediately reusable | O(capacity) scan, no allocation, idempotent |
+| `clear()` | Destroy every live entity (shutdown path, CONC-006); each live row is detached (M1-ECS-03); every handle goes stale; capacity unchanged; world immediately reusable | O(capacity) scan + detaches, no allocation, idempotent |
 
-Move-only (O(1) pointer swap); a moved-from world is a valid empty
-world (capacity 0: every `create()` fails, every handle invalid).
-Not copyable.
+Move-only (O(1) pointer swap — the archetype tables move with it, so
+a moved world keeps its component data); a moved-from world is a
+valid empty world (capacity 0: every `create()` fails, every handle
+invalid). Not copyable.
+
+M1-ECS-03 adds the component layer on the same slot tables:
+`world.has<T>(e)`, `world.get<T>(e)`, `world.addComponent<T>(e, v)`,
+`world.removeComponent<T>(e)`, `world.archetypeCount()`,
+`world.archetypeStats()` — see
+[archetype.md](archetype.md) (the stale-handle contract above is
+inherited by all four component ops).
 
 ## Errors (FR-12.1, CORE-008)
 
@@ -93,10 +101,11 @@ stale handle assert in debug and degrade in release.
   alive-flag reads. **No allocation** on any operation after
   construction (PERF-003); the free list is a pre-allocated
   `uint16` stack (PERF-004: contiguous, compact, no pointers).
-- **Memory per slot:** 5 B bookkeeping (2 B generation + 1 B alive
-  flag + 2 B free-list entry). `EntityStats` reports
-  `capacity × 5` / `inUse × 5` bytes (M1-ECS-03 adds the per-entity
-  record to this number).
+- **Memory per slot:** 11 B bookkeeping (2 B generation + 1 B alive
+  flag + 2 B free-list entry + 2 B archetype slot + 4 B row index —
+  M1-ECS-03). `EntityStats` reports `capacity × 11` / `inUse × 11`
+  bytes; the archetype column blocks are accounted separately in
+  `ArchetypeStats` (archetype.md).
 - **Zero-alloc enforcement:** the standing assertion lands with
   M1-ALLOC-01; until then the step is verified by ASan + the
   `stats()` accounting (M1 milestone rules).
@@ -163,9 +172,10 @@ if (!world.isValid(handle)) { /* stale — drop it, log if unexpected */ }
 - **M1-ECS-02 (done):** the component registry —
   `ComponentTypeId`, `LAIGE_COMPONENT`, `World::registerComponent<T>`;
   see [component_registry.md](component_registry.md).
-- **M1-ECS-03:** archetype SoA component storage on top of the same
-  slot table; `world.get<T>(e)` is built on `World::check(e)` and
-  inherits the stale-handle contract.
+- **M1-ECS-03 (done):** archetype SoA component storage on top of
+  the same slot table; `world.get<T>(e)` is built on
+  `World::check(e)` and inherits the stale-handle contract — see
+  [archetype.md](archetype.md).
 - **M1-ECS-05:** deterministic iteration (archetype order, entity id
   order — PRD §10.3).
 - **M1-ECS-06:** the G-R3 warn thresholds (25%/50%/100% of the

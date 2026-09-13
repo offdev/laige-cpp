@@ -22,9 +22,11 @@ namespace {
 inline constexpr const char* kEcsSubsystem = "ecs";
 
 // One slot's bookkeeping footprint: generation (2 B) + alive flag
-// (1 B) + free-list entry (2 B). M1-ECS-03 adds the per-entity record
-// to this number.
-inline constexpr std::size_t kBytesPerSlot = 5;
+// (1 B) + free-list entry (2 B) + the M1-ECS-03 per-entity record
+// (archetypeOf_ 2 B + rowOf_ 4 B). The archetype table and the SoA
+// column blocks are not per-slot bytes — they are accounted separately
+// in ArchetypeStats (archetype.h).
+inline constexpr std::size_t kBytesPerSlot = 11;
 
 }  // namespace
 
@@ -40,13 +42,26 @@ World::World(World&& other) noexcept
       freeCount_(other.freeCount_), inUse_(other.inUse_),
       peakInUse_(other.peakInUse_), totalCreated_(other.totalCreated_),
       components_(std::move(other.components_)),
-      componentCount_(other.componentCount_) {
+      componentCount_(other.componentCount_),
+      archetypeOf_(std::move(other.archetypeOf_)),
+      rowOf_(std::move(other.rowOf_)),
+      archetypes_(std::move(other.archetypes_)),
+      archetypeCount_(other.archetypeCount_),
+      keyIndex_(std::move(other.keyIndex_)),
+      totalAdds_(other.totalAdds_), totalRemoves_(other.totalRemoves_),
+      totalArchetypeGrowth_(other.totalArchetypeGrowth_),
+      totalReservations_(other.totalReservations_) {
   other.capacity_ = 0;
   other.freeCount_ = 0;
   other.inUse_ = 0;
   other.peakInUse_ = 0;
   other.totalCreated_ = 0;
   other.componentCount_ = 0;
+  other.archetypeCount_ = 0;
+  other.totalAdds_ = 0;
+  other.totalRemoves_ = 0;
+  other.totalArchetypeGrowth_ = 0;
+  other.totalReservations_ = 0;
 }
 
 World& World::operator=(World&& other) noexcept {
@@ -62,12 +77,26 @@ World& World::operator=(World&& other) noexcept {
   totalCreated_ = other.totalCreated_;
   components_ = std::move(other.components_);
   componentCount_ = other.componentCount_;
+  archetypeOf_ = std::move(other.archetypeOf_);
+  rowOf_ = std::move(other.rowOf_);
+  archetypes_ = std::move(other.archetypes_);
+  archetypeCount_ = other.archetypeCount_;
+  keyIndex_ = std::move(other.keyIndex_);
+  totalAdds_ = other.totalAdds_;
+  totalRemoves_ = other.totalRemoves_;
+  totalArchetypeGrowth_ = other.totalArchetypeGrowth_;
+  totalReservations_ = other.totalReservations_;
   other.capacity_ = 0;
   other.freeCount_ = 0;
   other.inUse_ = 0;
   other.peakInUse_ = 0;
   other.totalCreated_ = 0;
   other.componentCount_ = 0;
+  other.archetypeCount_ = 0;
+  other.totalAdds_ = 0;
+  other.totalRemoves_ = 0;
+  other.totalArchetypeGrowth_ = 0;
+  other.totalReservations_ = 0;
   return *this;
 }
 
@@ -83,13 +112,26 @@ Result<World, ErrorCode> World::create(Options options) noexcept {
   // budget (kMaxComponentTypes), a setup-path allocation like the
   // entity tables below.
   w.components_ = std::make_unique<detail::ComponentRecord[]>(kMaxComponentTypes);
+  // Archetype storage (M1-ECS-03): the fixed archetype table
+  // (kMaxArchetypes records, value-initialized) and the type-key
+  // index (kComponentKeyIndexSize slots) — setup-path allocations,
+  // allocated even for a zero-capacity world so a moved-from /
+  // zero-capacity world stays a valid empty world with working
+  // registry behavior.
+  w.archetypes_ = std::make_unique<detail::ArchetypeRecord[]>(kMaxArchetypes);
+  w.keyIndex_ =
+      std::make_unique<detail::ComponentKeySlot[]>(detail::kComponentKeyIndexSize);
   if (w.capacity_ > 0) {
     // Backing allocations for the whole storage (setup path,
     // PERF-002): the per-slot generation table, the per-slot alive
-    // flag, and the LIFO free-list stack (pre-filled 0..capacity-1).
+    // flag, the LIFO free-list stack (pre-filled 0..capacity-1), and
+    // the M1-ECS-03 per-slot entity record (archetype membership +
+    // dense row; value-initialized: archetypeOf_ 0 = no archetype).
     w.generations_ = std::make_unique<std::uint16_t[]>(w.capacity_);
     w.alive_ = std::make_unique<std::uint8_t[]>(w.capacity_);
     w.freeStack_ = std::make_unique<std::uint16_t[]>(w.capacity_);
+    w.archetypeOf_ = std::make_unique<std::uint16_t[]>(w.capacity_);
+    w.rowOf_ = std::make_unique<std::uint32_t[]>(w.capacity_);
     for (std::uint32_t i = 0; i < w.capacity_; ++i) {
       w.generations_[i] = 1;  // generation 0 is reserved
       w.freeStack_[i] = static_cast<std::uint16_t>(i);
@@ -103,6 +145,11 @@ Result<Entity, ErrorCode> World::create() noexcept {
   if (freeCount_ == 0) return ErrorCode::BudgetExhausted;
   const std::uint16_t slot = freeStack_[--freeCount_];
   alive_[slot] = 1;
+  // A new entity carries no components: it is in no archetype.
+  // (Cleared-slot leftovers are overwritten here — a recycled slot
+  // always re-enters clean.)
+  archetypeOf_[slot] = 0;
+  rowOf_[slot] = 0;
   ++inUse_;
   if (inUse_ > peakInUse_) peakInUse_ = inUse_;
   ++totalCreated_;
@@ -141,6 +188,15 @@ Status World::destroy(Entity entity) noexcept {
                    laige::log::field("generation", entity.generation));
     return ErrorCode::InvalidArgument;
   }
+  // M1-ECS-03: release the entity's component row first — its slot
+  // leaves the archetype (the row-stride move cost is documented in
+  // archetype.h; no allocation).
+  const std::uint32_t archIdx = archetypeOf_[entity.id];
+  if (archIdx != 0) {
+    removeRow(archetypes_[archIdx - 1], rowOf_[entity.id]);
+    archetypeOf_[entity.id] = 0;
+    rowOf_[entity.id] = 0;
+  }
   alive_[entity.id] = 0;
   bumpGeneration(entity.id);
   freeStack_[freeCount_++] = entity.id;
@@ -149,10 +205,17 @@ Status World::destroy(Entity entity) noexcept {
 }
 
 void World::clear() noexcept {
-  // No per-slot element data yet (M1-ECS-03 adds the per-entity
-  // record): clear is slot bookkeeping only.
+  // M1-ECS-03: every live entity is detached from its archetype first
+  // (its component row is released with its slot); the archetypes
+  // themselves and the component type registry survive (setup state).
   for (std::uint32_t i = 0; i < capacity_; ++i) {
     if (alive_[i] != 0) {
+      const std::uint32_t archIdx = archetypeOf_[i];
+      if (archIdx != 0) {
+        removeRow(archetypes_[archIdx - 1], rowOf_[i]);
+      }
+      archetypeOf_[i] = 0;
+      rowOf_[i] = 0;
       alive_[i] = 0;
       bumpGeneration(static_cast<std::uint16_t>(i));
       freeStack_[freeCount_++] = static_cast<std::uint16_t>(i);

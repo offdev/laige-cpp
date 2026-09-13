@@ -171,9 +171,9 @@ if (pos.isError()) {
 // M1-SYS-01 declares system I/O by these ids, and M1-DET-02's replay
 // header hashes the component schema built from them.
 
-// Later (M1-ECS-03): world.add_component<PlayerPos>(e, {...}) and
+// M1-ECS-03 (done): world.addComponent<PlayerPos>(e, {...}) and
 // world.get<PlayerPos>(e) resolve T -> id -> SoA column through this
-// registry; O(1), no allocation.
+// registry; O(1), no allocation (docs/api/archetype.md).
 ```
 
 ## Misuse warnings
@@ -194,9 +194,9 @@ if (pos.isError()) {
 - **M1-ECS-01 (done):** the entity handle and world entity storage
   this registry hangs off — see [entity.md](entity.md).
 - **M1-ECS-02 (this step):** the component registry above.
-- **M1-ECS-03:** archetype SoA storage consumes the recorded
-  size/alignment (`world.add_component<T>`/`world.get<T>`, O(1) column
-  lookup).
+- **M1-ECS-03 (done):** archetype SoA storage consumes the recorded
+  size/alignment (`world.addComponent<T>`/`world.get<T>`, O(1) column
+  lookup) — see [archetype.md](archetype.md).
 - **M1-ECS-05:** deterministic iteration orders the component sets by
   registration order (`operator<`).
 - **M1-SYS-01:** system I/O declarations reference these ids.
