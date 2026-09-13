@@ -980,11 +980,44 @@ No rendering, no physics, no networking yet — `laige-core` only.
 
 ## Milestone gate
 
-- [ ] **M0-EXIT-01 · M0 exit gate**
+- [x] **M0-EXIT-01 · M0 exit gate**
   - **Refs:** PRD §15 M0 exit criteria
   - **Depends:** all other M0 steps
   - **Scope:**
     - Confirm and record: (1) CI green on all 3 P0 OSes (link CI run URLs), (2) all `laige-core` unit tests pass on all 3 OSes, (3) budget harness runs end-to-end on a synthetic workload and writes a baseline file to `docs/benchmarks/baselines/m0-synthetic.md` with full AGENTS §12 metadata.
     - Mark milestone complete in `roadmap/README.md` Progress Board.
-  - **Verify:** gate checklist item all checked with evidence links; no open M0 step remains.
-  - **Size:** docs only
+  - **Decision (2026-09-13):** all 21 prior M0 steps re-verified against
+    their Scope/Verify clauses on commit `829026f`: fresh canonical
+    `build` tree (g++ 16.2.1) configures and builds with zero warnings,
+    `ctest` 32/32; `build-shared`, `build-asan` (ASan+UBSan fatal),
+    `build-tsan` (TSan `halt_on_error=1`), and a fresh Clang 22.1.8 tree
+    all 32/32 as well; `laige-fuzz json_parse --runs=1000` clean;
+    `laige-detcheck --scenario=synthetic` OK; `laige-api-scanner
+    --check laige-api.json` up to date (376 symbols); `python3
+    tools/laige-include-lint` OK (`count: 1 (budget: 10, PRD §11)`); the
+    vendored-tree lock re-proven live — a tampered `deps/googletest`
+    file fails the configure with expected-vs-actual hashes, the
+    restored tree passes. Gate items: (1) **CI green on all 3 P0 OSes** —
+    merge-lane run
+    [34749756361](https://github.com/offdev/laige-cpp/actions/runs/34749756361)
+    on `829026f`: all 10 jobs `success` (linux-gcc, linux-clang,
+    linux-asan, linux-tsan, windows-msvc, macos-arm64, macos-intel,
+    include-lint, api-manifest, detcheck), each under 1.2 min (inside
+    the 10-min PRD §8.1 build budget); (2) **all `laige-core` unit tests
+    pass on all 3 OSes** — that run's job logs show `100% tests passed,
+    0 tests failed out of 32` in every P0 OS job, including
+    windows-msvc; (3) **budget harness end-to-end** — `./build/bin/
+    laige-bench --suite=synthetic --runs=2000 --warmup=200` (statistics
+    run) plus the same run with `--budget=sim_tick_avg` (PASS, exit 0 —
+    pipeline proof only: the synthetic stand-in measures no physical
+    quantity, so no `budgets.json` `measured` field is updated), recorded
+    in the first baseline
+    [`docs/benchmarks/baselines/m0-synthetic.md`](../docs/benchmarks/baselines/m0-synthetic.md)
+    with the full AGENTS §12 metadata.
+  - **Verify:** (verified 2026-09-13; evidence as recorded in the
+    Decision above): gate checklist complete with evidence links — CI
+    run URL, per-OS ctest summaries, baseline file; every other M0 step
+    box is checked and no open M0 step remains. Milestone marked
+    complete in the `roadmap/README.md` Progress Board (22/22).
+  - **Size:** docs only (baseline file + roadmap/README records + root
+    README status line)
