@@ -53,7 +53,7 @@ worlds passes `isValid()` in both (the same cross-pool caveat as
 | `isValid(e)` | Generation-checked liveness; no side effects | O(1) |
 | `capacity()` / `entityCount()` | Declared budget / live count (the G-R3 numerator) | O(1) |
 | `stats()` | `EntityStats` accounting snapshot (G-R3 and M1-PROF-01 feed) | O(1), no allocation |
-| `clear()` | Destroy every live entity (shutdown path, CONC-006); each live row is detached (M1-ECS-03); every handle goes stale; capacity unchanged; world immediately reusable | O(capacity) scan + detaches, no allocation, idempotent |
+| `clear()` | Destroy every live entity (shutdown path, CONC-006); each live row is detached (M1-ECS-03); every handle goes stale; capacity unchanged; world immediately reusable. Returns `Status`: under a live `each` iteration, `InvalidArgument` when a matched archetype holds live rows (query.md "Iteration legality") | O(capacity) scan + detaches, no allocation, idempotent |
 
 Move-only (O(1) pointer swap — the archetype tables move with it, so
 a moved world keeps its component data); a moved-from world is a
@@ -65,7 +65,9 @@ M1-ECS-03 adds the component layer on the same slot tables:
 `world.removeComponent<T>(e)`, `world.archetypeCount()`,
 `world.archetypeStats()` — see
 [archetype.md](archetype.md) (the stale-handle contract above is
-inherited by all four component ops).
+inherited by all four component ops). M1-ECS-04 adds the query/
+iteration API `world.each<T1, T2, ...>(fn, Read/Write tags...)` on
+the same rows — see [query.md](query.md).
 
 ## Errors (FR-12.1, CORE-008)
 
@@ -74,6 +76,7 @@ inherited by all four component ops).
 | `World::create(Options)` | `capacity > Entity::kMaxEntities` (16-bit id space) | `ErrorCode::InvalidArgument` (2) |
 | `create()` | declared scene budget exhausted | `ErrorCode::BudgetExhausted` (4) |
 | `destroy(e)` / `check(e)` | stale, cleared, or out-of-range handle | `ErrorCode::InvalidArgument` (2) |
+| iteration-legality violations (write during read-iteration, structural mutation / `destroy` / `clear` touching a matched archetype, nested `each`) — M1-ECS-04 | the mutation is skipped, never applied; the iteration continues | `ErrorCode::InvalidArgument` (2) from the mutating call (debug: assert instead) — [query.md](query.md) |
 
 Failures are `Result`/`Status` values — never exceptions, never
 silent. The world logs its stale-handle degradations through the
@@ -176,7 +179,11 @@ if (!world.isValid(handle)) { /* stale — drop it, log if unexpected */ }
   the same slot table; `world.get<T>(e)` is built on
   `World::check(e)` and inherits the stale-handle contract — see
   [archetype.md](archetype.md).
+- **M1-ECS-04 (done):** the query API + iteration legality —
+  `World::each<T1, T2, ...>(fn, Read/Write tags...)` iterates the
+  archetype rows with a stack-scoped guard (no hidden allocations);
+  see [query.md](query.md).
 - **M1-ECS-05:** deterministic iteration (archetype order, entity id
-  order — PRD §10.3).
+  order — PRD §10.3) over the visit order M1-ECS-04 pins.
 - **M1-ECS-06:** the G-R3 warn thresholds (25%/50%/100% of the
   declared budget) pull `stats()`.

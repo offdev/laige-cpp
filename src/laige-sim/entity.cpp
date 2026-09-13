@@ -32,7 +32,13 @@ inline constexpr std::size_t kBytesPerSlot = 11;
 
 World::World() = default;
 
-World::~World() noexcept { clear(); }
+World::~World() noexcept {
+  // The destructor never observes an active iteration (the iteration
+  // is synchronous on the owner thread and completes before the world
+  // can be destroyed), so the guard check inside clear() cannot fail
+  // here — the nodiscard Status is acknowledged.
+  static_cast<void>(clear());
+}
 
 World::World(World&& other) noexcept
     : capacity_(other.capacity_),
@@ -50,7 +56,10 @@ World::World(World&& other) noexcept
       keyIndex_(std::move(other.keyIndex_)),
       totalAdds_(other.totalAdds_), totalRemoves_(other.totalRemoves_),
       totalArchetypeGrowth_(other.totalArchetypeGrowth_),
-      totalReservations_(other.totalReservations_) {
+      totalReservations_(other.totalReservations_),
+      iterationActive_(other.iterationActive_),
+      iterationArchetypes_(other.iterationArchetypes_),
+      iterationReadComponents_(other.iterationReadComponents_) {
   other.capacity_ = 0;
   other.freeCount_ = 0;
   other.inUse_ = 0;
@@ -62,11 +71,24 @@ World::World(World&& other) noexcept
   other.totalRemoves_ = 0;
   other.totalArchetypeGrowth_ = 0;
   other.totalReservations_ = 0;
+  // The iteration guard travels with the storage (a live world cannot
+  // be moved while an iteration is active — the iteration is
+  // synchronous on the owner thread — but the moved-from world must
+  // be a valid empty world in every field).
+  other.iterationActive_ = false;
+  other.iterationArchetypes_ = detail::IdSet256{};
+  other.iterationReadComponents_ = detail::IdSet256{};
 }
 
 World& World::operator=(World&& other) noexcept {
   if (this == &other) return *this;
-  clear();  // release what this currently owns
+  // M1-ECS-04: clear() can fail only under an active iteration of
+  // THIS world's archetypes — impossible here: the world being
+  // assigned into owns its iteration state (the synchronous flow
+  // completes each() before any other code runs), and the guard is
+  // re-taken from `other` below (inactive in practice, per the move
+  // constructor). The nodiscard Status is therefore acknowledged.
+  static_cast<void>(clear());
   capacity_ = other.capacity_;
   generations_ = std::move(other.generations_);
   alive_ = std::move(other.alive_);
@@ -86,6 +108,9 @@ World& World::operator=(World&& other) noexcept {
   totalRemoves_ = other.totalRemoves_;
   totalArchetypeGrowth_ = other.totalArchetypeGrowth_;
   totalReservations_ = other.totalReservations_;
+  iterationActive_ = other.iterationActive_;
+  iterationArchetypes_ = other.iterationArchetypes_;
+  iterationReadComponents_ = other.iterationReadComponents_;
   other.capacity_ = 0;
   other.freeCount_ = 0;
   other.inUse_ = 0;
@@ -97,6 +122,9 @@ World& World::operator=(World&& other) noexcept {
   other.totalRemoves_ = 0;
   other.totalArchetypeGrowth_ = 0;
   other.totalReservations_ = 0;
+  other.iterationActive_ = false;
+  other.iterationArchetypes_ = detail::IdSet256{};
+  other.iterationReadComponents_ = detail::IdSet256{};
   return *this;
 }
 
@@ -190,8 +218,13 @@ Status World::destroy(Entity entity) noexcept {
   }
   // M1-ECS-03: release the entity's component row first — its slot
   // leaves the archetype (the row-stride move cost is documented in
-  // archetype.h; no allocation).
+  // archetype.h; no allocation). M1-ECS-04: the iteration-legality
+  // check runs before the detach — destroying an entity of an
+  // archetype the active query iterates would shift its tail under
+  // the iterator (query.h).
   const std::uint32_t archIdx = archetypeOf_[entity.id];
+  Status guard = guardStructural("destroy", archIdx, 0, entity);
+  if (guard.isError()) return guard;
   if (archIdx != 0) {
     removeRow(archetypes_[archIdx - 1], rowOf_[entity.id]);
     archetypeOf_[entity.id] = 0;
@@ -204,7 +237,12 @@ Status World::destroy(Entity entity) noexcept {
   return Status{};
 }
 
-void World::clear() noexcept {
+Status World::clear() noexcept {
+  // M1-ECS-04: the iteration-legality check runs first — a clear
+  // under an active iteration is rejected (skipped, never partial)
+  // when a matched archetype still holds live rows (query.h).
+  Status guard = guardClear();
+  if (guard.isError()) return guard;
   // M1-ECS-03: every live entity is detached from its archetype first
   // (its component row is released with its slot); the archetypes
   // themselves and the component type registry survive (setup state).
@@ -222,6 +260,7 @@ void World::clear() noexcept {
     }
   }
   inUse_ = 0;
+  return Status{};
 }
 
 std::uint32_t World::capacity() const noexcept { return capacity_; }

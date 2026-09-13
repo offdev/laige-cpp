@@ -116,8 +116,8 @@ warn-once + `rate_limited` drain.
   O(tail × row-stride) bytes plus the O(tail) `rowOf_` re-sync.
   This is the documented cost of the dense packed rows (PERF-004:
   contiguous over pointer-per-entity); it is a *spawn/despawn-time*
-  cost, not a per-tick one (iteration — the per-tick path — lands in
-  M1-ECS-04/05 over the same columns).
+  cost, not a per-tick one (the per-tick path is the M1-ECS-04
+  iteration, [query.md](query.md), which never moves rows).
 - **Measured baseline (CORE-001; g++ 16.2.1, 2026-09, single-threaded
   headless):** 10k entities × 20k add/remove ops (seeded random
   order, full cost range), 3-component working set:
@@ -179,7 +179,9 @@ if (e.isError()) { /* BudgetExhausted: refuse the spawn (S-2) */ }
 world.addComponent<PlayerPos>(e.value(), PlayerPos{1, 2});
 world.addComponent<PlayerVel>(e.value(), PlayerVel{9});
 
-// Read (per tick, via the M1-ECS-04 query API once it lands):
+// Read one component (O(1)); the per-tick pattern is the M1-ECS-04
+// query — world.each<PlayerPos, PlayerVel>(fn, Read{}, Write{}) —
+// see query.md.
 const PlayerPos* p = world.get<PlayerPos>(e.value());  // O(1), nullptr on absence
 if (p != nullptr) { /* use p — valid until the entity's next mutation */ }
 
@@ -212,10 +214,13 @@ world.removeComponent<PlayerPos>(e.value());  // component-less, still alive
   ids and sizes this storage consumes —
   [component_registry.md](component_registry.md).
 - **M1-ECS-03 (this step):** the storage above.
-- **M1-ECS-04:** the query/iteration API over these columns (no
-  iteration-legality state until M1-ECS-05).
-- **M1-ECS-05:** deterministic iteration over the stored row order
-  (the slot-ordered scheme above is what it iterates).
+- **M1-ECS-04 (done):** the query/iteration API over these columns —
+  `World::each` with per-component `Read`/`Write` access and the
+  stack-scoped iteration-legality guard — see
+  [query.md](query.md).
+- **M1-ECS-05:** the deterministic iteration contract over the stored
+  row order (the slot-ordered scheme above is what the query
+  iterates).
 - **M1-ECS-06:** the G-R3 warn thresholds read the same slot tables.
 - **M1-PROF-01 / G-R4:** `archetypeStats()` feeds the profiler.
 - **M1-ALLOC-01:** the standing zero-allocation assertion over the

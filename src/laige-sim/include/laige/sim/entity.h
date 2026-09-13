@@ -17,7 +17,10 @@
 //            registry (registerComponent<T>, component.h); M1-ECS-03
 //            adds the archetype SoA component storage on top of this
 //            slot table (archetype.h: has/get/addComponent/
-//            removeComponent + the per-slot archetype record).
+//            removeComponent + the per-slot archetype record);
+//            M1-ECS-04 adds the query API and the iteration-legality
+//            guard (query.h: World::each<T1, T2, ...>(Read/Write
+//            tags..., fn) + the World-API mutation checks).
 //
 // ---------------------------------------------------------------------------
 // The handle contract (FR-1.2, CPP-007)
@@ -124,6 +127,7 @@
 
 #include "laige/sim/archetype.h"
 #include "laige/sim/component.h"
+#include "laige/sim/query.h"
 
 namespace laige {
 
@@ -168,6 +172,71 @@ struct EntityStats {
   std::size_t bytesCapacity{};
   std::size_t bytesInUse{};
 };
+
+// M1-ECS-04 query helpers (detail: engine implementation, excluded
+// from the public API scan). Declared before World: the member
+// templates of the World class reference them by qualified name at
+// the point of definition.
+namespace detail {
+
+// The row reference of the I-th queried component (the query's
+// per-row hand-off, World::each). `row` is the dense row index,
+// `cols` the per-component column indices of the matched archetype
+// (resolved once per archetype by each()). The declared access tag
+// decides the value category — a `T&` for Write (the intended
+// mutation path), a `const T&` for Read (a write through it requires
+// a cast: a bug the compiler rejects, API-008). No allocation: one
+// pointer arithmetic.
+//
+// The component TYPE and ACCESS packs arrive as single tuple types
+// (std::tuple<Ts...>, std::tuple<Acc...>): an explicit template
+// argument list cannot partition between two consecutive packs
+// (GCC gives the first pack zero arguments), so no pack may sit in
+// the template parameter list here. The reference type is one
+// conditional alias (a single return statement: an if-constexpr pair
+// of returns would force a consistent decltype(auto) deduction from
+// both branches, and T& vs const T& never is).
+template <std::size_t I, typename Row, typename TList, typename AList>
+constexpr decltype(auto) rowRef(const Row& row, const std::uint32_t* cols,
+                               const ArchetypeRecord& arch) {
+  using T = std::tuple_element_t<I, TList>;
+  using A = std::tuple_element_t<I, AList>;
+  static_assert(std::is_trivially_copyable_v<T>,
+                "Laige components must be trivially copyable data "
+                "carriers (S-8) — the SoA columns memcpy them");
+  static_assert(alignof(T) <= kArchetypeColumnAlignment,
+                "Laige components must have alignof(T) <= 32 "
+                "(kArchetypeColumnAlignment): the SoA column blocks are "
+                "aligned to 32 bytes");
+  using Ref = std::conditional_t<std::is_same_v<A, Write>, T&, const T&>;
+  const ArchetypeColumn& column = arch.columns[cols[I]];
+  T* p = reinterpret_cast<T*>(
+      column.base + static_cast<std::size_t>(row) * column.size);
+  return static_cast<Ref>(*p);
+}
+
+// Record a queried component's id in the guard's read set when its
+// access tag is Read (the tags are static-checked to be Read/Write by
+// World::each, so "not Write" is "Read"). id 0 (unregistered) is a
+// no-op — such a component matches nothing.
+template <std::size_t I, typename... Acc>
+void setQueryReadBit(IdSet256& readSet, std::uint32_t id) {
+  using A = std::tuple_element_t<I, std::tuple<Acc...>>;
+  if constexpr (!std::is_same_v<A, Write>) {
+    readSet.set(id);
+  }
+}
+
+// True when every tag in the pack is a Read/Write access tag
+// (World::each's compile-time tag check; an empty pack is true).
+template <typename... As>
+inline constexpr bool isAccessTags() {
+  bool ok = true;
+  ((ok = ok && (std::is_same_v<As, Read> || std::is_same_v<As, Write>)), ...);
+  return ok;
+}
+
+}  // namespace detail
 
 // The entity storage behind laige::Entity handles (M1-ECS-01).
 //
@@ -314,14 +383,50 @@ class World {
   // read this. O(kMaxArchetypes), no allocation.
   [[nodiscard]] ArchetypeStats archetypeStats() const noexcept;
 
+  // -------------------------------------------------------------
+  // Query API + iteration legality (M1-ECS-04; full contract in
+  // query.h)
+  // -------------------------------------------------------------
+
+  // Iterate every entity having ALL of T1..TN (superset match: extra
+  // components do not exclude an entity), invoking
+  // `fn(Entity, R1, ..., RN)` — one reference per listed component,
+  // in template order: a `const T&` where the access tag is Read, a
+  // `T&` where it is Write. The access tags follow `fn`, one
+  // Read/Write tag per listed component, in the same order (checked
+  // at compile time — they come after the callable because a pack of
+  // parameters must be the last parameters to be deducible);
+  // `each<>` (no components, no tags) visits every live entity in
+  // ascending slot-id order with no component references.
+  //
+  //   Visit order      ascending archetype id (creation order), then
+  //                    ascending slot id per archetype (M1-ECS-05
+  //                    documents the contract)
+  //   Unregistered T   the query matches nothing (ok Status, zero
+  //                    visits — a pure query, like has<T>)
+  //   Nested each()    while an iteration is active: assert in debug,
+  //                    ErrorCode::InvalidArgument + one rate-limited
+  //                    warn in release (the nested iteration is
+  //                    rejected; query.h "Iteration legality")
+  //   Allocation       none — the iteration state is stack-scoped
+  //                    (query.h)
+  //   Complexity       O(kMaxArchetypes * N) scan + one visit per
+  //                    matching entity (PERF-007)
+  template <typename... Ts, typename... Acc, typename F>
+  [[nodiscard]] Status each(F&& fn, Acc... accesses) noexcept;
+
   // Destroy every live entity (shutdown path, CONC-006). Every handle
   // becomes stale; the capacity is unchanged and the world is
   // immediately reusable. O(capacity + detached rows * row-stride),
   // no allocation, idempotent. M1-ECS-03: each live entity is
   // detached from its archetype first (the per-entity component data
   // is released with its row); the archetypes themselves — and the
-  // component type registry — survive.
-  void clear() noexcept;
+  // component type registry — survive. M1-ECS-04: rejected with
+  // ErrorCode::InvalidArgument (+ one rate-limited warn) while an
+  // iteration is active and any matched archetype still holds live
+  // rows — the clear is skipped, never partial (assert in debug;
+  // query.h "Iteration legality"); an ok Status otherwise.
+  [[nodiscard]] Status clear() noexcept;
 
   // Move is an O(1) pointer swap; the source becomes a valid empty
   // world (capacity 0: every create() fails, every handle invalid).
@@ -409,6 +514,128 @@ class World {
   std::uint32_t attachSlot(std::uint32_t slot,
                            detail::ArchetypeRecord& arch) noexcept;
 
+  // -------------------------------------------------------------
+  // Iteration-legality guard (M1-ECS-04; defined in query.cpp, full
+  // contract in query.h). Every helper asserts in debug and logs +
+  // returns InvalidArgument in release when the check fails; ok
+  // Status when the mutation is legal.
+  // -------------------------------------------------------------
+
+  // Reject a nested World::each while an iteration is active
+  // (ecs/iteration_nested).
+  [[nodiscard]] Status guardIterationStart() noexcept;
+
+  // Reject an in-place component overwrite (the create-or-update
+  // branch of addComponent) of a queried component declared Read in
+  // the active iteration (ecs/iteration_write_during_read). Legal
+  // when the component is declared Write, or not listed by the query.
+  [[nodiscard]] Status guardInplaceWrite(std::uint32_t componentId,
+                                         std::uint32_t archIdx,
+                                         Entity entity) noexcept;
+
+  // Reject a structural change — an archetype move (addComponent /
+  // removeComponent), a destroy, or a clear — whose source OR target
+  // archetype is in the active iteration's matched set
+  // (ecs/iteration_mutation). `op` names the mutating call for the
+  // actionable message; 0 = "no archetype" (a component-less entity,
+  // or an entity leaving the archetypes) and is never a member.
+  [[nodiscard]] Status guardStructural(const char* op,
+                                       std::uint32_t sourceArch,
+                                       std::uint32_t targetArch,
+                                       Entity entity) noexcept;
+
+  // Reject clear() while any matched archetype of the active
+  // iteration still holds live rows (ecs/iteration_clear).
+  [[nodiscard]] Status guardClear() noexcept;
+
+  // M1-ECS-04 query helpers: compile-time recursion over the listed
+  // components (N ≤ 32 — the M1 bound). Recursion, not a fold: the
+  // per-index component TYPE must reach a template argument, which a
+  // fold's `...` does not expand (it only expands packs in the
+  // operand expression).
+  // The pack comes LAST in the template parameter list: an explicit
+  // argument list cannot partition unambiguously when a pack is
+  // followed by non-pack parameters (GCC gives the pack zero
+  // arguments), so the fixed parameters go first.
+  template <std::size_t I, std::size_t N, typename... Ts>
+  void fillQueryIdImpl(std::uint32_t* ids) const noexcept {
+    if constexpr (I < N) {
+      ids[I] = componentIdOfKey(
+          &detail::ComponentTypeKey<
+              std::tuple_element_t<I, std::tuple<Ts...>>>::kMarker);
+      this->template fillQueryIdImpl<I + 1, N, Ts...>(ids);
+    }
+  }
+
+  // Resolve the world id of every listed query component into
+  // `ids[I]` (0 when T is not registered in this world).
+  template <typename... Ts>
+  void fillQueryIds(std::uint32_t* ids) const noexcept {
+    this->template fillQueryIdImpl<0, sizeof...(Ts), Ts...>(ids);
+  }
+
+  template <std::size_t I, std::size_t N, typename... Acc>
+  void fillQueryReadSetImpl(detail::IdSet256& readSet,
+                            const std::uint32_t* ids) const noexcept {
+    if constexpr (I < N) {
+      detail::setQueryReadBit<I, Acc...>(readSet, ids[I]);
+      this->template fillQueryReadSetImpl<I + 1, N, Acc...>(readSet, ids);
+    }
+  }
+
+  // Record every query component declared Read into `readSet` (the
+  // guard's write-during-read set); ids[I] is the resolved id (0 =
+  // unregistered: IdSet256::set is a no-op for it).
+  template <typename... Acc>
+  void fillQueryReadSet(detail::IdSet256& readSet,
+                        const std::uint32_t* ids) const noexcept {
+    this->template fillQueryReadSetImpl<0, sizeof...(Acc), Acc...>(
+        readSet, ids);
+  }
+
+  // The recursive per-row reference builder (M1-ECS-04): I walks the
+  // query components, and the references built so far ride along as
+  // the Refs pack, DEDUCED from the call arguments (an explicitly
+  // filled pack cannot also grow from arguments — hence the parameter
+  // order: fixed template arguments first, F and Refs deduced last).
+  // Refs&... is a pack of REFERENCE parameters (the row references
+  // must reach the callback without a copy — PERF-005), and the
+  // recursive call forwards refs... so the accumulated references
+  // grow one per level. The component and access packs ride as
+  // single tuple types (std::tuple<Ts...>, std::tuple<Acc...>): an
+  // explicit template argument list cannot partition between two
+  // consecutive packs, so no pack may sit in this template parameter
+  // list (see rowRef).
+  template <std::size_t I, std::size_t N, typename TList, typename AList,
+            typename F, typename... Refs>
+  void visitRowRec(F& fn, const Entity& entity, std::uint32_t row,
+                   const std::uint32_t* cols, detail::ArchetypeRecord& arch,
+                   Refs&... refs) const noexcept {
+    if constexpr (I < N) {
+      this->template visitRowRec<I + 1, N, TList, AList>(
+          fn, entity, row, cols, arch, refs...,
+          detail::rowRef<I, std::size_t, TList, AList>(row, cols, arch));
+    } else {
+      fn(entity, refs...);
+    }
+  }
+
+  // Visit every row of `arch` (ascending row = ascending slot order),
+  // invoking `fn(entity, row references...)` — the per-archetype row
+  // loop of World::each. The component and access packs arrive as
+  // single tuple types (see visitRowRec): an explicit template
+  // argument list cannot partition between two consecutive packs.
+  template <typename TList, typename AList, typename F>
+  void visitArchetype(F& fn, detail::ArchetypeRecord& arch,
+                      const std::uint32_t* cols) const noexcept {
+    for (std::uint32_t row = 0; row < arch.size; ++row) {
+      const std::uint16_t slot = arch.slotCol[row];
+      const Entity entity{slot, generations_[slot]};
+      this->template visitRowRec<0, std::tuple_size_v<TList>, TList, AList>(
+          fn, entity, row, cols, arch);
+    }
+  }
+
   std::uint32_t capacity_{0};
   std::unique_ptr<std::uint16_t[]> generations_;
   std::unique_ptr<std::uint8_t[]> alive_;
@@ -447,6 +674,15 @@ class World {
   std::uint64_t totalRemoves_{0};
   std::uint64_t totalArchetypeGrowth_{0};
   std::uint64_t totalReservations_{0};
+  // Iteration-legality guard (M1-ECS-04; query.h): live while a
+  // World::each runs, on the world's single owner thread. The matched
+  // set names the archetypes the active query visits (complete before
+  // the first callback); the read set names the queried components
+  // declared Read (the in-place-write check). Both are membership-only
+  // fixed 256-bit sets — never iterated (PERF-006).
+  bool iterationActive_{false};
+  detail::IdSet256 iterationArchetypes_{};
+  detail::IdSet256 iterationReadComponents_{};
 };
 
 // Component registration (M1-ECS-02). Header-defined: it is a template,
@@ -590,7 +826,12 @@ Status World::addComponent(Entity entity, const T& value) noexcept {
         columnIndexOf(archetypes_[curIdx - 1], id);
     if (curCol != kInvalidColumnIndex) {
       // Create-or-update: the entity already has T — overwrite in
-      // place (no archetype change, documented).
+      // place (no archetype change, documented). M1-ECS-04: the
+      // iteration-legality check runs first — an in-place write to a
+      // component the active query declared Read is rejected (assert
+      // in debug; Status + skip-with-log in release; query.h).
+      Status guard = guardInplaceWrite(id, curIdx, entity);
+      if (guard.isError()) return guard;
       const detail::ArchetypeColumn& column =
           archetypes_[curIdx - 1].columns[curCol];
       detail::copyRow(column.base + static_cast<std::size_t>(curRow) * column.size,
@@ -634,6 +875,18 @@ Status World::addComponent(Entity entity, const T& value) noexcept {
   }
   // Find the target archetype, creating it when the set is new.
   detail::ArchetypeRecord* target = findArchetype(targetSig, targetCount);
+  // M1-ECS-04: the iteration-legality check runs before any side
+  // effect — a rejected mutation creates no archetype and logs no
+  // archetype_created (the target's id is known either way: the
+  // created archetype would be the next dense id).
+  const std::uint32_t targetArch = target != nullptr
+      ? static_cast<std::uint32_t>(
+            std::distance(archetypes_.get(), target)) + 1
+      : archetypeCount_ + 1;
+  {
+    Status guard = guardStructural("addComponent", curIdx, targetArch, entity);
+    if (guard.isError()) return guard;
+  }
   if (target == nullptr) {
     if (archetypeCount_ >= kMaxArchetypes) {
       LAIGE_LOG_WARN("ecs", "archetype_budget",
@@ -709,7 +962,14 @@ Status World::removeComponent(Entity entity) noexcept {
   if (curCol == kInvalidColumnIndex) return Status{};  // lacks T: a no-op
   const std::uint32_t curRow = rowOf_[entity.id];
   if (cur.sigCount == 1) {
-    // The entity's last component: it leaves the archetypes entirely.
+    // The entity's last component: it leaves the archetypes entirely
+    // (target archetype 0 = "none"). M1-ECS-04: the iteration-
+    // legality check runs first (query.h).
+    {
+      Status guard =
+          guardStructural("removeComponent", curIdx, 0, entity);
+      if (guard.isError()) return guard;
+    }
     removeRow(cur, curRow);
     archetypeOf_[entity.id] = 0;
     rowOf_[entity.id] = 0;
@@ -724,6 +984,17 @@ Status World::removeComponent(Entity entity) noexcept {
     if (cur.sig[r] != id) targetSig[targetCount++] = cur.sig[r];
   }
   detail::ArchetypeRecord* target = findArchetype(targetSig, targetCount);
+  // M1-ECS-04: the iteration-legality check runs before any side
+  // effect (same placement and reasoning as addComponent).
+  {
+    const std::uint32_t targetArch = target != nullptr
+        ? static_cast<std::uint32_t>(
+              std::distance(archetypes_.get(), target)) + 1
+        : archetypeCount_ + 1;
+    Status guard = guardStructural("removeComponent", curIdx, targetArch,
+                                   entity);
+    if (guard.isError()) return guard;
+  }
   if (target == nullptr) {
     if (archetypeCount_ >= kMaxArchetypes) {
       LAIGE_LOG_WARN("ecs", "archetype_budget",
@@ -755,6 +1026,104 @@ Status World::removeComponent(Entity entity) noexcept {
   }
   removeRow(cur, curRow);
   ++totalRemoves_;
+  return Status{};
+}
+
+// ---------------------------------------------------------------------------
+// Query API (M1-ECS-04; full contract in query.h). Header-defined like
+// registerComponent: a template, visible to every translation unit.
+// ---------------------------------------------------------------------------
+
+template <typename... Ts, typename... Acc, typename F>
+Status World::each(F&& fn, Acc... accesses) noexcept {
+  static_assert(sizeof...(Ts) <= kMaxArchetypeComponents,
+                "a query lists at most kMaxArchetypeComponents (32) "
+                "components: no entity can carry more (the M1 bound — "
+                "ADR to raise)");
+  static_assert(sizeof...(Ts) == sizeof...(Acc),
+                "World::each takes exactly one access tag per listed "
+                "component, in the same order: "
+                "each<T1, ..., TN>(Read/Write, ..., Read/Write, fn)");
+  static_assert(detail::isAccessTags<Acc...>(),
+                "World::each access tags must be laige::Read or "
+                "laige::Write (one per listed component)");
+
+  // M1-ECS-04: one active iteration per world — a nested each() is
+  // rejected (assert in debug; Status + warn in release; query.h).
+  Status start = guardIterationStart();
+  if (start.isError()) return start;
+
+  // Resolve the queried components (world ids; 0 = unregistered —
+  // such a component matches nothing) and the read set (queried
+  // components declared Read — the guard's write-during-read check).
+  const std::size_t n = sizeof...(Ts);
+  std::uint32_t ids[n == 0 ? 1 : n];
+  detail::IdSet256 readSet{};
+  if constexpr (n > 0) {
+    this->template fillQueryIds<Ts...>(ids);
+    this->template fillQueryReadSet<Acc...>(readSet, ids);
+  }
+
+  // The matched archetypes (superset match: every queried component is
+  // in the archetype's set), in ascending archetype-id order
+  // (= creation order — the visit order M1-ECS-05 documents). The
+  // scan finishes before the first callback, so the guard's matched
+  // set is complete for the whole iteration.
+  std::uint32_t matchedIds[kMaxArchetypes];
+  std::uint32_t matchedCount = 0;
+  detail::IdSet256 matchedArchs{};
+  if constexpr (n > 0) {
+    for (std::uint32_t a = 0; a < archetypeCount_; ++a) {
+      const detail::ArchetypeRecord& rec = archetypes_[a];
+      bool matches = true;
+      for (std::size_t i = 0; i < n; ++i) {
+        if (columnIndexOf(rec, ids[i]) == kInvalidColumnIndex) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) {
+        matchedArchs.set(a + 1);
+        matchedIds[matchedCount++] = a + 1;
+      }
+    }
+  }
+
+  // The guard is live from the first callback to the last (the
+  // synchronous single-threaded flow: no early exit, no exceptions).
+  iterationActive_ = true;
+  iterationArchetypes_ = matchedArchs;
+  iterationReadComponents_ = readSet;
+
+  if constexpr (n == 0) {
+    // The empty query: every live entity, ascending slot-id order
+    // (the dense-id order M1-ECS-05 documents). It iterates no
+    // archetype rows, so the guard's matched set stays empty and
+    // structural mutations remain legal under it.
+    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+      if (alive_[slot] != 0) {
+        fn(Entity{static_cast<std::uint16_t>(slot), generations_[slot]});
+      }
+    }
+  } else {
+    // Rows of every matched archetype, ascending row = ascending
+    // slot order (the slot column is strictly ascending — invariant
+    // I2). The column indices are resolved once per archetype.
+    for (std::uint32_t mi = 0; mi < matchedCount; ++mi) {
+      detail::ArchetypeRecord& arch = archetypes_[matchedIds[mi] - 1];
+      std::uint32_t cols[n];
+      for (std::size_t i = 0; i < n; ++i) {
+        cols[i] = columnIndexOf(arch, ids[i]);  // present: it matched
+      }
+      this->template visitArchetype<std::tuple<Ts...>, std::tuple<Acc...>>(
+          fn, arch, cols);
+    }
+  }
+
+  // The guard releases with the iteration.
+  iterationActive_ = false;
+  iterationArchetypes_.clear();
+  iterationReadComponents_.clear();
   return Status{};
 }
 

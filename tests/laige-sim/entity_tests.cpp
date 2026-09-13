@@ -215,7 +215,7 @@ TEST(WorldBasics, ClearInvalidatesAllAndIsReusable) {
     ASSERT_TRUE(r.ok());
     e2 = r.value();
   }
-  world.clear();
+  ASSERT_TRUE(world.clear().ok());
   EXPECT_EQ(world.entityCount(), 0u);
   EXPECT_FALSE(world.isValid(e0));
   EXPECT_FALSE(world.isValid(e1));
@@ -227,7 +227,7 @@ TEST(WorldBasics, ClearInvalidatesAllAndIsReusable) {
   ASSERT_TRUE(r.ok());
   EXPECT_EQ(r.value().id, 2u);  // LIFO: the top of the cleared stack
   EXPECT_EQ(r.value().generation, 2u);
-  world.clear();  // idempotent
+  ASSERT_TRUE(world.clear().ok());  // idempotent
   EXPECT_EQ(world.entityCount(), 0u);
 }
 
@@ -324,7 +324,7 @@ TEST(WorldCapacity, ZeroCapacityRefusesEveryCreate) {
   EXPECT_FALSE(r.ok());
   EXPECT_EQ(r.error(), laige::ErrorCode::BudgetExhausted);
   EXPECT_FALSE(world.isValid(laige::Entity{}));
-  world.clear();  // idempotent on an empty world
+  ASSERT_TRUE(world.clear().ok());  // idempotent on an empty world
   EXPECT_EQ(world.entityCount(), 0u);
 }
 
@@ -371,7 +371,7 @@ TEST(WorldStale, IsFalseForStaleClearedOutOrRangeAndDefault) {
   // The default handle is never valid:
   EXPECT_FALSE(world.isValid(laige::Entity{}));
   // Cleared:
-  world.clear();
+  ASSERT_TRUE(world.clear().ok());
   EXPECT_FALSE(world.isValid(e0));
 }
 

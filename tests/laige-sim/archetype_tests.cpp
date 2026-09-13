@@ -1035,7 +1035,7 @@ TEST(ArchetypeLifetime, ClearDetachesAllRows) {
   }
   EXPECT_EQ(world.archetypeStats().rowsLive, 3u);
 
-  world.clear();
+  ASSERT_TRUE(world.clear().ok());
 
   // Every handle is stale and every row is released; the archetypes
   // and the type registry survive (setup state).

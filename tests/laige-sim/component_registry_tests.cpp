@@ -342,7 +342,7 @@ TEST(ComponentRegistry, ClearLeavesRegistryUntouched) {
   auto a = world.registerComponent<SimTestPos>();
   ASSERT_TRUE(a.ok());
   ASSERT_TRUE(world.destroy(e.value()).ok());
-  world.clear();
+  ASSERT_TRUE(world.clear().ok());
   EXPECT_EQ(world.entityCount(), 0u);
   EXPECT_EQ(world.componentCount(), 1u);
   auto info = world.componentInfo(a.value());
