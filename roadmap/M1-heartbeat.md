@@ -16,7 +16,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 ## ECS
 
-- [ ] **M1-ECS-01 · Entity handle**
+- [x] **M1-ECS-01 · Entity handle**
   - **Refs:** FR-1.2 (32-bit handle); AGENTS CPP-007
   - **Depends:** M0-CORE-05
   - **Scope:**

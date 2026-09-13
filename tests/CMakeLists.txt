@@ -64,6 +64,10 @@ endforeach()
 
 add_subdirectory(laige-core)
 
+# laige-sim tests (M1-ECS-01): the entity-handle and World suites
+# (tests/laige-sim; CTest entry `entity`).
+add_subdirectory(laige-sim)
+
 # Test-infrastructure checks (M0-TEST-01): the seed-handling convention
 # for randomized tests (tests/support/laige_test_seed.h) is exercised by
 # tests/testing (suite `SeededRandom`, CTest entry `test_infra`).

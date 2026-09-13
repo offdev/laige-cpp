@@ -213,9 +213,11 @@ endfunction()
 # ---------------------------------------------------------------------------
 # Modules (PRD §10.1 module map)
 # ---------------------------------------------------------------------------
-# One directory per module. Only laige-core is populated (M0-BUILD-01);
-# later milestones add their targets in place.
+# One directory per module. laige-core is the M0 foundation
+# (M0-BUILD-01); laige-sim is the first module beyond it (M1-ECS-01).
+# Later milestones add their targets in place.
 add_subdirectory(src/laige-core)
+add_subdirectory(src/laige-sim)
 
 # ---------------------------------------------------------------------------
 # Tests (gated by LAIGE_BUILD_TESTS; conventions in tests/README.md)
