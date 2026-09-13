@@ -1,13 +1,15 @@
 # tests/
 
 Unit and integration tests, one directory per engine module mirroring
-`src/`; test executables are named `<module>_tests` (convention finalized in
-M0-TEST-01).
+`src/`; test executables are named `<module>_tests`.
+**[docs/testing.md](../docs/testing.md) is the source of truth for the
+full conventions** (layout, regression-test naming, fuzz registration,
+seed handling) — finalized by M0-TEST-01.
 
-**Test framework: GoogleTest** — a dev-only dependency (PRD §11) vendored in
-`deps/googletest` and locked in `deps.lock` (M0-DEP-01). Test executables
-link `gtest_main` (which provides `main()`); GoogleTest is **never** linked
-into engine libraries. See
+**Test framework: GoogleTest** — a dev-only dependency (PRD §11) vendored
+in `deps/googletest` and locked in `deps.lock` (M0-DEP-01). Test
+executables link `gtest_main` (which provides `main()`); GoogleTest is
+**never** linked into engine libraries. See
 [ADR 0004](../docs/decisions/0004-google-test-vendoring.md).
 
 `laige-core_tests` (build smoke test, M0-BUILD-01; converted to a GoogleTest
@@ -19,3 +21,9 @@ the module's single test executable, exposed as its own CTest entry —
 M0-CORE-01's Result/Status/error-registry suites run as
 `ctest -R result_status` (filtering the shared executable to the
 `ResultStatus`, `Status`, and `ErrorCodeRegistry` suites).
+
+Non-module directories: `tests/tools`, `tests/api`, and `tests/detcheck`
+check the tools in `tools/`; `tests/support/` holds shared test-only
+headers (currently the seed helper `laige_test_seed.h`); `tests/testing/`
+holds the test-infrastructure checks (`test_infra_tests`, CTest entry
+`test_infra` — the seed-handling KAT suite, M0-TEST-01).

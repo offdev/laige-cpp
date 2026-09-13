@@ -282,13 +282,15 @@ TEST(ConfigJsonValid, Containers) {
   }
 }
 
-// M0-CORE-08 regression: whitespace after the ',' of an object member
-// must be accepted (the grammar allows whitespace between tokens). The
-// object key goes through parseString directly (not parseValue, which
-// does the skipping), so the key needs its own whitespace skip — the old
+// M0-CORE-08 regression (named per the TEST-003 convention,
+// docs/testing.md §2): whitespace after the ',' of an object member must
+// be accepted (the grammar allows whitespace between tokens). The object
+// key goes through parseString directly (not parseValue, which does the
+// skipping), so the key needs its own whitespace skip — the old
 // parseObjectMembers rejected {"a": 1, "b": 2}. Found when the
-// hand-formatted repo-root budgets.json was rejected (M0-CORE-08).
-TEST(ConfigJsonValid, ObjectMemberWhitespace) {
+// hand-formatted repo-root budgets.json was rejected (M0-CORE-08); this
+// test failed before the fix and passes after it.
+TEST(ConfigJsonValid, regress_json_object_member_ws) {
   {
     const auto r = Parse(R"({"a": 1, "b": 2})");
     ASSERT_TRUE(r.ok());

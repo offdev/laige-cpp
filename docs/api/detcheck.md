@@ -49,6 +49,7 @@ output: at most **65536** ticks and 64 bytes per line.
 laige-detcheck --scenario=<name> [--ticks=N] [--seed=HEX|DEC]
 laige-detcheck --run-a=<scenario-bin-A> --run-b=<scenario-bin-B>
                [-- scenario-args...]
+laige-detcheck --compare-combined=<combined-stream-file>
 ```
 
 **Mode 1 — `--scenario`** (M0 built-in scenarios, in-process):
@@ -67,6 +68,41 @@ configurations) are executed and their hash streams compared. Everything
 after the `--` separator is passed to both scenario binaries, so
 scenario arguments can never collide with tool flags.
 
+Mode 2 is **two-stage**, and `--compare-combined` is its second stage:
+
+- **Phase 1 — `--run-a`/`--run-b`** spawns both scenario binaries. Each
+  child inherits this process's **stdout** (no capture pipe is created for
+  it), so its tick lines land in whatever captures the checker's stdout,
+  delimited by the marker lines the checker itself emits:
+
+  ```text
+  @@DETCHK-RUN-A-BEGIN@@
+  <tick A stream>
+  @@DETCHK-RUN-A-END <exitcode>@@
+  @@DETCHK-RUN-B-BEGIN@@
+  <tick B stream>
+  @@DETCHK-RUN-B-END <exitcode>@@
+  ```
+
+  Phase 1 exits `0` when both scenario processes ran to completion, `2`
+  on a spawn failure or a non-zero scenario exit (the reason on stderr).
+  It does **not** read back or compare the streams.
+
+- **Phase 2 — `--compare-combined=<file>`** reads the combined stream the
+  caller wrote (phase 1's captured stdout), splits it at the markers,
+  re-runs the scenario contract on each run, compares the two streams,
+  and reports (the report below).
+
+The split is forced by the CI Windows runner: it does not deliver handles
+the checker process creates (pipes or files, even with the `INHERIT` bit
+set, even after duplication) to child processes through `STARTUPINFO` —
+only handles the process itself inherited from its parent are delivered
+(measured in the M0-TEST-01 CI, runs 24/25). A scenario child therefore
+cannot be handed a capture pipe; its stdout must be the checker's own
+stdout, which the CTest check script (`execute_process`) captures and
+hands back in phase 2. The mechanism is identical on every platform, so
+the two-stage flow is exercised by the local suite on POSIX as well.
+
 ## Report and exit codes
 
 stdout (stable and machine-greppable — LOG-001):
@@ -83,17 +119,27 @@ detcheck scenario=synthetic-perturbed result=DIVERGED first_diff_tick=7
   run-b: 7 93a3363d5a1dffa9
 ```
 
-In mode 2 the first line is
-`detcheck scenario=<basename-a> vs <basename-b> result=... ticks=<n>` and
-the `run-a`/`run-b` lines carry the full scenario paths. When one stream
-ends early, the tick lines become stream-length notes
-(`stream ends: <n> ticks`) with `result=DIVERGED`.
+In mode 2 (phase 2) the first line is
+`detcheck scenario=combined result=... ticks=<n>` with `run-a`/`run-b`
+labels. When one stream ends early, the tick lines become stream-length
+notes (`stream ends: <n> ticks`) with `result=DIVERGED`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the two runs agree on every tick (deterministic) |
 | 1 | divergence detected (a determinism failure — loud, CORE-008) |
 | 2 | usage error, unknown scenario, a scenario run failed (non-zero exit, spawn failure), or a scenario violated the output contract (malformed line, tick gap, unbounded output) |
+
+`--run-a`/`--run-b` (phase 1) exits `0` when both scenario processes ran
+to completion and `2` on any spawn or scenario failure; the `0`/`1`
+comparison result comes from the `--compare-combined` phase.
+
+On Windows, phase 1 spawns with `CreateProcessW` (no `STARTUPINFO` — no
+handles are handed to the child, see above), waits for the child with
+`WaitForSingleObject`, and reads its exit code only after termination, so
+the `STILL_ACTIVE` sentinel (`259`) is never reported as a scenario exit
+code; a signalled child is reported as `128 + signal`, a non-zero scenario
+failure either way.
 
 ## The built-in synthetic workload
 
@@ -118,9 +164,12 @@ computation of scenarios (the tool's line-by-line comparison is unchanged).
 
 A CI tool, not a hot path: one scenario run is O(ticks × 32); captured
 streams are bounded (65536 lines × 64 bytes ≈ 1.5 MiB worst case per
-run). Process execution is a plain pipe capture (fork/exec on POSIX,
-`CreateProcessW` on Windows) — no shell, no temporary files, bounded
-memory, and the scenario's stderr stays on the CI log.
+run). Process execution is plain inheritance (fork/exec on POSIX,
+`CreateProcessW` on Windows) — no shell, no capture pipe, bounded memory,
+and the scenario's stderr stays on the CI log. Phase 2 reads the combined
+stream file back with a bounded read capped by the contract (2 × 65536
+lines + markers ≈ 1.5 MiB worst case); the file is written by the check
+script between phases and lives in the build tree.
 
 ## Test suite
 

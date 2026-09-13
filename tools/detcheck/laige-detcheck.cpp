@@ -48,6 +48,7 @@
 //   laige-detcheck --scenario=<name> [--ticks=N] [--seed=HEX|DEC]
 //   laige-detcheck --run-a=<scenario-bin-A> --run-b=<scenario-bin-B>
 //                  [-- scenario-args...]
+//   laige-detcheck --compare-combined=<combined-stream-file>
 //
 // Mode 1 (--scenario): a built-in scenario (M0 stand-in for the M1
 // scenarios):
@@ -59,13 +60,36 @@
 //                         proves the failure path (the step's Verify
 //                         clause)
 //
-// Mode 2 (--run-a/--run-b): the real mode from M1-DET-04 on — two builds
-// of the same scenario source (two build configurations) are executed
-// and their hash streams compared. Everything after a `--` separator is
-// passed to both scenario binaries (scenario arguments that could look
-// like tool flags are unambiguous because of the separator).
+// Modes 2+3 (--run-a/--run-b, then --compare-combined): the real mode
+// from M1-DET-04 on — two builds of the same scenario source (two build
+// configurations) are executed and their hash streams compared.
+// Everything after a `--` separator is passed to both scenario binaries
+// (scenario arguments that could look like tool flags are unambiguous
+// because of the separator).
 //
-// Report (stdout, stable and machine-greppable — LOG-001):
+// The comparison is TWO-STAGE on every platform. The CI Windows runner
+// does not deliver handles the checker process creates (pipes or files,
+// even with the INHERIT bit set, even duplicated) to child processes
+// through STARTUPINFO — measured in the M0-TEST-01 CI (runs 24/25):
+// only handles the process itself inherited from its parent are
+// delivered. A scenario child therefore cannot be given a capture pipe;
+// its stdout must be the checker's own stdout, which the harness
+// (the CTest check script's execute_process) captures:
+//
+//   phase 1 (--run-a/--run-b): spawn each binary WITHOUT redirecting its
+//     stdout (plain inheritance). Each run's ticks land in the harness's
+//     capture of this process's stdout, delimited by the marker lines
+//       @@DETCHK-RUN-A-BEGIN@@ ... @@DETCHK-RUN-A-END <exitcode>@@
+//       @@DETCHK-RUN-B-BEGIN@@ ... @@DETCHK-RUN-B-END <exitcode>@@
+//     Phase 1 exits 0 when both scenario processes ran to completion,
+//     2 on spawn failure or scenario failure (the reason on stderr).
+//     It does NOT read or compare the ticks.
+//   phase 2 (--compare-combined=<file>): the check script writes the
+//     captured combined stream to a file and re-runs detcheck on it.
+//     Phase 2 splits the stream at the markers, re-runs the stream
+//     contract on each run, compares, and reports (the report below).
+//
+// Report (phase-2 stdout, stable and machine-greppable — LOG-001):
 //
 //   match:
 //     detcheck scenario=<name> result=OK ticks=<n>
@@ -84,6 +108,9 @@
 //   2  usage error, unknown scenario, a scenario run failed (non-zero
 //      exit or spawn failure), or a scenario violated the output
 //      contract (malformed line / tick gap / unbounded output)
+//   (--run-a/--run-b, phase 1: 0 when both scenario processes ran to
+//    completion, 2 on any spawn or scenario failure; the 0/1 comparison
+//    result comes from the --compare-combined phase)
 //
 // ============================================================================
 // Built-in synthetic workload
@@ -115,7 +142,6 @@
 
 #include <array>
 #include <cctype>
-#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -128,6 +154,10 @@
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
+// windows.h's WinDef.h defines the min/max macros, which collide with
+// std::min/std::max (MSVC C2589 in compareStreams); NOMINMAX is the
+// documented opt-out (CPP-009: compile-time platform boundary).
+#define NOMINMAX
 #include <windows.h>
 #else
 #include <sys/wait.h>
@@ -300,149 +330,170 @@ std::wstring quoteArg(std::string_view arg) {
   return q;
 }
 
-RunResult runScenario(const std::string& exe,
-                      const std::vector<std::string>& args) {
-  RunResult r;
-  std::wstring cmd = toWide(exe);
-  for (const std::string& a : args) cmd += L" " + quoteArg(a);
+#endif  // defined(_WIN32)
 
-  SECURITY_ATTRIBUTES sa{};
-  sa.nLength = sizeof sa;
-  HANDLE readH = INVALID_HANDLE_VALUE;
-  HANDLE writeH = INVALID_HANDLE_VALUE;
-  if (!CreatePipe(&readH, &writeH, &sa, 0)) {
-    r.error = "CreatePipe failed";
-    return r;
-  }
-  // The child inherits the write end of the pipe.
-  if (!SetHandleInformation(writeH, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) {
-    r.error = "SetHandleInformation failed";
-    CloseHandle(readH);
-    CloseHandle(writeH);
-    return r;
-  }
-  STARTUPINFOW si{};
-  si.cb = sizeof si;
-  si.dwFlags = STARTF_USESTDHANDLES;
-  si.hStdOutput = writeH;  // capture stdout
-  si.hStdError = GetStdHandle(STD_ERROR_HANDLE);  // stays visible in the log
-  si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-  PROCESS_INFORMATION pi{};
-  if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, 0, nullptr,
-                      nullptr, &si, &pi)) {
-    r.error = "CreateProcessW failed (is the path correct?)";
-    CloseHandle(readH);
-    CloseHandle(writeH);
-    return r;
-  }
-  CloseHandle(writeH);
-
-  char buf[65536];
-  std::string pending;
-  for (;;) {
-    DWORD n = 0;
-    if (!PeekNamedPipe(readH, buf, sizeof buf, &n, nullptr, nullptr)) {
-      r.error = "PeekNamedPipe failed";
-      break;
+// --- Scenario spawn with markers (mode 2, phase 1) -------------------------
+//
+// Two-stage capture, all platforms:
+//
+// The CI Windows runner does NOT deliver handles this process creates
+// (pipes or files, even with the INHERIT bit confirmed set and even
+// duplicated) to child processes through STARTUPINFO - measured in the
+// M0-TEST-01 CI (runs 24/25): only handles this process itself
+// inherited from its parent (its kernel-assigned fd0/1/2) are delivered.
+// A scenario child therefore cannot be given a capture pipe it inherits;
+// its stdout must BE this process's stdout (plain inheritance), which the
+// harness (the CTest check script's execute_process) captures.
+//
+// So mode 2 runs in two phases:
+//   phase 1 (this function, per run): emit `@@DETCHK-RUN-<L>-BEGIN@@`,
+//     spawn the scenario child WITHOUT redirecting its stdout (it
+//     inherits this process's stdout), wait for it, emit
+//     `@@DETCHK-RUN-<L>-END <exitcode>@@`. The child's ticks land between
+//     the markers in the harness's capture of this process's stdout.
+//   phase 2 (--compare-combined): the check script hands the combined
+//     stream back to detcheck, which splits it at the markers, re-runs
+//     the stream contract on each run, and compares.
+//
+// This function does not read the ticks. It returns the child's exit
+// code, or -1 when the spawn itself failed (error set).
+int spawnScenarioWithMarkers(const std::string& exe,
+                             const std::vector<std::string>& args,
+                             const std::string& label, std::string& error) {
+  // The BEGIN marker must reach the capture BEFORE the child is born, so
+  // the child's ticks (on the same stream) cannot precede it.
+  std::printf("@@DETCHK-RUN-%s-BEGIN@@\n", label.c_str());
+  std::fflush(stdout);
+  int result = -1;
+#ifdef _WIN32
+  {
+    const std::wstring exeW = toWide(exe);
+    const DWORD attrs = GetFileAttributesW(exeW.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+      error = "scenario executable not found (lastError=" +
+              std::to_string(GetLastError()) + "): " + exe;
+    } else {
+      std::wstring cmd = exeW;
+      for (const std::string& a : args) cmd += L" " + quoteArg(a);
+      // Zeroed STARTUPINFO (no dwFlags): the child inherits this process's
+      // standard handles (the harness's capture). No self-created handle
+      // is involved - the kind the CI Windows runner never delivers (see
+      // above). A zeroed STARTUPINFO is passed rather than NULL: on the
+      // CI Windows runner the NULL form makes CreateProcessW fail while
+      // the zeroed form spawns fine (measured in the M0-TEST-01 CI, run
+      // 34732057356) - do not "simplify" this to NULL.
+      STARTUPINFOW si{};
+      si.cb = sizeof si;
+      PROCESS_INFORMATION pi{};
+      if (!CreateProcessW(exeW.c_str(), cmd.data(), nullptr, nullptr, TRUE,
+                          0, nullptr, nullptr, &si, &pi)) {
+        error = "CreateProcessW failed (lastError=" +
+                std::to_string(GetLastError()) + "): " + exe;
+      } else {
+        // Wait for termination BEFORE reading the exit code
+        // (GetExitCodeProcess on a live process returns STILL_ACTIVE).
+        if (WaitForSingleObject(pi.hProcess, INFINITE) != WAIT_OBJECT_0) {
+          error = "WaitForSingleObject(process) failed";
+        } else {
+          DWORD raw = 0;
+          GetExitCodeProcess(pi.hProcess, &raw);
+          result = static_cast<int>(raw);
+        }
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+      }
     }
-    if (n == 0) break;  // the scenario closed the pipe
-    if (n > sizeof buf) n = sizeof buf;
-    DWORD got = 0;
-    if (!ReadFile(readH, buf, n, &got, nullptr)) {
-      r.error = "ReadFile failed";
-      break;
-    }
-    if (!appendChunk(r.lines, pending, buf, got, kMaxTicks)) {
-      r.error = "scenario output is unbounded (line or tick count exceeds "
-                "the contract)";
-      break;
+  }
+#else
+  {
+    if (::access(exe.c_str(), X_OK) != 0) {
+      error = "scenario executable not found: " + exe;
+    } else {
+      const pid_t pid = fork();
+      if (pid < 0) {
+        error = "fork() failed";
+      } else if (pid == 0) {
+        // Child: NO stdout redirect - it inherits this process's stdout
+        // (the harness's capture), so its ticks land between the parent's
+        // markers.
+        std::vector<char*> argv;
+        argv.push_back(const_cast<char*>(exe.c_str()));
+        for (const std::string& a : args)
+          argv.push_back(const_cast<char*>(a.c_str()));
+        argv.push_back(nullptr);
+        execv(exe.c_str(), argv.data());
+        _exit(127);  // execv failed: the path is wrong or not executable
+      } else {
+        int status = 0;
+        if (waitpid(pid, &status, 0) < 0) {
+          error = "waitpid() failed";
+        } else if (WIFEXITED(status)) {
+          result = WEXITSTATUS(status);
+        } else if (WIFSIGNALED(status)) {
+          // Conventional "exit code" for a signalled child; main() reports
+          // it as a scenario process failure (exit 2), same as the old
+          // single-shot path.
+          result = 128 + WTERMSIG(status);
+        }
+      }
     }
   }
-  CloseHandle(readH);
-  DWORD code = 0;
-  GetExitCodeProcess(pi.hProcess, &code);
-  CloseHandle(pi.hThread);
-  CloseHandle(pi.hProcess);
-  r.exitCode = static_cast<int>(code);
-  finishPending(r.lines, pending, r);
-  if (r.exitCode != 0 && r.error.empty()) {
-    r.error = "scenario process exited with code " + std::to_string(code);
-  }
-  r.ok = r.error.empty();
-  return r;
+#endif
+  // The END marker carries the child's exit code (or -1 when the spawn
+  // itself failed, in which case the check script stops at phase 1; the
+  // marker keeps the captured stream parseable either way).
+  std::printf("@@DETCHK-RUN-%s-END %d@@\n", label.c_str(), result);
+  std::fflush(stdout);
+  return result;
 }
 
-#else  // POSIX (Linux, macOS)
-
-RunResult runScenario(const std::string& exe,
-                      const std::vector<std::string>& args) {
-  RunResult r;
-  int pipefd[2];
-  if (pipe(pipefd) != 0) {
-    r.error = "pipe() failed";
-    return r;
-  }
-  const pid_t pid = fork();
-  if (pid < 0) {
-    r.error = "fork() failed";
-    ::close(pipefd[0]);
-    ::close(pipefd[1]);
-    return r;
-  }
-  if (pid == 0) {
-    // Child: stdout goes to the pipe; stderr is inherited, so a scenario
-    // crash report still reaches the CI log.
-    if (::dup2(pipefd[1], 1) < 0) _exit(127);
-    ::close(pipefd[0]);
-    ::close(pipefd[1]);
-    std::vector<char*> argv;
-    argv.push_back(const_cast<char*>(exe.c_str()));
-    for (const std::string& a : args) argv.push_back(const_cast<char*>(a.c_str()));
-    argv.push_back(nullptr);
-    execv(exe.c_str(), argv.data());
-    _exit(127);  // execv failed: the path is wrong or not executable
-  }
-  ::close(pipefd[1]);
+// Read a whole file, bounded to maxBytes (bounded work, CORE-003).
+bool readFileBounded(const std::string& path, std::string& out,
+                     std::size_t maxBytes) {
+  std::FILE* f = nullptr;
+#ifdef _WIN32
+  if (fopen_s(&f, path.c_str(), "rb") != 0) return false;
+#else
+  f = std::fopen(path.c_str(), "rb");
+  if (!f) return false;
+#endif
+  out.clear();
   char buf[65536];
-  std::string pending;
   for (;;) {
-    const ssize_t n = ::read(pipefd[0], buf, sizeof buf);
-    if (n < 0) {
-      if (errno == EINTR) continue;
-      r.error = "read() of the scenario stdout failed";
-      break;
+    const std::size_t n = std::fread(buf, 1, sizeof buf, f);
+    if (n == 0) break;
+    if (out.size() + n > maxBytes) {
+      std::fclose(f);
+      return false;
     }
-    if (n == 0) break;  // EOF: the scenario finished
-    if (!appendChunk(r.lines, pending, buf, static_cast<std::size_t>(n),
-                     kMaxTicks)) {
-      r.error = "scenario output is unbounded (line or tick count exceeds "
-                "the contract)";
-      break;
-    }
+    out.append(buf, n);
   }
-  ::close(pipefd[0]);
-  int status = 0;
-  if (waitpid(pid, &status, 0) < 0) {
-    r.error = "waitpid() failed";
-  }
-  if (WIFEXITED(status)) {
-    r.exitCode = WEXITSTATUS(status);
-  } else if (WIFSIGNALED(status)) {
-    r.exitCode = 128 + WTERMSIG(status);
-    if (r.error.empty()) {
-      r.error = "scenario process was killed by signal " +
-                std::to_string(WTERMSIG(status));
-    }
-  }
-  finishPending(r.lines, pending, r);
-  if (r.exitCode != 0 && r.error.empty()) {
-    r.error = "scenario process exited with code " + std::to_string(r.exitCode);
-  }
-  r.ok = r.error.empty();
-  return r;
+  std::fclose(f);
+  return true;
 }
 
-#endif  // _WIN32
+// Extract one run's tick lines from the combined stream: the lines
+// strictly between `@@DETCHK-RUN-<L>-BEGIN@@` and the
+// `@@DETCHK-RUN-<L>-END <code>@@` line. Returns false when either marker
+// is missing (a truncated capture is a contract failure, CORE-008).
+bool extractRunStream(const std::vector<std::string>& lines,
+                      const std::string& label,
+                      std::vector<std::string>& out) {
+  const std::string begin = "@@DETCHK-RUN-" + label + "-BEGIN@@";
+  const std::string endPrefix = "@@DETCHK-RUN-" + label + "-END ";
+  bool inStream = false;
+  for (const std::string& ln : lines) {
+    if (ln == begin) {
+      inStream = true;
+      continue;
+    }
+    if (inStream) {
+      if (ln.rfind(endPrefix, 0) == 0) return true;
+      out.push_back(ln);
+    }
+  }
+  return false;
+}
 
 // --- The built-in synthetic scenario (M0 stand-in) -------------------------
 
@@ -587,27 +638,35 @@ CompareResult compareStreams(const std::vector<std::string>& a,
   return c;
 }
 
-std::string basenameOf(std::string_view path) {
-  const auto pos = path.find_last_of("/\\");
-  return pos == std::string_view::npos ? std::string(path)
-                                       : std::string(path.substr(pos + 1));
-}
-
 void report(std::string_view scenarioName, const CompareResult& c,
             std::size_t ticks, std::string_view labelA,
             std::string_view labelB) {
+  auto emit = [](const char* line) { std::printf("%s\n", line); };
   if (c.ok) {
-    std::printf("detcheck scenario=%s result=OK ticks=%llu\n",
-                std::string(scenarioName).c_str(),
-                static_cast<unsigned long long>(ticks));
-    std::printf("  run-a: %s\n", std::string(labelA).c_str());
-    std::printf("  run-b: %s\n", std::string(labelB).c_str());
+    char buf[256];
+    std::snprintf(buf, sizeof buf,
+                  "detcheck scenario=%s result=OK ticks=%llu",
+                  std::string(scenarioName).c_str(),
+                  static_cast<unsigned long long>(ticks));
+    emit(buf);
+    std::snprintf(buf, sizeof buf, "  run-a: %s",
+                  std::string(labelA).c_str());
+    emit(buf);
+    std::snprintf(buf, sizeof buf, "  run-b: %s",
+                  std::string(labelB).c_str());
+    emit(buf);
   } else {
-    std::printf("detcheck scenario=%s result=DIVERGED first_diff_tick=%llu\n",
-                std::string(scenarioName).c_str(),
-                static_cast<unsigned long long>(c.firstDiffTick));
-    std::printf("  run-a: %s\n", c.lineA.c_str());
-    std::printf("  run-b: %s\n", c.lineB.c_str());
+    char buf[256];
+    std::snprintf(buf, sizeof buf,
+                  "detcheck scenario=%s result=DIVERGED "
+                  "first_diff_tick=%llu",
+                  std::string(scenarioName).c_str(),
+                  static_cast<unsigned long long>(c.firstDiffTick));
+    emit(buf);
+    std::snprintf(buf, sizeof buf, "  run-a: %s", c.lineA.c_str());
+    emit(buf);
+    std::snprintf(buf, sizeof buf, "  run-b: %s", c.lineB.c_str());
+    emit(buf);
   }
 }
 
@@ -617,6 +676,8 @@ struct Args {
   std::string scenario;  // mode 1
   std::string runA;      // mode 2
   std::string runB;      // mode 2
+  bool cmpCombined = false;  // mode 3
+  std::string cmpCombinedFile;  // mode 3 combined stream file
   bool ticksSet = false;
   int ticks = kDefaultTicks;
   bool seedSet = false;
@@ -631,12 +692,23 @@ void printUsage(std::FILE* out) {
       "[--seed=HEX|DEC]\n"
       "       laige-detcheck --run-a=<scenario-bin-A> --run-b="
       "<scenario-bin-B> [-- scenario-args...]\n"
+      "       laige-detcheck --compare-combined=<combined-stream-file>\n"
       "       laige-detcheck --help\n"
       "\n"
       "  --scenario          built-in scenario: synthetic | "
       "synthetic-perturbed\n"
       "  --run-a/--run-b     two builds of the same scenario (two build\n"
-      "                      configurations)\n"
+      "                      configurations). Two-stage capture: this\n"
+      "                      invocation SPAWNS both binaries (each child's\n"
+      "                      stdout is inherited from this process, so its\n"
+      "                      ticks flow to this process's stdout, delimited\n"
+      "                      by @@DETCHK-RUN-A/B-BEGIN/END@@ markers) and\n"
+      "                      does NOT compare; the caller hands the\n"
+      "                      combined stream to --compare-combined.\n"
+      "  --compare-combined  read a combined stream (markers + both tick\n"
+      "                      streams), validate both runs against the\n"
+      "                      stream contract, compare, and report (phase 2\n"
+      "                      of --run-a/--run-b)\n"
       "  --ticks             built-in scenario tick count (1..%d, "
       "default %d)\n"
       "  --seed              built-in scenario seed (0xHEX or decimal)\n"
@@ -644,7 +716,10 @@ void printUsage(std::FILE* out) {
       "                      are passed to both scenario binaries\n"
       "\n"
       "Exit codes: 0 = match, 1 = divergence, 2 = error (usage, unknown\n"
-      "scenario, scenario failure, contract violation).\n",
+      "scenario, spawn failure, scenario failure, contract violation).\n"
+      "--run-a/--run-b exits 0 when both scenario processes ran to\n"
+      "completion and 2 on any spawn or scenario failure (the comparison\n"
+      "happens in the --compare-combined phase).\n",
       kMaxTicks, kDefaultTicks);
 }
 
@@ -674,6 +749,10 @@ bool parseArgs(int argc, char** argv, Args& a) {
     } else if (key == "--run-b") {
       if (!hasValue) return false;
       a.runB = value;
+    } else if (key == "--compare-combined") {
+      if (!hasValue) return false;
+      a.cmpCombined = true;
+      a.cmpCombinedFile = value;
     } else if (key == "--ticks") {
       if (!hasValue || value.empty()) return false;
       std::uint64_t v = 0;
@@ -715,10 +794,12 @@ int main(int argc, char** argv) {
   }
   const bool mode1 = !a.scenario.empty();
   const bool mode2 = !a.runA.empty() || !a.runB.empty();
-  if (mode1 && mode2) {
+  const bool mode3 = a.cmpCombined;
+  const int modeCount = (mode1 ? 1 : 0) + (mode2 ? 1 : 0) + (mode3 ? 1 : 0);
+  if (modeCount != 1) {
     std::fprintf(stderr,
-                 "laige-detcheck: --scenario and --run-a/--run-b are "
-                 "mutually exclusive\n");
+                 "laige-detcheck: exactly one of --scenario, "
+                 "--run-a/--run-b, or --compare-combined is required\n");
     printUsage(stderr);
     return 2;
   }
@@ -736,10 +817,6 @@ int main(int argc, char** argv) {
     printUsage(stderr);
     return 2;
   }
-  if (!mode1 && !mode2) {
-    printUsage(stderr);
-    return 2;
-  }
   if (mode2 && (a.runA.empty() || a.runB.empty())) {
     std::fprintf(stderr,
                  "laige-detcheck: both --run-a and --run-b are required\n");
@@ -754,36 +831,95 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  // --- Mode 2: two scenario binaries (two build configurations) ----------
-  if (mode2) {
-    const RunResult resA = runScenario(a.runA, a.positionals);
-    if (!resA.ok) {
-      std::fprintf(stderr, "laige-detcheck: scenario run-a: %s\n",
-                   resA.error.c_str());
+  // --- Mode 3: compare a combined stream (phase 2) ------------------------
+  if (mode3) {
+    // The combined stream holds, per run: a BEGIN marker line, the tick
+    // lines, and an END marker line. Its size is bounded by the contract
+    // (two runs of kMaxTicks lines of kMaxLineBytes, plus the markers);
+    // reading more is a contract failure, not an allocation (CORE-003).
+    const std::size_t maxBytes =
+        (2 * static_cast<std::size_t>(kMaxTicks) + 8) * (kMaxLineBytes + 1);
+    std::string content;
+    if (!readFileBounded(a.cmpCombinedFile, content, maxBytes)) {
+      std::fprintf(stderr,
+                   "laige-detcheck: cannot read combined stream file: %s\n",
+                   a.cmpCombinedFile.c_str());
       return 2;
     }
-    const std::string errA = validateStream(resA.lines, kMaxTicks);
+    std::vector<std::string> lines;
+    std::string pending;
+    RunResult bounded;  // carries the unbounded-output error if any
+    const bool okA = appendChunk(lines, pending, content.data(),
+                                 content.size(), 2 * kMaxTicks + 8);
+    if (okA) finishPending(lines, pending, bounded);
+    if (!okA || !bounded.error.empty()) {
+      std::fprintf(stderr,
+                   "laige-detcheck: combined stream is unbounded (line or "
+                   "tick count exceeds the contract)\n");
+      return 2;
+    }
+    std::vector<std::string> linesA, linesB;
+    if (!extractRunStream(lines, "A", linesA)) {
+      std::fprintf(stderr,
+                   "laige-detcheck: combined stream is missing the "
+                   "run-A markers (@@DETCHK-RUN-A-BEGIN/END@@)\n");
+      return 2;
+    }
+    if (!extractRunStream(lines, "B", linesB)) {
+      std::fprintf(stderr,
+                   "laige-detcheck: combined stream is missing the "
+                   "run-B markers (@@DETCHK-RUN-B-BEGIN/END@@)\n");
+      return 2;
+    }
+    const std::string errA = validateStream(linesA, kMaxTicks);
     if (!errA.empty()) {
-      std::fprintf(stderr, "laige-detcheck: scenario run-a: %s\n",
-                   errA.c_str());
+      std::fprintf(stderr, "laige-detcheck: scenario run-a: %s\n", errA.c_str());
       return 2;
     }
-    const RunResult resB = runScenario(a.runB, a.positionals);
-    if (!resB.ok) {
-      std::fprintf(stderr, "laige-detcheck: scenario run-b: %s\n",
-                   resB.error.c_str());
-      return 2;
-    }
-    const std::string errB = validateStream(resB.lines, kMaxTicks);
+    const std::string errB = validateStream(linesB, kMaxTicks);
     if (!errB.empty()) {
-      std::fprintf(stderr, "laige-detcheck: scenario run-b: %s\n",
-                   errB.c_str());
+      std::fprintf(stderr, "laige-detcheck: scenario run-b: %s\n", errB.c_str());
       return 2;
     }
-    const CompareResult c = compareStreams(resA.lines, resB.lines);
-    report(basenameOf(a.runA) + " vs " + basenameOf(a.runB), c,
-           resA.lines.size(), a.runA, a.runB);
+    const CompareResult c = compareStreams(linesA, linesB);
+    report("combined", c, linesA.size(), "run-a", "run-b");
     return c.ok ? 0 : 1;
+  }
+
+  // --- Mode 2: two scenario binaries (phase 1 of two-stage capture) ------
+  // Each scenario child inherits THIS process's stdout (no capture pipe -
+  // see spawnScenarioWithMarkers), so its ticks land in the harness's
+  // capture of this process's stdout, between the BEGIN/END markers. The
+  // comparison happens in phase 2 (--compare-combined), invoked by the
+  // check script over the combined stream.
+  if (mode2) {
+    std::string errA;
+    const int codeA =
+        spawnScenarioWithMarkers(a.runA, a.positionals, "A", errA);
+    if (codeA < 0) {
+      std::fprintf(stderr, "laige-detcheck: scenario run-a: %s\n", errA.c_str());
+      return 2;
+    }
+    if (codeA != 0) {
+      std::fprintf(stderr, "laige-detcheck: scenario run-a: scenario process exited with "
+            "code %d (command: %s)\n",
+            codeA, a.runA.c_str());
+      return 2;
+    }
+    std::string errB;
+    const int codeB =
+        spawnScenarioWithMarkers(a.runB, a.positionals, "B", errB);
+    if (codeB < 0) {
+      std::fprintf(stderr, "laige-detcheck: scenario run-b: %s\n", errB.c_str());
+      return 2;
+    }
+    if (codeB != 0) {
+      std::fprintf(stderr, "laige-detcheck: scenario run-b: scenario process exited with "
+            "code %d (command: %s)\n",
+            codeB, a.runB.c_str());
+      return 2;
+    }
+    return 0;
   }
 
   // --- Mode 1: built-in scenario, two in-process runs --------------------

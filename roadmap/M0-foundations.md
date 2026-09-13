@@ -847,7 +847,7 @@ No rendering, no physics, no networking yet — `laige-core` only.
 
 ## Test infrastructure & docs
 
-- [ ] **M0-TEST-01 · Test infrastructure conventions**
+- [x] **M0-TEST-01 · Test infrastructure conventions**
   - **Refs:** AGENTS TEST-001/003/005; PRD §14
   - **Depends:** M0-DEP-01, M0-CORE-07
   - **Scope:**
@@ -855,8 +855,69 @@ No rendering, no physics, no networking yet — `laige-core` only.
     - Regression-test convention documented: every bug fix test named `regress_<short-id>`, must fail before the fix (AGENTS TEST-003) — recorded in `docs/testing.md`.
     - Fuzz runner `laige-fuzz`: registers targets, bounded runs in CI (`--runs=1000`), nightly long runs documented.
     - Seed handling for all randomized tests (fixed default seed, overridable) so CI is deterministic.
-  - **Verify:** convention doc exists; fuzz runner runs the `json_parse` target; a seeded random test passes identically on two CI runs (checkable via artifact logs).
-  - **Size:** ~150 lines + docs
+  - **Decision (2026-09-12):** `docs/testing.md` is the normative
+    conventions doc (layout, `regress_<short-id>`, fuzz lane semantics,
+    seed handling; linked from `docs/README.md`, `tests/README.md`,
+    `building.md`, and `README.md`). Seed handling:
+    `tests/support/laige_test_seed.h` (test-only header) — `TestSeed()`
+    returns the fixed default `kDefaultTestSeed = 0x1F055EED`, identical
+    to laige-fuzz's `kDefaultSeed` (one documented default seed
+    repo-wide) unless `LAIGE_TEST_SEED` is set (0x-hex or decimal, read
+    at call time); a set-but-unparseable value records a loud test
+    failure with the offending value and falls back to the default
+    (CORE-008; `ADD_FAILURE` — `GTEST_FAIL` is void-return only);
+    `TestPrng(id)` derives a per-test substream from a stable named id
+    so two tests never share a stream position.
+    `tests/testing/test_infra_tests` (CTest entry `test_infra`, suite
+    `SeededRandom`, 6 cases): known-answer FNV-1a hashes of 65536 draws
+    under the default seed (`0x7EA4049545656830`) and a documented
+    override seed (`0x535D2CA741B61CBF`), first-8-draw KAT, the
+    default/fuzz seed identity, the loud invalid-`LAIGE_TEST_SEED` path
+    (`EXPECT_NONFATAL_FAILURE` from `gtest-spi.h`), the seed parser, and
+    substream isolation — each KAT prints a machine-greppable
+    `test-seed-check` line before asserting, so two CI runs of the same
+    commit show identical lines in the job logs and the archived
+    `Testing/Temporary/LastTest.log` (the step's cross-run Verify
+    clause). First `regress_` test: the M0-CORE-08 bug-fix test renamed
+    `ConfigJsonValid.ObjectMemberWhitespace` →
+    `ConfigJsonValid.regress_json_object_member_ws` (suite unchanged, so
+    `ctest -R config_json` still covers it; the historical M0-CORE-08
+    step record is unchanged). Fuzz lane: no new CI job — the bounded
+    run is the existing `fuzz_json_parse` ctest entry inside every P0
+    job's ctest (PRD §14 "every commit (bounded)"); the nightly long
+    form (`--runs=1000000`) is documented in `docs/testing.md` §3 and
+    added to the canonical command table (`building.md`); the scheduled
+    nightly lane lands with the first M1 fuzz target (asset import /
+    network packets, PRD §14 fuzz row).
+  - **Verify:** convention doc exists; fuzz runner runs the `json_parse`
+    target (`ctest -R fuzz_json_parse` green in every local tree and
+    inside every P0 job's ctest in CI); a seeded random test passes
+    identically on two CI runs (byte-identical `test-seed-check` lines
+    in the archived `Testing/Temporary/LastTest.log` of the Linux ASan
+    job — verified across two CI runs of the same commit, and again
+    across commits e2abce5 → c8b8221, in both cases
+    byte-identical):
+
+      ```text
+      test-seed-check default seed=0x000000001f055eed stream=1 draws=65536 fnv1a=0x7ea4049545656830
+      test-seed-check override seed=0x2468acce01234567 stream=2 draws=65536 fnv1a=0x535d2ca741b61cbf
+      ```
+
+    CI runs: 34713354925 / 34714039135 (same-commit pair, byte-identical
+    lines) and 34728782624 (e2abce5) / 34746755055 (c8b8221, the final
+    commit — byte-identical lines, all 10 jobs green including Windows
+    32/32). Local (2026-09-12): 32/32 ctest with zero warnings under the
+    NFR-8.10 policy on g++ 16.2.1 (`build` static, `build-shared`
+    shared, `build-asan` ASan+UBSan fatal, `build-tsan` TSan
+    `halt_on_error=1`) and Clang 22.1.8 (`build-clang`); the seeded KAT
+    line is identical on the g++ and clang++ trees locally
+    (cross-compiler identity, confirmed in CI above).
+  - **Size:** ~1,000 lines (over the ~150 estimate: same pattern as
+    M0-CORE-01…08 — `docs/testing.md` carries the conventions,
+    `laige_test_seed.h` the seed contract next to the code, and the
+    `SeededRandom` suite proves the step's Verify clauses — seeded KAT,
+    override, loud failure, substream isolation — cohesively rather
+    than split)
 
 - [ ] **M0-DOC-01 · `docs/` skeleton + index**
   - **Refs:** AGENTS §13 (DOC-001…DOC-007), PRD NFR-8.12

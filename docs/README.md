@@ -34,6 +34,14 @@ sections below mark what exists and what is still to land.
   the scenario hash-line contract (`<tick> <hash>` lines, two build
   configurations) (M0-TOOL-02).
 
+## Testing
+
+- [Testing conventions](testing.md) — test layout (module dirs mirror
+  `src/`, `<module>_tests` executables), the `regress_<short-id>`
+  regression-test convention, `laige-fuzz` target registration and CI
+  lane semantics, and the seed-handling convention for randomized tests
+  (M0-TEST-01).
+
 ## Architecture decisions (ADRs)
 
 - [ADR index](decisions/README.md) — 0001 (name and license), 0002

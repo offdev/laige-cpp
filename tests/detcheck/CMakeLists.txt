@@ -73,25 +73,37 @@ string(APPEND LAIGE_DETCHECK_TEST_ENV
 # Same shape as the tests/api helper: a generated cmake -P check script
 # asserts the exit code and the required output fragments.
 function(laige_add_detcheck_test name expect_exit cmd)
-  set(_checks "")
+  # The template's @CHECKS@ placeholder is substituted from this variable,
+  # so it must be named exactly CHECKS (a misspelled local like _checks
+  # silently expands to nothing and the fragment checks never exist).
+  set(CHECKS "")
   foreach(_needle IN LISTS ARGN)
     # Escape ECMAScript metacharacters for the generated MATCHES check.
+    # The generated script is itself a CMake file, and its string literals
+    # strip one level of backslashes on parse (\\ -> \, \X -> X), so each
+    # regex escape must reach the file DOUBLED: \\( in the file becomes \(
+    # for the regex engine (a single \X would be stripped and the bare
+    # metacharacter would reach the regex).
     string(REPLACE "\\" "\\\\" _esc "${_needle}")
     string(REPLACE "\"" "\\\"" _esc "${_esc}")
-    string(REPLACE "(" "\\(" _esc "${_esc}")
-    string(REPLACE ")" "\\)" _esc "${_esc}")
-    string(REPLACE "+" "\\+" _esc "${_esc}")
-    string(REPLACE "." "\\." _esc "${_esc}")
-    string(REPLACE "*" "\\*" _esc "${_esc}")
-    string(REPLACE "?" "\\?" _esc "${_esc}")
-    string(REPLACE "|" "\\|" _esc "${_esc}")
-    string(REPLACE "^" "\\^" _esc "${_esc}")
-    string(REPLACE "$" "\\$" _esc "${_esc}")
-    string(REPLACE "[" "\\[" _esc "${_esc}")
-    string(REPLACE "]" "\\]" _esc "${_esc}")
-    string(REPLACE "{" "\\{" _esc "${_esc}")
-    string(REPLACE "}" "\\}" _esc "${_esc}")
-    string(APPEND _checks
+    string(REPLACE "(" "\\\\(" _esc "${_esc}")
+    string(REPLACE ")" "\\\\)" _esc "${_esc}")
+    string(REPLACE "+" "\\\\+" _esc "${_esc}")
+    string(REPLACE "." "\\\\." _esc "${_esc}")
+    string(REPLACE "*" "\\\\*" _esc "${_esc}")
+    string(REPLACE "?" "\\\\?" _esc "${_esc}")
+    string(REPLACE "|" "\\\\|" _esc "${_esc}")
+    string(REPLACE "^" "\\\\^" _esc "${_esc}")
+    string(REPLACE "$" "\\\\$" _esc "${_esc}")
+    # (The [ literal is built from _bs2: its replacement must be two
+    # backslashes plus a literal [, and the bracket has to survive the
+    # edit tooling intact.)
+    set(_bs2 "\\\\")
+    string(REPLACE "[" "${_bs2}[" _esc "${_esc}")
+    string(REPLACE "]" "\\\\]" _esc "${_esc}")
+    string(REPLACE "{" "\\\\{" _esc "${_esc}")
+    string(REPLACE "}" "\\\\}" _esc "${_esc}")
+    string(APPEND CHECKS
       "if(NOT _text MATCHES \"${_esc}\")\n"
       "  string(APPEND _problems \"output missing '<${_esc}'>; \")\n"
       "endif()\n")
