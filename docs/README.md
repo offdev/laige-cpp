@@ -1,9 +1,11 @@
 # Laige documentation
 
-Documentation index and navigation (DOC-001). The engine is at **M0**
-(foundations): `laige-core` is the only populated module. Every section
-of the AGENTS §13 `docs/` tree exists; each entry below links what is
-written and the "not yet written" section marks what is still to land.
+Documentation index and navigation (DOC-001). The engine is at **M1**
+(heartbeat): `laige-core` holds the M0 foundations, and `laige-sim`
+has started (M1-ECS-01: the entity handle and world entity storage).
+Every section of the AGENTS §13 `docs/` tree exists; each entry below
+links what is written and the "not yet written" section marks what is
+still to land.
 
 ## Getting started
 
@@ -24,6 +26,9 @@ written and the "not yet written" section marks what is still to land.
 
 ## API contracts (per public header)
 
+- [Entity handle and world entity storage](api/entity.md) —
+  `laige::Entity` (32-bit id+generation handle) and `laige::World`
+  entity storage (M1-ECS-01; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,
@@ -104,9 +109,10 @@ written and the "not yet written" section marks what is still to land.
   with M0-EXIT-01.
 - `compatibility/` — no persistent data formats or migration guides yet
   (they land with M1 replay and M6/M7 networking).
-- Per-module API docs for the M1+ modules (`laige-sim`, `laige-render`,
+- Per-module API docs for the remaining M1+ modules (`laige-render`,
   `laige-assets`, `laige-net`, `laige-server`, `laige-script`,
-  `laige-editor`) — they land with their modules.
+  `laige-editor`) — they land with their modules. (`laige-sim` has its
+  first doc: [entity.md](api/entity.md).)
 
 ## Related
 
