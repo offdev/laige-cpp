@@ -161,15 +161,24 @@ function(laige_add_api_test name expect_exit root mode file)
   # Space-separated quoted list (semicolon lists confuse the CMake
   # script lexer in generated files — verified on CMake 4.4.3).
   set(_cmd "\"--root\" \"${root}\" \"--${mode}\" \"${file}\"")
-  set(_checks "")
+  # The template's @CHECKS@ placeholder is substituted from this variable,
+  # so it must be named exactly CHECKS (a misspelled local like _checks
+  # silently expands to nothing and the fragment checks never exist).
+  set(CHECKS "")
   foreach(_needle IN LISTS ARGN)
+    # The generated script is itself a CMake file, and its string literals
+    # strip one level of backslashes on parse (\\ -> \, \X -> X), so each
+    # regex escape must reach the file DOUBLED: \\( in the file becomes \(
+    # for the regex engine (a single \X would be stripped and the bare
+    # metacharacter would reach the regex).
+    set(_bs2 "\\\\")
     string(REPLACE "\\" "\\\\" _esc "${_needle}")
     string(REPLACE "\"" "\\\"" _esc "${_esc}")
-    string(REPLACE "(" "\\(" _esc "${_esc}")
-    string(REPLACE ")" "\\)" _esc "${_esc}")
-    string(REPLACE "+" "\\+" _esc "${_esc}")
-    string(REPLACE "." "\\." _esc "${_esc}")
-    string(APPEND _checks
+    string(REPLACE "(" "${_bs2}(" _esc "${_esc}")
+    string(REPLACE ")" "${_bs2})" _esc "${_esc}")
+    string(REPLACE "+" "${_bs2}+" _esc "${_esc}")
+    string(REPLACE "." "${_bs2}." _esc "${_esc}")
+    string(APPEND CHECKS
       "if(NOT _text MATCHES \"${_esc}\")\n"
       "  string(APPEND _problems \"output missing '<${_esc}'>; \")\n"
       "endif()\n")
