@@ -52,6 +52,7 @@ through the batcher (S-5); the unsafe draw path does not exist yet (M4-UNSAFE-01
   - **Depends:** M2-GL-01
   - **Scope:**
     - Render thread running the frame pipeline: (cull/batch → submit); frame descriptor handed off from the main/sim thread through a lock-free single-slot handoff (one consumer, one producer; document the synchronization argument per CONC-002).
+    - Windowed clock: vsync-paced frame clock providing `render_time` to the presentation/interpolation path (M1-LOOP-02); replaces the M1 headless monotonic clock (M1-LOOP-01).
     - Ordered shutdown: render thread joins on engine shutdown (CONC-006), idempotent.
     - Backpressure: if the render thread lags > 1 frame, drop the older frame (log event, rate-limited) — never queue unboundedly (PERF-008).
     - Integration test: 3000 frames headless (offscreen), no deadlock (TSan job), drop path exercised with an artificially slowed submit.

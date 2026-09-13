@@ -21,7 +21,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Depends:** M0-CORE-05
   - **Scope:**
     - `laige::Entity`: 32-bit handle = entity id + generation; `laige::World` entity storage (create/destroy, pool-backed, no per-op heap).
-    - Stale-handle detection in debug builds (use-after-free via stale handle asserts loudly); in release the handle is inert.
+    - Stale-handle detection in debug builds (use-after-free via stale handle asserts loudly); in release, stale-handle access returns `Status` (`InvalidArgument`) + warn-once — never silent (FR-12.3; M0-CORE-05 `Pool` precedent).
     - Entity capacity is a config value (scene budget, G-R3); overflow → `Status`.
     - Unit tests: reuse after destroy bumps generation; stale access detected; capacity limit honored.
   - **Verify:** `ctest -R entity` green under ASan; debug stale-handle test asserts.
@@ -66,7 +66,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Scope:**
     - Documented iteration contract: archetypes in registration order; entities within an archetype in id order (dense id order survives moves via a documented scheme).
     - No unordered containers in the iteration path (banned in sim hot paths); the one internal hash structure (entity→archetype) uses deterministic hash + never iterated directly.
-    - Property test: two worlds built with interleaved create/destroy orders but identical final state iterate identically.
+    - Property test: two worlds whose operation sequences interleave create/destroy differently but converge on the identical final state — including the entity→id assignment — iterate identically; the test also exercises component moves (add/remove) to pin the dense-id-order scheme.
   - **Verify:** `ctest -R iter_order` green (property test with fixed PRNG seed).
   - **Size:** ~100 lines + tests
 
@@ -132,7 +132,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Scope:**
     - Accumulator loop: sim advances in integer ticks; render/presentation cadence decoupled.
     - Config: tick rate (20–120 Hz validated), max catch-up ticks per frame (documented default); overload behavior: exceed catch-up → drop ticks with a **structured log event** (count + dropped amount), never silently.
-    - Headless clock source (monotonic clock) now; windowed clock arrives with M2.
+    - Headless clock source (monotonic clock) now; windowed clock arrives with M2 (M2-GL-02).
     - Unit tests: fixed 60 Hz over a synthetic 10 s clock → exact tick count; overload path drops exactly the documented amount and logs once per episode (rate-limited).
   - **Verify:** `ctest -R game_loop` green.
   - **Size:** ~200 lines + tests
@@ -150,7 +150,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 - [ ] **M1-HEAD-01 · Headless engine run**
   - **Refs:** FR-1.6, ARCH-003, AC-6.2
-  - **Depends:** M1-LOOP-02, M0-CORE-07
+  - **Depends:** M1-LOOP-02, M1-CFG-01, M0-CORE-07
   - **Scope:**
     - `Engine` object: config (JSON) → world → systems → loop; `run_headless(frame_budget_ticks)` starts, ticks, shuts down cleanly (CONC-006 ordered shutdown: systems → world → pools → logging flush).
     - `laige-run` binary: `laige-run --headless config.json [--ticks N] [--replay log]` (replay flag lands with M1-DET-02; stub now).
@@ -163,21 +163,22 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 - [ ] **M1-DET-01 · Deterministic mode + sim math rules**
   - **Refs:** FR-1.4, S-7, PRD §10.3; AGENTS ARCH-010
-  - **Depends:** M0-DEC-02, M0-CORE-03, M0-CORE-04, M1-ECS-05
+  - **Depends:** M0-DEC-02, M0-CORE-03, M0-CORE-04, M0-CORE-06, M1-SYS-01, M1-ECS-05
   - **Scope:**
-    - `EngineConfig.deterministic: bool` (default true): when on, sim code must use engine math ops / `fpx16_16` only — enforced by trait check on components used in deterministic systems (G-R8: compile error; document the trait mechanism) and by a lint test asserting no `unordered_*`/raw float ops in sim translation units.
+    - `EngineConfig.determinism`: `{enabled: bool, default true; math: "fixed_point_16_16" | "float_pinned_32"}` (schema owned by M1-CFG-01; ADR 0002). When enabled, sim code must use engine math ops (SimMath) only — raw `float`/`double` outside SimMath is a compile-time error (G-R8, S-7), enforced by: (a) a compile-time trait constraint on components used in deterministic systems (member types must be SimMath-registered or integer; document the trait mechanism), and (b) a deterministic source scan over sim translation units in CI banning raw `float`/`double` and `unordered_*` (in the style of `tools/laige-include-lint`; false-positive policy documented).
     - PRNG substreams wired: each system gets a derived substream from (seed, system id) — seed is part of config and replay.
     - Docs: `docs/concepts/determinism.md` stating the promised scope per ADR 0002 (CORE-001/ARCH-010).
     - Tests: a trivial moving-entity sim produces identical per-tick hashes on two sequential runs (same build) — the cross-target check is M1-DET-04.
-  - **Verify:** `ctest -R determinism_mode` green; determinism doc published; trait-check compiles-fail test (compile-check test) passes.
+  - **Verify:** `ctest -R determinism_mode` green; determinism doc published; trait-check compiles-fail test (compile-check test) passes; sim-TU source scan green in CI.
   - **Size:** ~250 lines + tests
 
 - [ ] **M1-DET-02 · Replay recorder**
   - **Refs:** FR-1.4, FR-11.3; PRD Appendix A (replay = input log + seed)
   - **Depends:** M1-DET-01, M0-CORE-01
   - **Scope:**
-    - Replay log format (versioned, ARCH-007): header (format version, seed, tick rate, component schema hash) + per-tick input frames (input data shape lands with M3-INPUT-03; for now the frame is an opaque byte blob + length).
+    - Replay log format (versioned, ARCH-007): header (format version, seed, tick rate, component schema hash, math backend id, config hash — replay identity per ADR 0002) + per-tick input frames (input data shape lands with M3-INPUT-03; for now the frame is an opaque byte blob + length).
     - `ReplayRecorder`: every debug run can record (opt-in flag); writes atomically (temp+rename), bounded size, no unbounded growth (file size cap → error).
+    - `laige-run --replay <path>` wired (fulfills the M1-HEAD-01 stub): opt-in recording of the current run in the format above; debug builds only; record failure → `Status`.
     - Round-trip test: record N ticks → parse back → identical bytes.
   - **Verify:** `ctest -R replay_record` green; malformed log file (truncated, bad version) → `Status` error, never crash.
   - **Size:** ~200 lines + tests
@@ -192,13 +193,14 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R replay_replay` green; perturbed baseline makes `laige-replay --expect` fail at the correct tick with an actionable report.
   - **Size:** ~250 lines + tests
 
-- [ ] **M1-DET-04 · Bit-exactness CI (two builds / two compilers)**
+- [ ] **M1-DET-04 · Bit-exactness CI (all P0 OS jobs, both SimMath backends)**
   - **Refs:** FR-1.4, NFR-8.3, FR-11.5; PRD §14 (determinism every merge)
-  - **Depends:** M1-DET-03, M0-TOOL-02
+  - **Depends:** M1-DET-03, M1-SAMPLE-01, M0-TOOL-02
   - **Scope:**
-    - Activate `laige-detcheck` with a real scenario: run the M1-SAMPLE-01 hello scenario in Debug+ASan and Release builds (and, on Linux, g++ and clang++ builds) and assert per-tick hash identity.
+    - Activate `laige-detcheck` with a real scenario: commit a baseline per-tick hash stream of the M1-SAMPLE-01 hello scenario (reference build: canonical Debug g++); every P0 OS CI job (linux-gcc, linux-clang, windows-msvc, macos-arm64, macos-intel) runs the scenario headless and asserts per-tick identity against the baseline (`laige-replay --expect`); `laige-detcheck --run-a/--run-b` additionally pairs the two Linux compiler builds and the Debug+ASan vs Release configurations.
+    - `fp32_pinned` backend: same matrix; per-platform support list generated from the detcheck results (desyncing pairs declared unsupported — ADR 0002).
     - CI job wired per PRD §14 cadence (every merge); result recorded in `docs/benchmarks/` as a determinism report (scope stated per ARCH-010).
-  - **Verify:** determinism CI job green on a merge; intentionally breaking a float op in a scratch system makes the job fail (then revert).
+  - **Verify:** determinism CI job green on a merge across all P0 OS jobs (both backends); an intentional perturbation (a changed SimMath constant in a scratch system) makes the job fail (then revert).
   - **Size:** CI wiring + ~100 lines
 
 - [ ] **M1-DET-05 · Replay diff tool**
@@ -206,7 +208,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Depends:** M1-DET-03
   - **Scope:**
     - `laige-replay --diff <logA> <logB>`: replays both, aligns by tick, reports first divergent tick + the diffed state components (bounded report, not a full dump).
-    - Used by the editor replay viewer later (M5-ED-14); for now CLI + structured output (machine-readable optional section).
+    - Used by the editor replay viewer later (M5-ED-15); for now CLI + structured output (machine-readable optional section).
     - Integration test: two replays differing at tick 37 report tick 37 and the diverging component.
   - **Verify:** `ctest -R replay_diff` green; diff output format tested.
   - **Size:** ~150 lines + tests
@@ -217,7 +219,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Refs:** FR-1.5; PRD §7.1
   - **Depends:** M0-CORE-07, M1-LOOP-01
   - **Scope:**
-    - `config.json` schema (versioned, documented in `docs/api/config.md`): tick rate (20–120), budgets (per-system defaults, scene entity budget, draw/particle budgets as *declared* values even before their consumers exist), camera defaults (values stored; consumed in M2), asset roots.
+    - `config.json` schema (versioned, documented in `docs/api/config.md`): tick rate (20–120), budgets (per-system defaults, scene entity budget, draw/particle budgets as *declared* values even before their consumers exist), camera defaults (values stored; consumed in M2), asset roots, `determinism` (`{enabled: bool, math: "fixed_point_16_16" | "float_pinned_32"}` — ADR 0002; consumed by M1-DET-01).
     - Loading: missing file → error; unknown keys → warn (forward-compat); version mismatch → explicit reject (ARCH-007).
     - Runtime overrides: `EngineConfig` merge API (programmatic override of a subset); hot-reload of **non-simulation** keys in debug only (file watch; sim-affecting keys require restart — documented, FR-1.5).
     - Unit tests: full valid config; each invalid case (bad tick rate, unknown key, bad version, truncated file) → the documented error.
@@ -248,7 +250,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 - [ ] **M1-ALLOC-01 · Zero sim-loop allocation assertion (G-R1)**
   - **Refs:** PRD §9.3 G-R1, §8.1 (0 per frame in sim); PERF-003
-  - **Depends:** M1-PROF-01, M1-ECS-03
+  - **Depends:** M1-PROF-01, M1-ECS-03, M1-ECS-07, M1-LOOP-01
   - **Scope:**
     - Debug allocation counter hooking the engine allocators (core allocator + pools) around the sim tick; after each tick in debug: allocs > 0 → assert with the offending allocation's call site (actionable, FR-12.3).
     - Release behavior: pool overflow → logged degradation (already via pool accounting); no crash.
@@ -263,10 +265,10 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Refs:** PRD §8.1 (≤ 3.0 ms avg, ≤ 5 ms p99), §15 M1 exit
   - **Depends:** M1-ALLOC-01, M1-PROF-01
   - **Scope:**
-    - `laige-bench --suite=sim-tick`: representative workload — 10k entities, 2k with a `Position2D`, a handful of systems (movement, hash), 60 Hz, N=3000 ticks warm-up excluded, sample count per AGENTS §12.
+    - `laige-bench --suite=sim-tick`: representative workload — 10k entities, 2k with a `Position2D`, a handful of systems (movement, hash), 60 Hz, N=3000 ticks warm-up excluded, sample count per AGENTS §12; run on both SimMath backends (`fpx16_16`, `fp32_pinned`) — both must meet the targets (ADR 0002).
     - Report written to `docs/benchmarks/baselines/m1-sim-tick.md` with full metadata (hardware, OS, compiler, flags, build type, workload).
-    - Budget entry `sim_tick_10k` in `budgets.json` bound to the PRD targets; CI perf lane runs the subset per PRD §14.
-  - **Verify:** `laige-bench --suite=sim-tick` avg ≤ 3.0 ms and p99 ≤ 5 ms on the CI reference machine (if local machine differs, record measured value + CI is the gate); baseline file exists.
+    - Update `measured` on the existing `sim_tick_avg`/`sim_tick_p99` entries in `budgets.json`; the baseline records that M1 measures the ECS-only slice of their §8.1 workload (2k dynamic bodies land in M3); CI perf lane runs the subset per PRD §14.
+  - **Verify:** `laige-bench --suite=sim-tick` avg ≤ 3.0 ms and p99 ≤ 5 ms on both backends on the CI reference machine (if local machine differs, record measured value + CI is the gate); baseline file exists.
   - **Size:** ~200 lines + baseline doc
 
 - [ ] **M1-SAMPLE-01 · `hello.laige` (headless template)**
@@ -274,9 +276,9 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Depends:** M1-HEAD-01, M1-DET-03
   - **Scope:**
     - `samples/hello/`: `hello.laige` project (manifest + `config.json` + one game source) — one component (`PlayerPos`), one system (moves it by a constant velocity per tick, wrapped in a bounded box), deterministic, records its own replay when `--replay` is passed.
-    - **≤ 100 lines of game code**, heavily commented (canonical pattern for AI agents, NFR-13.5).
+    - **< 100 lines of game code** (PRD §9.4), heavily commented (canonical pattern for AI agents, NFR-13.5).
     - Built and run in CI (headless, 300 ticks, replay recorded + replayed + hash-compared — this is the scenario behind M1-DET-04).
-  - **Verify:** CI builds `hello`, runs it, and its replay is bit-exact; game-code line count ≤ 100 (checked in CI).
+  - **Verify:** CI builds `hello`, runs it, and its replay is bit-exact; game-code line count < 100 (checked in CI, PRD §9.4).
   - **Size:** ~120 lines (sample + wiring)
 
 ## Milestone gate
@@ -285,7 +287,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Refs:** PRD §15 M1 exit criteria
   - **Depends:** all other M1 steps
   - **Scope:**
-    - Confirm and record: (1) `sim-tick` budget green (link report), (2) replay bit-exact on CI incl. two-compiler job (link run), (3) zero-alloc assertion green on the 10k workload (link test log).
+    - Confirm and record: (1) `sim-tick` budget green on both SimMath backends (link report), (2) replay bit-exact on CI across all P0 OS jobs and both backends (link run), (3) zero-alloc assertion green on the 10k workload (link test log).
     - Update Progress Board; note any deferred P1 items (there should be none in M1 — everything here is P0).
   - **Verify:** all three evidence links present; no open M1 step.
   - **Size:** docs only
