@@ -965,7 +965,11 @@ No rendering, no physics, no networking yet — `laige-core` only.
     `docs/api/budget_harness.md` (referenced, not duplicated);
     (e) no build/test impact (docs only) — the existing `build` tree
     re-ran `ctest` 32/32 green, and the full P0 CI lane runs on this
-    step's PR (`ci-pull.yml`).
+    step's PR (`ci-pull.yml`). CI observed 2026-09-13 via the GitHub
+    API: `ci-pull.yml` run 34749554015 on PR #14 — all 7 executed jobs
+    green (linux-gcc, linux-clang, linux-asan+UBSan, linux-tsan,
+    include-lint, api-manifest, detcheck); macOS/Windows skipped
+    (label-gated, PRD §14 cadence).
   - **Size:** ~420 lines of docs (7 new files: `methodology.md` 159,
     four section indexes 18–47, `benchmarks/README.md` 22,
     `baselines/README.md` 20; updated: `docs/README.md` 118,
