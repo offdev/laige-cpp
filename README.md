@@ -57,7 +57,7 @@ The AI-relevant hardware the model runs on:
 | `tests/` | Unit/integration tests, mirroring the `src/` module layout |
 | `tools/` | Engine tools and CI scripts (fuzz runner, API manifest, determinism checker, lints) |
 | `samples/` | Reference game projects (flagship isometric ARPG, platformer, lockstep arena, MMO demo zone) |
-| `docs/` | Documentation; [decision index](docs/decisions/README.md) (full structure lands in M0-DOC-01) |
+| `docs/` | Documentation; [index](docs/README.md) (full AGENTS §13 structure — getting started, concepts, API, guides, debugging, benchmarks, decisions, compatibility, testing) |
 
 ## Building
 
@@ -109,4 +109,6 @@ benchmark command `./build/bin/laige-bench --suite=<name>`). The test
 - [AGENTS.md](AGENTS.md) — engineering contract (normative)
 - [Roadmap](roadmap/README.md) — implementation checklist, progress board,
   canonical commands
-- [Architecture decisions](docs/decisions/README.md) — ADRs 0001–0003
+- [Documentation index](docs/README.md) — getting started, concepts, API
+  contracts, guides, debugging, benchmarks, compatibility, testing
+- [Architecture decisions](docs/decisions/README.md) — ADRs 0001–0004

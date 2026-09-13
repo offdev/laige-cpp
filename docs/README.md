@@ -1,16 +1,26 @@
 # Laige documentation
 
 Documentation index and navigation (DOC-001). The engine is at **M0**
-(foundations): `laige-core` is the only populated module, and the
-sections below mark what exists and what is still to land.
+(foundations): `laige-core` is the only populated module. Every section
+of the AGENTS §13 `docs/` tree exists; each entry below links what is
+written and the "not yet written" section marks what is still to land.
 
-## Build & tools
+## Getting started
 
-- [Building Laige](getting-started/building.md) — the source of truth for
-  the canonical build commands, build trees, options, compiler policy
-  (NFR-8.10), sanitizer builds (NFR-8.2), and the current M0 status.
-  Tool commands: `laige-fuzz`, `laige-bench`, `laige-detcheck`, the
-  `laige-api` manifest target, and the include-graph lint.
+- [Building Laige](getting-started/building.md) — the source of truth
+  for the canonical build commands, build trees, options, compiler
+  policy (NFR-8.10), sanitizer builds (NFR-8.2), and the current M0
+  status. Tool commands: `laige-fuzz`, `laige-bench`, `laige-detcheck`,
+  the `laige-api` manifest target, and the include-graph lint.
+
+## Concepts
+
+- [Concepts index](concepts/README.md) — architecture, coordinates
+  (ARCH-008), lifecycle, threading, and determinism scope. **Not yet
+  written** (M0 is foundations only); the index names each planned
+  document and its interim home today (the `Vec2`/`Vec3` comments in
+  `src/laige-core/include/laige/sim_math.h`, ADR 0002, the per-API
+  contracts).
 
 ## API contracts (per public header)
 
@@ -28,11 +38,50 @@ sections below mark what exists and what is still to land.
 - [Budget harness](api/budget_harness.md) — `Histogram`, `TimeIt`,
   `budgetCheck`, the AGENTS §12 report format, and the `budgets.json`
   schema (M0-CORE-08).
-- [PRNG](api/prng.md) — `laige::Prng`: the splitmix64/LCG64 hybrid,
-  period, and determinism contract (M0-CORE-06).
+- [PRNG](api/prng.md) — `laige::Prng`: xorshift128+ with splitmix64
+  seeding, substreams, period, and the determinism contract
+  (M0-CORE-06).
 - [Determinism checker](api/detcheck.md) — the `laige-detcheck` tool and
   the scenario hash-line contract (`<tick> <hash>` lines, two build
   configurations) (M0-TOOL-02).
+
+## Guides
+
+- [Guides index](guides/README.md) — task-oriented usage and
+  optimization guides. **None yet**: they land with their milestones
+  (first headless project and determinism/replay in M1, profiling in
+  M1, rendering in M2, MMO server setup in M6/M7).
+
+## Debugging
+
+- [Debugging index](debugging/README.md) — what is usable today
+  (structured logging, the budget harness, `laige-detcheck`, sanitizer
+  builds, test seeds). The in-engine debug mode (AGENTS §15) lands with
+  the profiling work (M1-PROF-01, M2-PROF-01).
+
+## Benchmarks
+
+- [Benchmarks index](benchmarks/README.md) — methodology, baselines,
+  results, and the regression policy.
+- [Benchmark methodology](benchmarks/methodology.md) — the AGENTS §12
+  report fields, the `budgets.json` field mapping, the baseline-file
+  convention, and the PRD §8.1 regression policy (M0-DOC-01).
+- [Baselines](benchmarks/baselines/README.md) — recorded baseline
+  reports. **Empty so far** (all `budgets.json` entries have
+  `measured: 0`); the first, `m0-synthetic.md`, lands with M0-EXIT-01.
+
+## Architecture decisions (ADRs)
+
+- [ADR index](decisions/README.md) — 0001 (name and license), 0002
+  (deterministic math), 0003 (config JSON), 0004 (GoogleTest
+  vendoring).
+
+## Compatibility
+
+- [Compatibility](compatibility/README.md) — P0 platforms and
+  compilers (PRD §6; the CI matrix), the current machine-readable
+  formats (`budgets.json`, `laige-api.json`, `deps.lock`), and the
+  migration-guide status (none yet — pre-1.0, no breaking changes).
 
 ## Testing
 
@@ -42,33 +91,28 @@ sections below mark what exists and what is still to land.
   lane semantics, and the seed-handling convention for randomized tests
   (M0-TEST-01).
 
-## Architecture decisions (ADRs)
-
-- [ADR index](decisions/README.md) — 0001 (name and license), 0002
-  (deterministic math), 0003 (config JSON), 0004 (GoogleTest
-  vendoring).
-
 ## Not yet written (honest status)
 
-- `concepts/` — architecture, coordinates (ARCH-008; lands as
-  `docs/concepts/coordinates.md` with M0-DOC-02 — until then the
-  coordinate system is documented in the `Vec2`/`Vec3` comments of
-  `src/laige-core/include/laige/sim_math.h`), lifecycle, threading.
-- `guides/` — task-oriented usage (first game, profiling, determinism).
-- `debugging/` — debug mode (AGENTS §15 lands in M3), logging in
-  production, troubleshooting.
-- `benchmarks/` — method, baselines, and the regression policy
-  (the harness exists — `laige-bench`, M0-CORE-08 — but the recorded
-  baselines land with M1 workloads).
-- `compatibility/` — platform/compilers/formats matrix (the P0 matrix
-  is in [building.md](getting-started/building.md) for now).
+- `concepts/` — the architecture, coordinates, lifecycle, threading, and
+  determinism concept documents (the [index](concepts/README.md) names
+  each and its interim home).
+- `guides/` — task-oriented usage (first game, profiling, determinism)
+  — see the [index](guides/README.md).
+- `debugging/` — the in-engine debug mode (AGENTS §15; profiling
+  foundations land in M1, render observability in M2).
+- `benchmarks/baselines/` — no measured baselines yet; the first lands
+  with M0-EXIT-01.
+- `compatibility/` — no persistent data formats or migration guides yet
+  (they land with M1 replay and M6/M7 networking).
 - Per-module API docs for the M1+ modules (`laige-sim`, `laige-render`,
   `laige-assets`, `laige-net`, `laige-server`, `laige-script`,
   `laige-editor`) — they land with their modules.
 
 ## Related
 
-- [Roadmap index](../roadmap/README.md) — the M0/M1/... step plan;
+- [Roadmap index](../roadmap/README.md) — the M0/M1/… step plan,
+  progress board, and change log;
   [M0 foundations](../roadmap/M0-foundations.md) is the current
   milestone.
 - `AGENTS.md` — the engineering contract this documentation implements.
+- `PRD.md` — the product requirements.
