@@ -2,7 +2,8 @@
 
 Documentation index and navigation (DOC-001). The engine is at **M1**
 (heartbeat): `laige-core` holds the M0 foundations, and `laige-sim`
-has started (M1-ECS-01: the entity handle and world entity storage).
+has started (M1-ECS-01: the entity handle and world entity storage;
+M1-ECS-02: the component type registry).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -29,6 +30,9 @@ still to land.
 - [Entity handle and world entity storage](api/entity.md) —
   `laige::Entity` (32-bit id+generation handle) and `laige::World`
   entity storage (M1-ECS-01; `laige-sim`).
+- [Component type registry](api/component_registry.md) —
+  `ComponentTypeId`, `LAIGE_COMPONENT`, `World::registerComponent<T>`
+  (M1-ECS-02; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,

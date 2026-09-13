@@ -38,12 +38,15 @@ World::World(World&& other) noexcept
       alive_(std::move(other.alive_)),
       freeStack_(std::move(other.freeStack_)),
       freeCount_(other.freeCount_), inUse_(other.inUse_),
-      peakInUse_(other.peakInUse_), totalCreated_(other.totalCreated_) {
+      peakInUse_(other.peakInUse_), totalCreated_(other.totalCreated_),
+      components_(std::move(other.components_)),
+      componentCount_(other.componentCount_) {
   other.capacity_ = 0;
   other.freeCount_ = 0;
   other.inUse_ = 0;
   other.peakInUse_ = 0;
   other.totalCreated_ = 0;
+  other.componentCount_ = 0;
 }
 
 World& World::operator=(World&& other) noexcept {
@@ -57,11 +60,14 @@ World& World::operator=(World&& other) noexcept {
   inUse_ = other.inUse_;
   peakInUse_ = other.peakInUse_;
   totalCreated_ = other.totalCreated_;
+  components_ = std::move(other.components_);
+  componentCount_ = other.componentCount_;
   other.capacity_ = 0;
   other.freeCount_ = 0;
   other.inUse_ = 0;
   other.peakInUse_ = 0;
   other.totalCreated_ = 0;
+  other.componentCount_ = 0;
   return *this;
 }
 
@@ -73,6 +79,10 @@ Result<World, ErrorCode> World::create(Options options) noexcept {
   }
   World w;
   w.capacity_ = options.capacity;
+  // Component registry table (M1-ECS-02): the fixed engine-level
+  // budget (kMaxComponentTypes), a setup-path allocation like the
+  // entity tables below.
+  w.components_ = std::make_unique<detail::ComponentRecord[]>(kMaxComponentTypes);
   if (w.capacity_ > 0) {
     // Backing allocations for the whole storage (setup path,
     // PERF-002): the per-slot generation table, the per-slot alive
@@ -154,6 +164,20 @@ void World::clear() noexcept {
 std::uint32_t World::capacity() const noexcept { return capacity_; }
 
 std::uint32_t World::entityCount() const noexcept { return inUse_; }
+
+std::uint32_t World::componentCount() const noexcept {
+  return componentCount_;
+}
+
+Result<ComponentInfo, ErrorCode> World::componentInfo(ComponentTypeId id) const noexcept {
+  // Ids are dense from 1, so a valid registered id is exactly the
+  // range [1, componentCount_] (M1-ECS-02; component.h contract).
+  if (id.value == 0 || id.value > componentCount_ || components_ == nullptr) {
+    return ErrorCode::InvalidArgument;
+  }
+  const detail::ComponentRecord& rec = components_[id.value - 1];
+  return ComponentInfo{rec.size, rec.alignment};
+}
 
 EntityStats World::stats() const noexcept {
   return EntityStats{
