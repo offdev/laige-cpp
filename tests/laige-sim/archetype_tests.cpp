@@ -10,8 +10,11 @@
 //   - get<T> is O(1) (archetype lookup + column index); stale handles
 //     degrade per the M1-ECS-01 contract (nullptr + warn-once)
 //   - 10k entities x add/remove churn: zero pool overflow and constant
-//     per-op cost (measured, not assumed — CORE-001; the machine-
-//     greppable stats line lands in the ctest output)
+//     per-op cost (measured, not assumed — CORE-001): the window's
+//     total row-shift count is a seed-independent deterministic
+//     constant (a work KAT), and the window's wall time per shifted
+//     row stays within a documented floor; the machine-greppable
+//     stats lines land in the ctest output
 //   - memory layout is contiguous per column (property test) and the
 //     slot-ordered row scheme survives moves (M1-ECS-05 pins the full
 //     convergence property; the scheme is exercised here)
@@ -135,6 +138,14 @@ namespace {
 // The PRNG substream id for this file (docs/testing.md §4, M0-TEST-01).
 inline constexpr std::uint32_t kArchetypeTestsSubstreamId = 1003;
 
+// The churn window's wall-clock throughput floor: max ns per shifted
+// row (CORE-005 — the derivation and measured evidence live in the
+// ArchetypeChurn test: ~24 ns/row Linux x64 Debug (g++ -O0), ~7 ns/row
+// macOS Debug (AppleClang -O0); 200 ns is >= 8x the slowest measured,
+// and preemption noise on the shared runners spreads across the whole
+// window, so it cannot push the per-row average anywhere near this).
+inline constexpr double kChurnMaxNsPerRowShifted = 200.0;
+
 // One world, taken out of its Result (Result::value() is const;
 // takeValue() && moves the storage out — the documented
 // ownership-transfer path, result.h).
@@ -150,39 +161,46 @@ laige::World makeWorld(std::uint32_t capacity) {
 
 // Register ArchBulk<Lo> .. ArchBulk<Hi-1>; false on the first failure.
 // Compile-time recursion over the non-type parameter (test setup
-// code, not a hot path).
+// code, not a hot path). The explicit else (not a trailing return) keeps
+// MSVC /WX clean: in the Lo < Hi instantiations the trailing return would
+// be unreachable (C4702), while a discarded else branch is never emitted.
 template <int Lo, int Hi>
 bool registerRange(laige::World& world) {
   if constexpr (Lo < Hi) {
     auto r = world.registerComponent<ArchBulk<Lo>>();
     if (!r.ok()) return false;
     return registerRange<Lo + 1, Hi>(world);
+  } else {
+    return true;
   }
-  return true;
 }
 
 // Add ArchBulk<i> to entities[i] for i in [Lo, Hi) — compile-time
 // recursion over the non-type parameter (a runtime loop cannot form
-// the template argument). Test setup code, not a hot path.
+// the template argument). Test setup code, not a hot path. (The explicit
+// else keeps MSVC /WX clean — see registerRange above.)
 template <int Lo, int Hi>
 bool addRange(laige::World& world, const std::vector<laige::Entity>& entities) {
   if constexpr (Lo < Hi) {
     auto r = world.addComponent<ArchBulk<Lo>>(entities[Lo], ArchBulk<Lo>{Lo});
     if (!r.ok()) return false;
     return addRange<Lo + 1, Hi>(world, entities);
+  } else {
+    return true;
   }
-  return true;
 }
 
-// Add ArchBulk<i> to one entity for i in [Lo, Hi).
+// Add ArchBulk<i> to one entity for i in [Lo, Hi). (The explicit else
+// keeps MSVC /WX clean — see registerRange above.)
 template <int Lo, int Hi>
 bool addBulkRange(laige::World& world, laige::Entity entity) {
   if constexpr (Lo < Hi) {
     auto r = world.addComponent<ArchBulk<Lo>>(entity, ArchBulk<Lo>{Lo});
     if (!r.ok()) return false;
     return addBulkRange<Lo + 1, Hi>(world, entity);
+  } else {
+    return true;
   }
-  return true;
 }
 
 // The aligned address of a pointer, for the alignment property checks.
@@ -919,6 +937,7 @@ TEST(ArchetypeChurn, TenKEntitiesAddRemoveChurnZeroAllocAndFlatCost) {
 
   laige::Histogram hist(laige::Histogram::Options{kEntities * 2});
   laige::TimeIt timer;
+  laige::TimeIt windowTimer;  // the whole measured window (throughput KAT)
 #if defined(LAIGE_ALLOC_COUNTER)
   // The churn window starts here: the shuffle and the histogram setup
   // allocated above, so the reset lands between setup and the ops.
@@ -960,20 +979,59 @@ TEST(ArchetypeChurn, TenKEntitiesAddRemoveChurnZeroAllocAndFlatCost) {
   EXPECT_EQ(laige::test::allocCounter(), 0u);
 #endif
 
-  // Constant per-op cost (CORE-001: measured, not assumed): the
-  // distribution over the full cost range is flat — p99 within 3x
-  // the median (no spike beyond the documented O(tail * row-stride)
-  // move cost, no growth event, no hidden allocation).
+  // Constant per-op cost (CORE-001: measured, not assumed). The check
+  // is platform-independent on purpose: the old wall-clock ratio
+  // (p99 < 3x p50) compared raw times across P0 platforms, which
+  // docs/benchmarks/methodology.md §6 forbids ("runs on different P0
+  // platforms are not comparable numbers") — the shared macOS CI
+  // runners' wall-clock tail alone reached ~5x the median (measured
+  // 2026-09-13: p99/p50 = 4.9 on macos-14 and macos-15 vs 1.98 on
+  // Linux), while the work done was identical on every platform.
+  //
+  // (1) Work KAT: the window's total row-shift count is a
+  // deterministic constant of the workload, SEED-INDEPENDENT. Each op
+  // moving slot s shifts exactly 2 * (kEntities - 1 - s) rows: with all
+  // slots live and partitioned between A = {Pos,Vel} and B =
+  // {Pos,Vel,Flag}, s's rank in A plus its rank in B is always s
+  // (every slot below s is live in exactly one of the two), so the
+  // add and the remove of s each shift (kEntities - 1 - s) rows.
+  // Summed over the permutation:
+  //   sum_k 2 * (kEntities - 1 - s_k)
+  //       = 2 * (kEntities * (kEntities - 1) - sum_k s_k)
+  //       = kEntities * (kEntities - 1)        (sum_k s_k = kEntities
+  //                                                  * (kEntities - 1) / 2)
+  // A regression that adds or drops O(rows) work in the move path
+  // (a hidden scan, a swap-remove rewrite, a double copy) breaks this
+  // count by a lot; no seed can, because every permutation hits the
+  // same value (verified: 99,990,000 for every seed swept).
+  const std::uint64_t rowShifts = after.totalRowShifts - before.totalRowShifts;
+  EXPECT_EQ(rowShifts, std::uint64_t(kEntities) * std::uint64_t(kEntities - 1));
+  // The window's wall time per shifted row: a platform-robust
+  // throughput floor (the "measured" half of the cost check). The
+  // window's total time absorbs the per-op timer overhead and any VM
+  // preemption spike (100 ms of deschedule over ~1e8 rows is < 1
+  // ns/row), so it is immune to the shared-runner noise that inflates
+  // raw percentiles, while still catching an order-of-magnitude
+  // per-row regression (a cache-hostile layout, per-row indirection or
+  // logging) that the row count cannot see. Measured P0 evidence
+  // (Debug, -O0): ~24 ns/row Linux x64 (g++), ~7 ns/row macOS
+  // (AppleClang); the 200 ns floor is >= 8x the slowest.
+  // elapsedMs() is milliseconds; 1 ms = 1e6 ns.
+  const double nsPerRow =
+      windowTimer.elapsedMs() * 1e6 / static_cast<double>(rowShifts);
+  EXPECT_LT(nsPerRow, kChurnMaxNsPerRowShifted);
+  // Machine-greppable stats lines for the M1 baseline record (CORE-001
+  // / AGENTS §12: the measured per-op cost and the accounted work, on
+  // every ctest run).
   const laige::HistogramStats st = hist.stats();
   ASSERT_EQ(st.n, kEntities * 2);
   EXPECT_TRUE(std::isfinite(st.mean));
   EXPECT_TRUE(std::isfinite(st.p50));
   EXPECT_TRUE(std::isfinite(st.p99));
   EXPECT_GT(st.p50, 0.0);
-  EXPECT_LT(st.p99, st.p50 * 3.0);
-  // Machine-greppable stats line for the M1 baseline record (CORE-001
-  // / AGENTS §12: the measured per-op cost, on every ctest run).
   std::printf("archetype-churn %s\n", laige::formatStatsLine(st).c_str());
+  std::printf("archetype-churn work: rows_shifted=%llu ns_per_row=%.1f\n",
+              static_cast<unsigned long long>(rowShifts), nsPerRow);
   std::fflush(stdout);
 
   // Spot-check the final state through the public API.

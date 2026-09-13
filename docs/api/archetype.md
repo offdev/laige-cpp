@@ -52,7 +52,7 @@ slot-ordered addresses).
 | `world.addComponent<T>(e, v)` | **Create-or-update**: `T` present → overwrite in place (no move); absent → move `e` to the set `current ∪ {T}`, copying the shared components into the new row. Stale handle → `InvalidArgument` + warn-once; unregistered `T` → `InvalidArgument` + warn; set would exceed 32 components → `BudgetExhausted` + warn | O(tail × row-stride) bytes moved (tail = rows at/above the insertion point); **no heap allocation** — growth is a pre-reserved, accounted, logged reserve (below) |
 | `world.removeComponent<T>(e)` | Remove `T`: no-op ok if absent; else move `e` to `current ∪ {T} \ {T}`, copying the remaining components into the new row. Same error rows as add | as add |
 | `world.archetypeCount()` | Distinct component sets created so far (archetypes are never destroyed; empty sets stay) | O(1) |
-| `world.archetypeStats()` | `ArchetypeStats` snapshot: `archetypeCount`, `rowsLive`, `rowsReserved`, `bytesReserved`, `totalAdds`, `totalRemoves`, `totalArchetypeGrowth`, `totalReservations` (the M1-PROF-01 / G-R4 feed) | O(256 × 32) cold pass, no allocation |
+| `world.archetypeStats()` | `ArchetypeStats` snapshot: `archetypeCount`, `rowsLive`, `rowsReserved`, `bytesReserved`, `totalAdds`, `totalRemoves`, `totalArchetypeGrowth`, `totalReservations`, `totalRowShifts` (the M1-PROF-01 / G-R4 feed) | O(256 × 32) cold pass, no allocation |
 
 The `World::destroy(e)` / `World::clear()` cost note now includes the
 row detach: an entity with components leaves its archetype first —
@@ -127,12 +127,25 @@ warn-once + `rate_limited` drain.
   | Debug (`-O0`) | 0.123 ms | 0.243 ms | 1.98 |
   | Release (`-O2`) | 0.0021 ms | 0.0040 ms | 1.94 |
 
-  The suite asserts the flatness (`p99 < 3 × p50`), the zero
-  reservation delta, and the zero-allocation window, and prints the
-  machine-greppable line (`archetype-churn <stats>`) to the ctest
-  output on every run — the M1 baseline record for the G-R4 feed.
-  Numbers are machine-dependent; the *shape* (flat, no spike, no
-  allocation) is the tested property.
+  The wall-clock numbers above are a recorded baseline, not a gate:
+  they are machine-dependent, and the shared macOS CI runners'
+  wall-clock tail alone reaches ~5× the median (2026-09-13 runs:
+  p99/p50 = 4.9 on macos-14/macos-15 vs 1.98 on Linux), so a raw
+  time-ratio assertion does not travel across P0 platforms
+  (methodology §6). The suite gates the *work* instead, which is
+  identical on every platform: the window's total row-shift count is
+  a seed-independent deterministic constant — each op moving slot `s`
+  shifts exactly `2 × (9999 − s)` rows (s's rank in each archetype
+  sums to `s`), so the window shifts exactly
+  `10000 × 9999 = 99,990,000` rows for *any* seed — asserted as a KAT
+  against `totalRowShifts` — plus a per-row wall-clock floor
+  (≤ 200 ns/row; measured ~24 ns/row Linux Debug, ~7 ns/row macOS
+  Debug, and VM preemption spreads across the window). The zero
+  reservation delta and the zero-allocation window are asserted too.
+  The machine-greppable lines (`archetype-churn <stats>`,
+  `archetype-churn work: rows_shifted=… ns_per_row=…`) land in the
+  ctest output on every run — the M1 baseline record for the G-R4
+  feed.
 - **Memory per entity (live, with components):** one row per archetype
   column — `Σ component sizes` bytes (8 B for a pos+vel pair) plus the
   2 B slot column slot; per-slot bookkeeping is 11 B (entity.md).
