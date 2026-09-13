@@ -886,13 +886,20 @@ int spawnScenarioWithMarkers(const std::string& exe,
     } else {
       std::wstring cmd = exeW;
       for (const std::string& a : args) cmd += L" " + quoteArg(a);
+      // Zeroed STARTUPINFO (no dwFlags): the child inherits this process's
+      // standard handles (the harness's capture). No self-created handle
+      // is involved - the kind the CI Windows runner never delivers (see
+      // above). A NULL STARTUPINFO is NOT used: the runner's CreateProcess
+      // machinery fails on it (measured in the M0-TEST-01 CI, run
+      // 34732057356: the probe's no-redirect control passes a zeroed
+      // STARTUPINFO and spawns fine, while the NULL form fails).
+      STARTUPINFOW si{};
+      si.cb = sizeof si;
       PROCESS_INFORMATION pi{};
-      // No STARTUPINFO: the child inherits this process's standard handles
-      // (the harness's capture). No self-created handle is involved - the
-      // kind the CI Windows runner never delivers (see above).
       if (!CreateProcessW(exeW.c_str(), cmd.data(), nullptr, nullptr, TRUE,
-                          0, nullptr, nullptr, nullptr, &pi)) {
-        error = "CreateProcessW failed (is the path correct?)";
+                          0, nullptr, nullptr, &si, &pi)) {
+        error = "CreateProcessW failed (lastError=" +
+                std::to_string(GetLastError()) + "): " + exe;
       } else {
         diagf("laige-detcheck: spawned run-%s child pid=%lu (inherit stdio)\n",
               label.c_str(), static_cast<unsigned long>(pi.dwProcessId));
