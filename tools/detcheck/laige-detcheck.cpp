@@ -435,54 +435,121 @@ void dumpEnvironmentDiagnostics() {
   diagf("laige-detcheck: env: %d test-wiring variables present\n", testVars);
 }
 
-// One probe launch. With redirectStdio the child's stdout and stderr each
-// go to a capture pipe (both drained); without it the child simply
-// inherits detcheck's own standard handles (no STARTUPINFO redirection —
-// the plain-inheritance control). Logs the pipe handle values, types,
-// and flags. Returns false only when the spawn itself failed (errOut).
+// Handle flag bits for the diagnostics. GetHandleInformation uses
+// HANDLE_FLAG_INHERIT = 0x1 and HANDLE_FLAG_PROTECT_FROM_CLOSE = 0x2
+// (NOT 0x80/0x100 - those values belong to no handle API).
+std::string handleBits(HANDLE h) {
+  DWORD info = 0;
+  GetHandleInformation(h, &info);
+  char b[96];
+  std::snprintf(b, sizeof b, "inherit=%d protect=%d (raw=0x%lx)",
+                (info & HANDLE_FLAG_INHERIT) ? 1 : 0,
+                (info & HANDLE_FLAG_PROTECT_FROM_CLOSE) ? 1 : 0, info);
+  return std::string(b);
+}
+
+// One probe launch. With redirectStdio the child's stdout (and usually
+// stderr) are set through STARTUPINFO; outMode selects the stdout source:
+//   0 = a fresh CreatePipe write end we drain (baseline);
+//   1 = detcheck's OWN stdout/stderr handles (kernel-assigned at process
+//      start) - the child's marker then lands in detcheck's own streams
+//      (harness-captured), so capturedOut/capturedErr stay empty;
+//   2 = a fresh CreatePipe whose write end is first re-created through
+//      DuplicateHandle(dwInheritable=TRUE) before use - tests whether a
+//      freshly duplicated inheritable handle is delivered where the
+//      original pipe handle is not.
+// Without redirectStdio the child inherits detcheck's own standard
+// handles (the plain-inheritance control). Returns false only when the
+// spawn itself failed (errOut).
 bool probeAttempt(const wchar_t* appname, std::wstring cmd,
-                  bool redirectStdio, DWORD& exitCode,
+                  bool redirectStdio, int outMode, DWORD& exitCode,
                   std::string& capturedOut, std::string& capturedErr,
                   std::string& errOut) {
   SECURITY_ATTRIBUTES sa{};
   sa.nLength = sizeof sa;
-  // Inheritable from creation (see the scenario launch for the rationale).
   sa.bInheritHandle = TRUE;
   HANDLE outR = INVALID_HANDLE_VALUE, outW = INVALID_HANDLE_VALUE;
   HANDLE errR = INVALID_HANDLE_VALUE, errW = INVALID_HANDLE_VALUE;
-  if (redirectStdio &&
-      (!CreatePipe(&outR, &outW, &sa, 0) ||
-       !CreatePipe(&errR, &errW, &sa, 0))) {
-    errOut = "CreatePipe failed (lastError=" +
-             std::to_string(GetLastError()) + ")";
-    if (outR != INVALID_HANDLE_VALUE) {
-      CloseHandle(outR);
-      CloseHandle(outW);
-    }
-    if (errR != INVALID_HANDLE_VALUE) {
-      CloseHandle(errR);
-      CloseHandle(errW);
-    }
-    return false;
-  }
+  HANDLE dupOut = INVALID_HANDLE_VALUE;
+  HANDLE outTarget = INVALID_HANDLE_VALUE;
+  bool outDrained = false, errDrained = false;
+  auto cleanup = [&]() {
+    if (outR != INVALID_HANDLE_VALUE) CloseHandle(outR);
+    if (outW != INVALID_HANDLE_VALUE) CloseHandle(outW);
+    if (dupOut != INVALID_HANDLE_VALUE) CloseHandle(dupOut);
+    if (errR != INVALID_HANDLE_VALUE) CloseHandle(errR);
+    if (errW != INVALID_HANDLE_VALUE) CloseHandle(errW);
+  };
   if (redirectStdio) {
-    SetHandleInformation(outW, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-    SetHandleInformation(errW, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-    DWORD outInfo = 0, errInfo = 0;
-    GetHandleInformation(outW, &outInfo);
-    GetHandleInformation(errW, &errInfo);
-    diagf("laige-detcheck: probe handles out r=0x%p w=0x%p type=%lu "
-          "flags=0x%lx | err r=0x%p w=0x%p type=%lu flags=0x%lx\n",
-          static_cast<void*>(outR), static_cast<void*>(outW),
-          GetFileType(outW), outInfo, static_cast<void*>(errR),
-          static_cast<void*>(errW), GetFileType(errW), errInfo);
+    if (outMode == 1) {
+      // Kernel-assigned: detcheck's own stdout; the child's stderr goes
+      // to detcheck's own stderr (both harness-captured).
+      outTarget = GetStdHandle(STD_OUTPUT_HANDLE);
+    } else {
+      if (!CreatePipe(&outR, &outW, &sa, 0)) {
+        errOut = "CreatePipe failed (lastError=" +
+                 std::to_string(GetLastError()) + ")";
+        cleanup();
+        return false;
+      }
+      outDrained = true;
+      if (outMode == 2) {
+        // Re-create the write end as a fresh inheritable duplicate.
+        if (!DuplicateHandle(GetCurrentProcess(), outW, GetCurrentProcess(),
+                             &dupOut, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+          errOut = "DuplicateHandle failed (lastError=" +
+                   std::to_string(GetLastError()) + ")";
+          cleanup();
+          return false;
+        }
+        outTarget = dupOut;
+      } else {
+        outTarget = outW;
+      }
+    }
+    if (outMode != 1 && !CreatePipe(&errR, &errW, &sa, 0)) {
+      errOut = "CreatePipe(err) failed (lastError=" +
+               std::to_string(GetLastError()) + ")";
+      cleanup();
+      return false;
+    }
+    errDrained = (outMode != 1);
+    if (outDrained) {
+      SetHandleInformation(outW, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+    }
+    if (errDrained) {
+      SetHandleInformation(errW, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+    }
+    if (outMode == 1) {
+      diagf("laige-detcheck: probe handles out=kernel-fd1 (0x%p %s) "
+            "err=kernel-fd2 (0x%p %s)\n",
+            static_cast<void*>(outTarget), handleBits(outTarget).c_str(),
+            static_cast<void*>(GetStdHandle(STD_ERROR_HANDLE)),
+            handleBits(GetStdHandle(STD_ERROR_HANDLE)).c_str());
+    } else {
+      std::string dupNote;
+      if (outMode == 2) {
+        char nb[128];
+        std::snprintf(nb, sizeof nb, " | wdup=0x%p %s",
+                      static_cast<void*>(dupOut),
+                      handleBits(dupOut).c_str());
+        dupNote = nb;
+      }
+      diagf("laige-detcheck: probe handles out r=0x%p w=0x%p type=%lu %s%s"
+            "| err r=0x%p w=0x%p type=%lu %s\n",
+            static_cast<void*>(outR), static_cast<void*>(outW),
+            GetFileType(outW), handleBits(outTarget).c_str(),
+            dupNote.c_str(), static_cast<void*>(errR),
+            static_cast<void*>(errW), GetFileType(errW),
+            handleBits(errW).c_str());
+    }
   }
   STARTUPINFOW si{};
   si.cb = sizeof si;
   si.dwFlags = redirectStdio ? STARTF_USESTDHANDLES : 0;
   if (redirectStdio) {
-    si.hStdOutput = outW;
-    si.hStdError = errW;
+    si.hStdOutput = outTarget;
+    si.hStdError = outMode == 1 ? GetStdHandle(STD_ERROR_HANDLE) : errW;
   }
   si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
   PROCESS_INFORMATION pi{};
@@ -490,19 +557,14 @@ bool probeAttempt(const wchar_t* appname, std::wstring cmd,
                        nullptr, nullptr, &si, &pi)) {
     errOut = "CreateProcessW failed (lastError=" +
              std::to_string(GetLastError()) + ")";
-    if (outR != INVALID_HANDLE_VALUE) {
-      CloseHandle(outR);
-      CloseHandle(outW);
-    }
-    if (errR != INVALID_HANDLE_VALUE) {
-      CloseHandle(errR);
-      CloseHandle(errW);
-    }
+    cleanup();
     return false;
   }
+  // The child now owns the write ends; drop our copies.
   if (outW != INVALID_HANDLE_VALUE) CloseHandle(outW);
+  if (dupOut != INVALID_HANDLE_VALUE) CloseHandle(dupOut);
   if (errW != INVALID_HANDLE_VALUE) CloseHandle(errW);
-  if (redirectStdio) {
+  if (redirectStdio && (outDrained || errDrained)) {
     auto drain = [](HANDLE r, std::string& out) {
       char buf[256];
       for (;;) {
@@ -516,8 +578,8 @@ bool probeAttempt(const wchar_t* appname, std::wstring cmd,
       }
       CloseHandle(r);
     };
-    drain(outR, capturedOut);
-    drain(errR, capturedErr);
+    if (outDrained) drain(outR, capturedOut);
+    if (errDrained) drain(errR, capturedErr);
   }
   WaitForSingleObject(pi.hProcess, INFINITE);
   exitCode = 0;
@@ -540,6 +602,16 @@ bool probeAttempt(const wchar_t* appname, std::wstring cmd,
 //   attempt 3: cmd.exe /c echo marker — the classic control.
 //   attempt 4: same helper, NO STARTUPINFO redirection — plain handle
 //              inheritance only (stdout follows detcheck's own fd1).
+//   attempt 5: same helper, STARTUPINFO with detcheck's OWN (kernel-
+//              assigned) fd1/fd2 — if this delivers while 1-3 do not,
+//              the failure is specific to handles this process created.
+//              (Success shows up as an extra PROBE_HELPER_OK line in
+//              detcheck's own stdout and an extra self-report line in
+//              its stderr; capturedOut/capturedErr stay empty by design.)
+//   attempt 6: same helper, STARTUPINFO with a fresh pipe whose write
+//              end was re-created via DuplicateHandle(dwInheritable) —
+//              tests whether a freshly duplicated inheritable handle is
+//              delivered where the original pipe handle is not.
 void probeControlSpawn() {
   // The helper lives next to us in the build bin directory.
   wchar_t mod[1024] = {};
@@ -556,21 +628,32 @@ void probeControlSpawn() {
   const std::wstring helperCmd = L"\"" + helper + L"\"";
   const std::wstring controlCmd = L"cmd.exe /c echo LAIGE_DETCHECK_CONTROL_OK";
   auto runAttempt = [&](int n, const wchar_t* app, const std::wstring& cmd,
-                         bool redirect, const char* desc) {
+                         bool redirect, int outMode, const char* desc) {
     DWORD code = 0;
     std::string out, err, why;
-    const bool ok = probeAttempt(app, cmd, redirect, code, out, err, why);
+    const bool ok = probeAttempt(app, cmd, redirect, outMode, code, out, err,
+                                 why);
     diagf("laige-detcheck: control probe attempt %d (%s): spawned=%d "
           "exit=%lu out='%s' err='%s' why=%s\n",
           n, desc, ok ? 1 : 0, static_cast<unsigned long>(code), out.c_str(),
           err.c_str(), why.c_str());
   };
   if (!helper.empty()) {
-    runAttempt(1, nullptr, helperCmd, true, "helper, cmdline path");
-    runAttempt(2, helper.c_str(), helperCmd, true, "helper, explicit app");
+    runAttempt(1, nullptr, helperCmd, true, 0, "helper, cmdline path");
+    runAttempt(2, helper.c_str(), helperCmd, true, 0, "helper, explicit app");
+    // Kernel-assigned handles through STARTUPINFO: if this one delivers
+    // while the fresh-pipe ones do not, the failure is specific to
+    // handles this process created itself.
+    runAttempt(5, nullptr, helperCmd, true, 1,
+               "helper, kernel fd1/fd2 via STARTUPINFO");
+    // Fresh pipe whose write end is re-created as an inheritable
+    // duplicate: if this delivers where the original did not, use the
+    // DuplicateHandle path for scenario capture.
+    runAttempt(6, nullptr, helperCmd, true, 2,
+               "helper, dup handle via STARTUPINFO");
   }
-  runAttempt(3, nullptr, controlCmd, true, "cmd marker");
-  runAttempt(4, nullptr, helperCmd, false, "helper, no redirect (control)");
+  runAttempt(3, nullptr, controlCmd, true, 0, "cmd marker");
+  runAttempt(4, nullptr, helperCmd, false, 0, "helper, no redirect (control)");
 }
 
 // Best-effort parent-process identification (M0-TEST-01 Windows CI
@@ -658,10 +741,10 @@ RunResult runScenario(const std::string& exe,
 
   SECURITY_ATTRIBUTES sa{};
   sa.nLength = sizeof sa;
-  // Inheritable from creation: on the CI Windows runner, a CreatePipe
-  // handle created with bInheritHandle=FALSE did not gain the INHERIT
-  // flag from a later SetHandleInformation (observed writeFlags=0x1,
-  // no 0x80), so the child never received the pipe's write end.
+  // Inheritable from creation. (CI Windows runner note: even with the
+  // INHERIT bit confirmed set on the write end, some process instances
+  // never receive the STARTUPINFO pipe in the child - the control probes
+  // log which handle kinds do deliver; see probeControlSpawn.)
   sa.bInheritHandle = TRUE;
   HANDLE readH = INVALID_HANDLE_VALUE;
   HANDLE writeH = INVALID_HANDLE_VALUE;
@@ -683,12 +766,10 @@ RunResult runScenario(const std::string& exe,
   }
   // Diagnostics (LOG-002): handle values and types, to distinguish a bad
   // handle from a bad inheritance in the no-output failure cases.
-  DWORD writeInfo = 0;
-  GetHandleInformation(writeH, &writeInfo);
   diagf("laige-detcheck: scenario handles read=0x%p write=0x%p "
-        "types=%lu/%lu writeFlags=0x%lx setInherit=%d\n",
+        "types=%lu/%lu write %s setInherit=%d\n",
         static_cast<void*>(readH), static_cast<void*>(writeH),
-        GetFileType(readH), GetFileType(writeH), writeInfo,
+        GetFileType(readH), GetFileType(writeH), handleBits(writeH).c_str(),
         setInherit ? 1 : 0);
   STARTUPINFOW si{};
   si.cb = sizeof si;
