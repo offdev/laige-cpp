@@ -919,14 +919,64 @@ No rendering, no physics, no networking yet — `laige-core` only.
     override, loud failure, substream isolation — cohesively rather
     than split)
 
-- [ ] **M0-DOC-01 · `docs/` skeleton + index**
+- [x] **M0-DOC-01 · `docs/` skeleton + index**
   - **Refs:** AGENTS §13 (DOC-001…DOC-007), PRD NFR-8.12
   - **Depends:** M0-DEC-01, M0-DEC-02, M0-DEC-03
   - **Scope:**
     - Create the full AGENTS §13 structure: `docs/README.md` (index linking every section, honest about incomplete areas), `getting-started/`, `concepts/`, `api/`, `guides/`, `debugging/`, `benchmarks/` (with an empty `baselines/`), `decisions/` (index + the three ADRs from M0-DEC), `compatibility/`.
     - `docs/benchmarks/methodology.md`: required report fields per AGENTS §12, and how budget entries in `budgets.json` map to them.
-  - **Verify:** `docs/README.md` links every section; no dead links (checked in CI or manual); the three ADRs are referenced from the decisions index.
-  - **Size:** docs only
+  - **Decision (2026-09-13):** the full AGENTS §13 `docs/` tree now
+    exists: `docs/README.md` rewritten as the single index (links every
+    section; an explicit "not yet written" list keeps the status honest
+    per DOC-001); new section indexes — `concepts/README.md` (planned
+    documents + interim homes, incl. the coordinates/ARCH-008 topic
+    documented today in the `Vec2`/`Vec3` comments of
+    `src/laige-core/include/laige/sim_math.h`), `guides/README.md`
+    (milestone mapping), `debugging/README.md` (what is usable today +
+    the AGENTS §15 debug-mode status), `compatibility/README.md`
+    (evidence-based P0 platform/compiler table per PRD §6 and the CI
+    matrix; the current machine-readable formats — `budgets.json` v1,
+    `laige-api.json` v1, `deps.lock` — and the migration status: none
+    yet, pre-1.0); `docs/benchmarks/` with `methodology.md` (normative:
+    the AGENTS §12 report-field table, the `budgets.json`
+    field→report mapping, the immutable baseline-file convention, the
+    PRD §8.1 regression policy incl. the >10% band, hard-zero budgets,
+    and `NO_SAMPLES`) and `baselines/` (README placeholder; the first
+    baseline `m0-synthetic.md` lands with M0-EXIT-01).
+    `decisions/README.md` updated (the stale "arrives with M0-DOC-01"
+    note replaced; ADRs 0001–0004 remain indexed). Stale-reference
+    housekeeping in the same change (DOC-003): root `README.md` (the
+    docs line now points to `docs/README.md`; the ADR list corrected to
+    0001–0004) and the old index's reference to a non-existent
+    "M0-DOC-02" step dropped (the coordinates topic is carried by the
+    concepts index with its interim home).
+  - **Verify:** (verified manually 2026-09-13 — the step's Verify allows
+    "checked in CI or manual" and the scope is docs-only, so no CI job
+    was added): (a) `docs/README.md` links every AGENTS §13 section —
+    getting-started, concepts, api, guides, debugging, benchmarks,
+    decisions, compatibility — plus the testing conventions and the
+    related documents; (b) repo-wide dead-link check over all 49
+    `*.md` files (104 internal links checked; stdlib-only script;
+    external URLs skipped): **zero dead links**; (c) the decisions
+    index references ADR 0001, 0002, 0003 (the three M0-DEC ADRs) and
+    0004 (M0-DEP-01); (d) the 15 `budgets.json` entries map
+    field-by-field onto the methodology's report table, and the stable
+    4-line report format stays sourced from
+    `docs/api/budget_harness.md` (referenced, not duplicated);
+    (e) no build/test impact (docs only) — the existing `build` tree
+    re-ran `ctest` 32/32 green, and the full P0 CI lane runs on this
+    step's PR (`ci-pull.yml`). CI observed 2026-09-13 via the GitHub
+    API: `ci-pull.yml` run 34749554015 on PR #14 — all 7 executed jobs
+    green (linux-gcc, linux-clang, linux-asan+UBSan, linux-tsan,
+    include-lint, api-manifest, detcheck); macOS/Windows skipped
+    (label-gated, PRD §14 cadence).
+  - **Size:** ~420 lines of docs (7 new files: `methodology.md` 159,
+    four section indexes 18–47, `benchmarks/README.md` 22,
+    `baselines/README.md` 20; updated: `docs/README.md` 118,
+    `docs/decisions/README.md`, root `README.md`) + the roadmap records
+    (over the "docs only" estimate by nature: `methodology.md` carries
+    the normative AGENTS §12 ↔ `budgets.json` mapping — cohesive, not
+    split)
 
 ## Milestone gate
 

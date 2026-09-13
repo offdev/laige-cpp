@@ -1,7 +1,9 @@
 # Architecture Decision Records
 
-Index of ADRs (AGENTS.md DOC-005). The full `docs/` structure and this index's
-expansion arrive with roadmap step **M0-DOC-01**.
+Index of ADRs (AGENTS.md DOC-005). Significant architectural choices and
+rule exceptions land here as ADRs containing context, decision,
+alternatives, evidence, consequences, and review conditions; the full
+`docs/` structure is indexed from [../README.md](../README.md).
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
