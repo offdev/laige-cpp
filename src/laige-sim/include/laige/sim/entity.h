@@ -15,8 +15,9 @@
 //            no per-operation heap (PERF-002/003, S-2; M0-CORE-05
 //            Pool precedent). M1-ECS-02 adds the component type
 //            registry (registerComponent<T>, component.h); M1-ECS-03
-//            adds the per-entity component storage on top of this
-//            slot table.
+//            adds the archetype SoA component storage on top of this
+//            slot table (archetype.h: has/get/addComponent/
+//            removeComponent + the per-slot archetype record).
 //
 // ---------------------------------------------------------------------------
 // The handle contract (FR-1.2, CPP-007)
@@ -114,12 +115,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 
 #include "laige/errors.h"
 #include "laige/logging.h"
 #include "laige/result.h"
 
+#include "laige/sim/archetype.h"
 #include "laige/sim/component.h"
 
 namespace laige {
@@ -192,10 +195,13 @@ class World {
   [[nodiscard]] Result<Entity, ErrorCode> create() noexcept;
 
   // Destroy one live entity and return its slot to the free list.
-  // O(1), no allocation. The slot's generation is bumped, so every
-  // stale handle to it fails isValid() (CPP-007). Stale/invalid
-  // handle: debug -> assert (S-9); release -> ErrorCode::InvalidArgument
-  // + one rate-limited warn (FR-12.3: never silent).
+  // O(1) for a component-less entity; when the entity is in an
+  // archetype, its row is detached first — O(tail rows * row-stride)
+  // bytes moved, still no allocation (M1-ECS-03; archetype.h). The
+  // slot's generation is bumped, so every stale handle to it fails
+  // isValid() (CPP-007). Stale/invalid handle: debug -> assert (S-9);
+  // release -> ErrorCode::InvalidArgument + one rate-limited warn
+  // (FR-12.3: never silent).
   [[nodiscard]] Status destroy(Entity entity) noexcept;
 
   // Access validation — the check every entity access performs
@@ -251,11 +257,70 @@ class World {
   // ErrorCode::InvalidArgument.
   [[nodiscard]] Result<ComponentInfo, ErrorCode> componentInfo(ComponentTypeId id) const noexcept;
 
+  // -------------------------------------------------------------
+  // Archetype SoA component storage (M1-ECS-03; full contract in
+  // archetype.h)
+  // -------------------------------------------------------------
+
+  // True when `entity` is live and has a component of type T. O(1),
+  // no allocation, no side effects (a pure query, like isValid: a
+  // stale handle is simply "no", no warn). T must be a Laige
+  // component (LAIGE_COMPONENT); an unregistered T reads as false.
+  template <typename T>
+  [[nodiscard]] bool has(Entity entity) const noexcept;
+
+  // The entity's component of type T, or nullptr: stale/out-of-range
+  // handle (after the rate-limited warn-once of check(), every build),
+  // T not registered in this world, or the entity lacks T (a normal
+  // negative query, no warn). O(1) in the entity count; no allocation.
+  // The pointer is valid until the next mutation of that entity's
+  // components (an add/remove that moves it shifts the column) or of
+  // the world — copy the value out if you must keep it (PERF-005).
+  template <typename T>
+  [[nodiscard]] T* get(Entity entity) noexcept;
+
+  // Give `entity` a component of type T: create-or-update. When the
+  // entity already has T, `value` overwrites it in place (the
+  // archetype does not change). Otherwise the entity moves to the
+  // archetype of its component set plus T — a pool-backed move over
+  // pre-reserved columns: O((tail rows) * row-stride) bytes moved,
+  // no heap allocation in steady state (growth events are bounded,
+  // accounted, and logged — archetype.h "Reserve policy").
+  //
+  //   stale/invalid handle       -> InvalidArgument + warn-once
+  //   T not registered (this world)
+  //                              -> InvalidArgument + warn
+  //   entity at kMaxArchetypeComponents
+  //                              -> BudgetExhausted + warn
+  //   no free archetype slot     -> BudgetExhausted + warn
+  template <typename T>
+  [[nodiscard]] Status addComponent(Entity entity, const T& value) noexcept;
+
+  // Take the component of type T from `entity` (a no-op ok Status when
+  // the entity lacks T or has no components). Otherwise the entity
+  // moves to the archetype of its component set minus T — same cost
+  // and allocation contract as addComponent. Stale/invalid handle or
+  // unregistered T -> InvalidArgument (+ warn).
+  template <typename T>
+  [[nodiscard]] Status removeComponent(Entity entity) noexcept;
+
+  // The number of distinct component sets seen by this world so far
+  // (0 .. kMaxArchetypes; archetypes are never destroyed in M1).
+  // O(1), no side effects.
+  [[nodiscard]] std::uint32_t archetypeCount() const noexcept;
+
+  // Archetype storage accounting snapshot (ArchetypeStats): the
+  // profiler (M1-PROF-01) and the zero-overflow/zero-allocation checks
+  // read this. O(kMaxArchetypes), no allocation.
+  [[nodiscard]] ArchetypeStats archetypeStats() const noexcept;
+
   // Destroy every live entity (shutdown path, CONC-006). Every handle
   // becomes stale; the capacity is unchanged and the world is
-  // immediately reusable. O(capacity) scan, no allocation, idempotent.
-  // (No per-slot element data exists yet; M1-ECS-03 adds the
-  // per-entity record that clear() will then destroy.)
+  // immediately reusable. O(capacity + detached rows * row-stride),
+  // no allocation, idempotent. M1-ECS-03: each live entity is
+  // detached from its archetype first (the per-entity component data
+  // is released with its row); the archetypes themselves — and the
+  // component type registry — survive.
   void clear() noexcept;
 
   // Move is an O(1) pointer swap; the source becomes a valid empty
@@ -265,8 +330,9 @@ class World {
   World(const World&) = delete;
   World& operator=(const World&) = delete;
 
-  // Destroys nothing per element yet (no per-slot element data);
-  // releases the backing storage. Idempotent with clear().
+  // Detaches every live entity's component rows (clear()) and
+  // releases the backing storage (per-slot tables, archetype table
+  // with its column blocks, type-key index). Idempotent with clear().
   ~World() noexcept;
 
  private:
@@ -279,6 +345,69 @@ class World {
   // skipped: the slot re-enters at generation 1 — the documented one
   // case the 16-bit scheme does not rule out (see the preamble).
   void bumpGeneration(std::uint16_t slot) noexcept;
+
+  // -------------------------------------------------------------
+  // Archetype SoA storage helpers (M1-ECS-03; defined in
+  // archetype.cpp)
+  // -------------------------------------------------------------
+
+  // This world's ComponentTypeId for a component type identity key
+  // (&ComponentTypeKey<T>::kMarker); 0 when the type is not registered
+  // in this world. O(1) expected (open-addressing probe, never
+  // iterated); no allocation.
+  std::uint32_t componentIdOfKey(const void* key) const noexcept;
+
+  // Insert a freshly registered (key, id) into the type-key index
+  // (setup path only, called from registerComponent).
+  void noteComponentKey(const void* key, std::uint32_t id) noexcept;
+
+  // The archetype whose signature is the sorted, 0-terminated
+  // component-id array `sig` of length `count`; nullptr when no such
+  // archetype exists yet. O(kMaxArchetypes) bounded scan (fingerprint
+  // short-circuit + lexicographic verify); no allocation.
+  detail::ArchetypeRecord* findArchetype(const std::uint32_t* sig,
+                                         std::uint16_t count) noexcept;
+
+  // Create the archetype for a new sorted signature. Preconditions
+  // (checked by the caller): count <= kMaxArchetypeComponents and
+  // archetypeCount_ < kMaxArchetypes. Reserves the initial columns
+  // (the only allocation; accounted in ArchetypeStats). Returns the
+  // record (always non-null under the preconditions).
+  detail::ArchetypeRecord* createArchetype(const std::uint32_t* sig,
+                                           std::uint16_t count) noexcept;
+
+  // The column index of `componentId` in `arch` (its sorted sig);
+  // kInvalidColumnIndex when the archetype lacks the component.
+  // O(log kMaxArchetypeComponents); no allocation.
+  std::uint32_t columnIndexOf(const detail::ArchetypeRecord& arch,
+                              std::uint32_t componentId) const noexcept;
+
+  // Grow `arch`'s row capacity to min(capacity_, 2 * rowCapacity) —
+  // one bounded reservation per column (the reserve policy,
+  // archetype.h). Returns false only on the unreachable
+  // at-world-capacity edge. Accounted + logged (ecs/archetype_grow).
+  bool growArchetype(detail::ArchetypeRecord& arch,
+                     std::uint32_t archetypeId) noexcept;
+
+  // Shift `arch`'s tail left by one row at `row` (the slot column plus
+  // every live column), decrement size, and re-sync the rowOf_ records
+  // of the shifted rows (invariant I2 — the slot column and the rowOf_
+  // table must agree). The caller clears archetypeOf_/rowOf_ for the
+  // detached slot when it leaves the archetypes. O((size - row) *
+  // row-stride) bytes moved; no allocation.
+  void removeRow(detail::ArchetypeRecord& arch, std::uint32_t row) noexcept;
+
+  // Attach `slot` to `arch` at its slot-ordered position: shift the
+  // tail right, write the slot column, set archetypeOf_/rowOf_ (the
+  // new row's record plus the shifted tail — invariant I2), grow first
+  // if the archetype is full. Returns the new row; kInvalidRowIndex
+  // only when growth failed (unreachable while a live entity exists —
+  // row 0 is a valid row, hence the sentinel). The component columns
+  // of the new row are zero until the caller writes them.
+  // O((size - row) * row-stride) bytes moved; no allocation in steady
+  // state.
+  std::uint32_t attachSlot(std::uint32_t slot,
+                           detail::ArchetypeRecord& arch) noexcept;
 
   std::uint32_t capacity_{0};
   std::unique_ptr<std::uint16_t[]> generations_;
@@ -294,6 +423,30 @@ class World {
   // component data, not the type registry).
   std::unique_ptr<detail::ComponentRecord[]> components_;
   std::uint32_t componentCount_{0};
+  // Per-slot entity record (M1-ECS-03): the archetype the slot's entity
+  // is in (0 = no archetype: the entity has no components) and the
+  // entity's dense row within that archetype (the slot-ordered row —
+  // see archetype.h "Row order"). Both are per-slot table loads: the
+  // entity -> archetype map is direct indexing, no hash.
+  std::unique_ptr<std::uint16_t[]> archetypeOf_;
+  std::unique_ptr<std::uint32_t[]> rowOf_;
+  // Archetype table (M1-ECS-03): the fixed engine budget
+  // (kMaxArchetypes), records indexed by (archetype id - 1); an
+  // archetype is created when its component set is first seen.
+  // clear() empties the archetypes' rows but keeps the archetypes
+  // themselves (M1: sets are never destroyed — archetype.h).
+  std::unique_ptr<detail::ArchetypeRecord[]> archetypes_;
+  std::uint32_t archetypeCount_{0};
+  // Component type-key index (M1-ECS-03): the open-addressing table
+  // (kComponentKeyIndexSize slots) mapping a component type identity
+  // key to this world's ComponentTypeId — the O(1) type -> id
+  // resolution behind has/get/addComponent/removeComponent.
+  std::unique_ptr<detail::ComponentKeySlot[]> keyIndex_;
+  // Archetype storage counters (ArchetypeStats feed; G-R4/M1-PROF-01).
+  std::uint64_t totalAdds_{0};
+  std::uint64_t totalRemoves_{0};
+  std::uint64_t totalArchetypeGrowth_{0};
+  std::uint64_t totalReservations_{0};
 };
 
 // Component registration (M1-ECS-02). Header-defined: it is a template,
@@ -311,6 +464,12 @@ Result<ComponentTypeId, ErrorCode> World::registerComponent() noexcept {
                 "carriers (S-8): a non-trivial member (a string, a "
                 "destructor, a vtable) is not supported by the "
                 "M1-ECS-03 SoA storage");
+  static_assert(alignof(T) <= kArchetypeColumnAlignment,
+                "Laige components must have alignof(T) <= 32 "
+                "(kArchetypeColumnAlignment): the M1-ECS-03 SoA column "
+                "blocks are aligned to 32 bytes (the P0 targets' "
+                "maximum fundamental alignment); reduce the alignment "
+                "or ADR the bound");
   constexpr const void* key = &detail::ComponentTypeKey<T>::kMarker;
   if (components_ == nullptr) {
     // Moved-from world: no registry (see the preamble, entity.h).
@@ -337,8 +496,266 @@ Result<ComponentTypeId, ErrorCode> World::registerComponent() noexcept {
   rec.typeKey = key;
   rec.size = static_cast<std::uint32_t>(sizeof(T));
   rec.alignment = static_cast<std::uint32_t>(alignof(T));
+  const ComponentTypeId id{componentCount_ + 1};
+  noteComponentKey(key, id.value);  // M1-ECS-03: the type -> id lookup
   ++componentCount_;
-  return ComponentTypeId{componentCount_};  // ids are dense, from 1
+  return id;  // ids are dense, from 1
+}
+
+// ---------------------------------------------------------------------------
+// Archetype SoA component access (M1-ECS-03; full contract in
+// archetype.h). Header-defined like registerComponent: templates must
+// be visible to every translation unit that touches a component.
+// ---------------------------------------------------------------------------
+
+// The row-copy helper lives in detail (excluded from the public API
+// scan, tools/api) — an anonymous namespace is not scanner-parseable.
+namespace detail {
+
+// Copy `size` bytes from `src` to `dst` (components are trivially
+// copyable — the registerComponent static_assert — so memcpy is the
+// well-defined copy). Cold-branch helper to keep the templates short.
+inline void copyRow(std::byte* dst, const std::byte* src, std::uint32_t size) {
+  std::memcpy(dst, src, static_cast<std::size_t>(size));
+}
+
+}  // namespace detail
+
+template <typename T>
+bool World::has(Entity entity) const noexcept {
+  static_assert(detail::ComponentTraits<T>::isComponent,
+                "T is not a Laige component type: write LAIGE_COMPONENT(T) "
+                "once at namespace scope next to the type definition "
+                "(FR-1.2, S-8)");
+  if (!isValid(entity)) return false;
+  const std::uint32_t id =
+      componentIdOfKey(&detail::ComponentTypeKey<T>::kMarker);
+  if (id == 0) return false;  // T not registered in this world
+  const std::uint32_t archIdx = archetypeOf_[entity.id];
+  if (archIdx == 0) return false;  // the entity has no components
+  return columnIndexOf(archetypes_[archIdx - 1], id) != kInvalidColumnIndex;
+}
+
+template <typename T>
+T* World::get(Entity entity) noexcept {
+  static_assert(detail::ComponentTraits<T>::isComponent,
+                "T is not a Laige component type: write LAIGE_COMPONENT(T) "
+                "once at namespace scope next to the type definition "
+                "(FR-1.2, S-8)");
+  if (!isValid(entity)) {
+    static_cast<void>(check(entity));  // rate-limited warn-once, every build
+    return nullptr;
+  }
+  const std::uint32_t id =
+      componentIdOfKey(&detail::ComponentTypeKey<T>::kMarker);
+  if (id == 0) return nullptr;  // T not registered in this world
+  const std::uint32_t archIdx = archetypeOf_[entity.id];
+  if (archIdx == 0) return nullptr;  // the entity has no components
+  detail::ArchetypeRecord& arch = archetypes_[archIdx - 1];
+  const std::uint32_t col = columnIndexOf(arch, id);
+  if (col == kInvalidColumnIndex) return nullptr;  // entity lacks T
+  const detail::ArchetypeColumn& column = arch.columns[col];
+  return reinterpret_cast<T*>(column.base +
+                              static_cast<std::size_t>(rowOf_[entity.id]) *
+                              column.size);
+}
+
+template <typename T>
+Status World::addComponent(Entity entity, const T& value) noexcept {
+  static_assert(detail::ComponentTraits<T>::isComponent,
+                "T is not a Laige component type: write LAIGE_COMPONENT(T) "
+                "once at namespace scope next to the type definition "
+                "(FR-1.2, S-8)");
+  static_assert(std::is_trivially_copyable_v<T>,
+                "Laige components must be trivially copyable data "
+                "carriers (S-8) — the SoA columns memcpy them");
+  if (!isValid(entity)) {
+    static_cast<void>(check(entity));  // rate-limited warn-once, every build
+    return ErrorCode::InvalidArgument;
+  }
+  const std::uint32_t id =
+      componentIdOfKey(&detail::ComponentTypeKey<T>::kMarker);
+  if (id == 0) {
+    LAIGE_LOG_WARN("ecs", "component_unregistered",
+                   "addComponent called for a type not registered in this "
+                   "world; register it at world setup",
+                   laige::log::field("entity_id", entity.id),
+                   laige::log::field("generation", entity.generation));
+    return ErrorCode::InvalidArgument;
+  }
+  const std::uint32_t curIdx = archetypeOf_[entity.id];
+  const std::uint32_t curRow = rowOf_[entity.id];
+  if (curIdx != 0) {
+    const std::uint32_t curCol =
+        columnIndexOf(archetypes_[curIdx - 1], id);
+    if (curCol != kInvalidColumnIndex) {
+      // Create-or-update: the entity already has T — overwrite in
+      // place (no archetype change, documented).
+      const detail::ArchetypeColumn& column =
+          archetypes_[curIdx - 1].columns[curCol];
+      detail::copyRow(column.base + static_cast<std::size_t>(curRow) * column.size,
+              reinterpret_cast<const std::byte*>(&value), sizeof(T));
+      ++totalAdds_;
+      return Status{};
+    }
+  }
+  // Build the target signature (the entity's set plus T, sorted).
+  std::uint32_t targetSig[kMaxArchetypeComponents + 1];
+  std::uint16_t targetCount = 0;
+  if (curIdx == 0) {
+    targetSig[0] = id;
+    targetCount = 1;
+  } else {
+    detail::ArchetypeRecord& cur = archetypes_[curIdx - 1];
+    if (cur.sigCount >= kMaxArchetypeComponents) {
+      LAIGE_LOG_WARN("ecs", "component_limit",
+                     "Entity already carries kMaxArchetypeComponents "
+                     "components; the set is full (M1 bound — ADR to raise)",
+                     laige::log::field("entity_id", entity.id),
+                     laige::log::field("archetype_id", curIdx),
+                     laige::log::field("components", cur.sigCount));
+      return ErrorCode::BudgetExhausted;
+    }
+    // Merge-insert `id` into the sorted cur.sig (id is absent: the
+    // in-place case above caught its presence).
+    const std::uint16_t n = cur.sigCount;
+    for (std::uint16_t r = 0; r < n; ++r) {
+      if (cur.sig[r] < id) {
+        targetSig[targetCount++] = cur.sig[r];
+      } else {
+        targetSig[targetCount++] = id;
+        for (std::uint16_t k = r; k < n; ++k) {
+          targetSig[targetCount++] = cur.sig[k];
+        }
+        break;
+      }
+    }
+    if (targetCount == n) targetSig[targetCount++] = id;  // id is last
+  }
+  // Find the target archetype, creating it when the set is new.
+  detail::ArchetypeRecord* target = findArchetype(targetSig, targetCount);
+  if (target == nullptr) {
+    if (archetypeCount_ >= kMaxArchetypes) {
+      LAIGE_LOG_WARN("ecs", "archetype_budget",
+                     "The world has kMaxArchetypes distinct component "
+                     "sets; a new set cannot be created (M1 bound — "
+                     "ADR to raise)",
+                     laige::log::field("entity_id", entity.id),
+                     laige::log::field("archetype_count", archetypeCount_));
+      return ErrorCode::BudgetExhausted;
+    }
+    target = createArchetype(targetSig, targetCount);
+  }
+  // Attach the slot to the target (slot-ordered; grows the target
+  // first when it is full), write the new row, then release the old
+  // row. attachSlot owns archetypeOf_/rowOf_ updates; the old row is
+  // removed explicitly from cur (the target differs from cur: the
+  // signatures differ by T).
+  const std::uint32_t newRow = attachSlot(entity.id, *target);
+  if (newRow == kInvalidRowIndex) {
+    // Unreachable while a live entity exists (the reserve policy caps
+    // growth at the world capacity, and one live entity outside the
+    // full archetype always exists — the one being added).
+    LAIGE_LOG_WARN("ecs", "archetype_budget",
+                   "Archetype row reserve failed (at world capacity — "
+                   "should be unreachable)",
+                   laige::log::field("entity_id", entity.id));
+    return ErrorCode::BudgetExhausted;
+  }
+  for (std::uint16_t i = 0; i < target->sigCount; ++i) {
+    const std::uint32_t cid = target->sig[i];
+    detail::ArchetypeColumn& column = target->columns[i];
+    if (cid == id) {
+      detail::copyRow(column.base + static_cast<std::size_t>(newRow) * column.size,
+              reinterpret_cast<const std::byte*>(&value), sizeof(T));
+    } else if (curIdx != 0) {
+      const detail::ArchetypeRecord& cur = archetypes_[curIdx - 1];
+      const std::uint32_t srcCol = columnIndexOf(cur, cid);
+      const detail::ArchetypeColumn& src = cur.columns[srcCol];
+      detail::copyRow(column.base + static_cast<std::size_t>(newRow) * column.size,
+              src.base + static_cast<std::size_t>(curRow) * src.size,
+              src.size);
+    }
+  }
+  if (curIdx != 0) removeRow(archetypes_[curIdx - 1], curRow);
+  ++totalAdds_;
+  return Status{};
+}
+
+template <typename T>
+Status World::removeComponent(Entity entity) noexcept {
+  static_assert(detail::ComponentTraits<T>::isComponent,
+                "T is not a Laige component type: write LAIGE_COMPONENT(T) "
+                "once at namespace scope next to the type definition "
+                "(FR-1.2, S-8)");
+  if (!isValid(entity)) {
+    static_cast<void>(check(entity));  // rate-limited warn-once, every build
+    return ErrorCode::InvalidArgument;
+  }
+  const std::uint32_t id =
+      componentIdOfKey(&detail::ComponentTypeKey<T>::kMarker);
+  if (id == 0) {
+    LAIGE_LOG_WARN("ecs", "component_unregistered",
+                   "removeComponent called for a type not registered in "
+                   "this world; register it at world setup",
+                   laige::log::field("entity_id", entity.id),
+                   laige::log::field("generation", entity.generation));
+    return ErrorCode::InvalidArgument;
+  }
+  const std::uint32_t curIdx = archetypeOf_[entity.id];
+  if (curIdx == 0) return Status{};  // no components: a no-op
+  detail::ArchetypeRecord& cur = archetypes_[curIdx - 1];
+  const std::uint32_t curCol = columnIndexOf(cur, id);
+  if (curCol == kInvalidColumnIndex) return Status{};  // lacks T: a no-op
+  const std::uint32_t curRow = rowOf_[entity.id];
+  if (cur.sigCount == 1) {
+    // The entity's last component: it leaves the archetypes entirely.
+    removeRow(cur, curRow);
+    archetypeOf_[entity.id] = 0;
+    rowOf_[entity.id] = 0;
+    ++totalRemoves_;
+    return Status{};
+  }
+  // Build the target signature (the entity's set minus T, still
+  // sorted — cur.sig is sorted and unique).
+  std::uint32_t targetSig[kMaxArchetypeComponents];
+  std::uint16_t targetCount = 0;
+  for (std::uint16_t r = 0; r < cur.sigCount; ++r) {
+    if (cur.sig[r] != id) targetSig[targetCount++] = cur.sig[r];
+  }
+  detail::ArchetypeRecord* target = findArchetype(targetSig, targetCount);
+  if (target == nullptr) {
+    if (archetypeCount_ >= kMaxArchetypes) {
+      LAIGE_LOG_WARN("ecs", "archetype_budget",
+                     "The world has kMaxArchetypes distinct component "
+                     "sets; a new set cannot be created (M1 bound — "
+                     "ADR to raise)",
+                     laige::log::field("entity_id", entity.id),
+                     laige::log::field("archetype_count", archetypeCount_));
+      return ErrorCode::BudgetExhausted;
+    }
+    target = createArchetype(targetSig, targetCount);
+  }
+  const std::uint32_t newRow = attachSlot(entity.id, *target);
+  if (newRow == kInvalidRowIndex) {
+    LAIGE_LOG_WARN("ecs", "archetype_budget",
+                   "Archetype row reserve failed (at world capacity — "
+                   "should be unreachable)",
+                   laige::log::field("entity_id", entity.id));
+    return ErrorCode::BudgetExhausted;
+  }
+  for (std::uint16_t i = 0; i < target->sigCount; ++i) {
+    const std::uint32_t cid = target->sig[i];
+    detail::ArchetypeColumn& column = target->columns[i];
+    const std::uint32_t srcCol = columnIndexOf(cur, cid);  // cid != id
+    const detail::ArchetypeColumn& src = cur.columns[srcCol];
+    detail::copyRow(column.base + static_cast<std::size_t>(newRow) * column.size,
+            src.base + static_cast<std::size_t>(curRow) * src.size,
+            src.size);
+  }
+  removeRow(cur, curRow);
+  ++totalRemoves_;
+  return Status{};
 }
 
 }  // namespace laige

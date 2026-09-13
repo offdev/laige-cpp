@@ -3,7 +3,8 @@
 Documentation index and navigation (DOC-001). The engine is at **M1**
 (heartbeat): `laige-core` holds the M0 foundations, and `laige-sim`
 has started (M1-ECS-01: the entity handle and world entity storage;
-M1-ECS-02: the component type registry).
+M1-ECS-02: the component type registry; M1-ECS-03: archetype SoA
+component storage).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -33,6 +34,10 @@ still to land.
 - [Component type registry](api/component_registry.md) —
   `ComponentTypeId`, `LAIGE_COMPONENT`, `World::registerComponent<T>`
   (M1-ECS-02; `laige-sim`).
+- [Archetype SoA component storage](api/archetype.md) — archetypes as
+  ordered component sets with per-column SoA storage,
+  `World::get<T>`/`addComponent<T>`/`removeComponent<T>`, the reserve
+  policy, and the 10k-entity churn baseline (M1-ECS-03; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,

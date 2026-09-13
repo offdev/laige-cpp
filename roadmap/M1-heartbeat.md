@@ -38,7 +38,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R component_registry` green.
   - **Size:** ~150 lines + tests
 
-- [ ] **M1-ECS-03 · Archetype SoA storage**
+- [x] **M1-ECS-03 · Archetype SoA storage**
   - **Refs:** FR-1.2 (archetype/SoA, pool-backed add/remove); AGENTS PERF-003, PERF-004
   - **Depends:** M1-ECS-02
   - **Scope:**

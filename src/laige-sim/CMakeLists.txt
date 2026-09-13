@@ -14,10 +14,16 @@
 # loop, systems, and the rest of the ECS land in the remaining M1-ECS /
 # M1-SYS / M1-LOOP steps.
 
+# M1-ECS-03 (roadmap/M1-heartbeat.md): archetype.cpp adds the archetype
+# SoA storage helpers (find/create/grow/attach/detach + the type-key
+# index); entity.cpp keeps the handle/slot storage and the World
+# lifecycle.
+set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp)
+
 if(LAIGE_BUILD_SHARED)
-  add_library(laige-sim SHARED entity.cpp)
+  add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})
 else()
-  add_library(laige-sim STATIC entity.cpp)
+  add_library(laige-sim STATIC ${LAIGE_SIM_SOURCES})
 endif()
 
 laige_apply_engine_policy(laige-sim)
