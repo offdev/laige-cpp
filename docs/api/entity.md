@@ -160,8 +160,9 @@ if (!world.isValid(handle)) { /* stale — drop it, log if unexpected */ }
 ## Roadmap context
 
 - **M1-ECS-01 (this step):** the handle + entity storage above.
-- **M1-ECS-02:** the component registry (`ComponentTypeId`) —
-  components get a stable compile-time id.
+- **M1-ECS-02 (done):** the component registry —
+  `ComponentTypeId`, `LAIGE_COMPONENT`, `World::registerComponent<T>`;
+  see [component_registry.md](component_registry.md).
 - **M1-ECS-03:** archetype SoA component storage on top of the same
   slot table; `world.get<T>(e)` is built on `World::check(e)` and
   inherits the stale-handle contract.

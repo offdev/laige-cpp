@@ -27,7 +27,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R entity` green under ASan; debug stale-handle test asserts.
   - **Size:** ~200 lines + tests
 
-- [ ] **M1-ECS-02 · Component registry + trait-based IDs**
+- [x] **M1-ECS-02 · Component registry + trait-based IDs**
   - **Refs:** FR-1.2 (compile-time trait types); PRD §9.1 S-8
   - **Depends:** M1-ECS-01
   - **Scope:**

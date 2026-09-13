@@ -1,12 +1,14 @@
-# laige-sim tests (M1-ECS-01): entity handle + World entity storage.
+# laige-sim tests (M1-ECS-01/02): entity handle + World entity storage,
+# component type registry.
 #
 # One executable per module (tests/README.md; docs/testing.md is the
 # source of truth): laige-sim_tests links the module under test plus
-# gtest_main. The unfiltered entry runs the whole module; the
-# `entity` entry is M1-ECS-01's Verify command (`ctest -R entity`),
+# gtest_main. The unfiltered entry runs the whole module; the `entity`
+# and `component_registry` entries are the M1-ECS-01 and M1-ECS-02
+# Verify commands (`ctest -R entity`, `ctest -R component_registry`),
 # selecting exactly the suites below from the shared executable.
 
-set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp)
+set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp)
 
 add_executable(laige-sim_tests ${LAIGE_SIM_TEST_SOURCES})
 laige_apply_engine_policy(laige-sim_tests)
@@ -31,9 +33,17 @@ add_test(NAME entity
          COMMAND laige-sim_tests
          --gtest_filter=EntityHandle.*:WorldBasics.*:WorldCapacity.*:WorldLogging.*:WorldStale.*:WorldStats.*)
 
+# M1-ECS-02: component type registry. The step's Verify command is
+# `ctest -R component_registry`; this entry selects exactly the
+# ComponentTypeId/ComponentRegistry suites from the shared
+# laige-sim_tests executable.
+add_test(NAME component_registry
+         COMMAND laige-sim_tests
+         --gtest_filter=ComponentTypeId.*:ComponentRegistry.*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
-  set_tests_properties(laige-sim_tests entity
+  set_tests_properties(laige-sim_tests entity component_registry
     PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

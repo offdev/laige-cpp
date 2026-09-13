@@ -13,8 +13,10 @@
 //   World    The entity storage a handle indexes into: create/destroy
 //            over a budgeted, accounted, pool-backed slot table with
 //            no per-operation heap (PERF-002/003, S-2; M0-CORE-05
-//            Pool precedent). M1-ECS-03 adds the per-entity component
-//            storage on top of this slot table.
+//            Pool precedent). M1-ECS-02 adds the component type
+//            registry (registerComponent<T>, component.h); M1-ECS-03
+//            adds the per-entity component storage on top of this
+//            slot table.
 //
 // ---------------------------------------------------------------------------
 // The handle contract (FR-1.2, CPP-007)
@@ -115,7 +117,10 @@
 #include <memory>
 
 #include "laige/errors.h"
+#include "laige/logging.h"
 #include "laige/result.h"
+
+#include "laige/sim/component.h"
 
 namespace laige {
 
@@ -214,6 +219,38 @@ class World {
   // G-R3 guardrail (M1-ECS-06). O(1), no allocation.
   [[nodiscard]] EntityStats stats() const noexcept;
 
+  // -----------------------------------------------------------------
+  // Component registry (M1-ECS-02; full contract in component.h)
+  // -----------------------------------------------------------------
+
+  // Register component type T with this world (setup phase, before
+  // the loop). Assigns the next ComponentTypeId — dense, in
+  // registration order, from 1 — and records sizeof(T)/alignof(T)
+  // for the M1-ECS-03 SoA layout. O(n) in the registered types; no
+  // allocation. The same path serves built-in and user-defined
+  // components (S-8 data-carrier case).
+  //
+  //   T not marked with LAIGE_COMPONENT -> compile error (static_assert)
+  //   T not trivially copyable          -> compile error (static_assert)
+  //   T already registered in this world
+  //                                     -> ErrorCode::InvalidArgument
+  //                                        (+ one rate-limited warn,
+  //                                         ecs/component_duplicate)
+  //   more than kMaxComponentTypes      -> ErrorCode::BudgetExhausted
+  //   moved-from world (no registry)    -> ErrorCode::InvalidArgument
+  template <typename T>
+  [[nodiscard]] Result<ComponentTypeId, ErrorCode> registerComponent() noexcept;
+
+  // The number of component types registered so far
+  // (0 .. kMaxComponentTypes). O(1), no side effects.
+  [[nodiscard]] std::uint32_t componentCount() const noexcept;
+
+  // The size/alignment recorded for the type assigned `id` (the
+  // M1-ECS-03 SoA layout reads these). O(1), no allocation. `id`
+  // invalid or not registered in this world ->
+  // ErrorCode::InvalidArgument.
+  [[nodiscard]] Result<ComponentInfo, ErrorCode> componentInfo(ComponentTypeId id) const noexcept;
+
   // Destroy every live entity (shutdown path, CONC-006). Every handle
   // becomes stale; the capacity is unchanged and the world is
   // immediately reusable. O(capacity) scan, no allocation, idempotent.
@@ -251,6 +288,57 @@ class World {
   std::uint32_t inUse_{0};
   std::uint32_t peakInUse_{0};
   std::uint64_t totalCreated_{0};
+  // Component registry (M1-ECS-02): dense records indexed by
+  // (id - 1) — ids are dense by construction. Setup-only state:
+  // clear() does not touch it (M1-ECS-03's clear destroys per-entity
+  // component data, not the type registry).
+  std::unique_ptr<detail::ComponentRecord[]> components_;
+  std::uint32_t componentCount_{0};
 };
+
+// Component registration (M1-ECS-02). Header-defined: it is a template,
+// so it must be visible to every translation unit that registers a
+// component. See component.h for the id contract, the type-identity
+// mechanism, and the failure table.
+template <typename T>
+Result<ComponentTypeId, ErrorCode> World::registerComponent() noexcept {
+  static_assert(detail::ComponentTraits<T>::isComponent,
+                "T is not a Laige component type: write LAIGE_COMPONENT(T) "
+                "once at namespace scope next to the type definition "
+                "(FR-1.2, S-8)");
+  static_assert(std::is_trivially_copyable_v<T>,
+                "Laige components must be trivially copyable data "
+                "carriers (S-8): a non-trivial member (a string, a "
+                "destructor, a vtable) is not supported by the "
+                "M1-ECS-03 SoA storage");
+  constexpr const void* key = &detail::ComponentTypeKey<T>::kMarker;
+  if (components_ == nullptr) {
+    // Moved-from world: no registry (see the preamble, entity.h).
+    return ErrorCode::InvalidArgument;
+  }
+  for (std::uint32_t i = 0; i < componentCount_; ++i) {
+    if (components_[i].typeKey == key) {
+      // Duplicate registration is an error (M1-ECS-02 scope); the
+      // facade rate-limits the warn per event (LOG-004).
+      LAIGE_LOG_WARN("ecs", "component_duplicate",
+                     "Component type is already registered in this world; "
+                     "duplicate registration is an error",
+                     laige::log::field("component_id", i + 1u),
+                     laige::log::field("size", components_[i].size),
+                     laige::log::field("alignment", components_[i].alignment));
+      return ErrorCode::InvalidArgument;
+    }
+  }
+  if (componentCount_ >= kMaxComponentTypes) {
+    // The engine-level component budget (component.h preamble).
+    return ErrorCode::BudgetExhausted;
+  }
+  detail::ComponentRecord& rec = components_[componentCount_];
+  rec.typeKey = key;
+  rec.size = static_cast<std::uint32_t>(sizeof(T));
+  rec.alignment = static_cast<std::uint32_t>(alignof(T));
+  ++componentCount_;
+  return ComponentTypeId{componentCount_};  // ids are dense, from 1
+}
 
 }  // namespace laige
