@@ -93,13 +93,6 @@ foreach(_tok IN LISTS _cmd)
   list(APPEND _args "${_tok}")
 endforeach()
 
-# LAIGE_DETCHECK_CALLER tags THIS detcheck invocation (M0-TEST-01
-# Windows CI diagnosis): it arrives in the test's ENVIRONMENT property
-# (tests/detcheck/CMakeLists.txt) and is inherited by execute_process,
-# which has no environment options on the cmake versions some CI
-# runners provide. The tool's env dump logs the marker, so the per-test
-# diag file reveals which process wrote it.
-
 # --- Phase 1: spawn (mode 2) / single shot (mode 1) -----------------------
 # Mode 1 (--scenario) needs no second phase: the tool runs both runs
 # in-process and reports in one invocation.
@@ -136,22 +129,6 @@ elseif(NOT _rc1 EQUAL 0)
   set(_out "${_out1}")
   set(_err "${_err1}")
 else()
-  # Preserve phase 1's diagnostics before phase 2's invocation overwrites
-  # the per-test diag file (TEMP, M0-TEST-01 Windows CI diagnosis).
-  if(DEFINED ENV{LAIGE_DETCHECK_DIAG_FILE} AND EXISTS "$ENV{LAIGE_DETCHECK_DIAG_FILE}")
-    # Basename and directory from the (absolute, CMake-built) path via
-    # string(REGEX) - get_filename_component's argument order and
-    # component set differ between the cmake versions the CI lanes ship
-    # (measured on CMake 4.4.3: <variable> <path> <component>).
-    string(REGEX MATCH "[^/\\\\]+$" _diagfile
-           "$ENV{LAIGE_DETCHECK_DIAG_FILE}")
-    string(REPLACE ".txt" "" _diagbase "${_diagfile}")
-    string(REGEX REPLACE "[^/\\\\]+$" "" _diagdir
-           "$ENV{LAIGE_DETCHECK_DIAG_FILE}")
-    file(READ "$ENV{LAIGE_DETCHECK_DIAG_FILE}" _diag1)
-    file(WRITE "${_diagdir}/${_diagbase}.phase1" "${_diag1}")
-  endif()
-
   # --- Phase 2: compare the combined stream -------------------------------
   # The combined stream (detcheck's phase-1 stdout: markers + both tick
   # streams, plus any pre-marker probe output) goes back to detcheck,
@@ -175,16 +152,6 @@ endif()
 set(_text "${_out}
 ${_err}")
 
-# TEMP (M0-TEST-01 Windows CI diagnosis): persist this check script's own
-# captures (written by the cmake process, not by detcheck), so they can
-# be compared against detcheck's own diag files, which a different
-# detcheck invocation could have overwritten.
-if(DEFINED ENV{LAIGE_DETCHECK_DIAG_FILE})
-  file(WRITE "$ENV{LAIGE_DETCHECK_DIAG_FILE}.check"
-        "check-script capture phase1 rc=${_rc1}\n${_out1}\n--- err1 ---\n${_err1}\n"
-        "phase2 rc=${_rc}\n${_out}\n--- err2 ---\n${_err}\n")
-endif()
-
 set(_problems "")
 if(NOT _rc EQUAL @EXPECT_EXIT@)
   set(_problems "exit code ${_rc} (expected @EXPECT_EXIT@)")
@@ -196,9 +163,3 @@ if(NOT _problems STREQUAL "")
     "--- laige-detcheck output ---\n${_text}\n"
     "--- end of laige-detcheck output ---")
 endif()
-message("laige-detcheck check OK: exit @EXPECT_EXIT@, required output present")
-# TEMP (M0-TEST-01 Windows CI diagnosis): print the tool output on success
-# too, so passing and failing process instances can be compared in the CI
-# log (the tool's spawn diagnostics go to stderr).
-message("--- laige-detcheck output (passing) ---\n${_text}\n"
-        "--- end of laige-detcheck output ---")

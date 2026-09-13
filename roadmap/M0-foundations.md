@@ -893,14 +893,25 @@ No rendering, no physics, no networking yet — `laige-core` only.
     target (`ctest -R fuzz_json_parse` green in every local tree and
     inside every P0 job's ctest in CI); a seeded random test passes
     identically on two CI runs (byte-identical `test-seed-check` lines
-    in the job logs / archived `LastTest.log` — CI observation recorded
-    in the follow-up "Record CI observation" commit). Local
-    (2026-09-12): 32/32 ctest with zero warnings under the NFR-8.10
-    policy on g++ 16.2.1 (`build` static, `build-shared` shared,
-    `build-asan` ASan+UBSan fatal, `build-tsan` TSan `halt_on_error=1`)
-    and Clang 22.1.8 (`build-clang`); the seeded KAT line is identical
-    on the g++ and clang++ trees locally (cross-compiler identity; the
-    cross-CI-run comparison is the remaining Verify clause).
+    in the archived `Testing/Temporary/LastTest.log` of the Linux ASan
+    job — verified across two CI runs of the same commit, and again
+    across commits e2abce5 → c8b8221, in both cases
+    byte-identical):
+
+      ```text
+      test-seed-check default seed=0x000000001f055eed stream=1 draws=65536 fnv1a=0x7ea4049545656830
+      test-seed-check override seed=0x2468acce01234567 stream=2 draws=65536 fnv1a=0x535d2ca741b61cbf
+      ```
+
+    CI runs: 34713354925 / 34714039135 (same-commit pair, byte-identical
+    lines) and 34728782624 (e2abce5) / 34746755055 (c8b8221, the final
+    commit — byte-identical lines, all 10 jobs green including Windows
+    32/32). Local (2026-09-12): 32/32 ctest with zero warnings under the
+    NFR-8.10 policy on g++ 16.2.1 (`build` static, `build-shared`
+    shared, `build-asan` ASan+UBSan fatal, `build-tsan` TSan
+    `halt_on_error=1`) and Clang 22.1.8 (`build-clang`); the seeded KAT
+    line is identical on the g++ and clang++ trees locally
+    (cross-compiler identity, confirmed in CI above).
   - **Size:** ~1,000 lines (over the ~150 estimate: same pattern as
     M0-CORE-01…08 — `docs/testing.md` carries the conventions,
     `laige_test_seed.h` the seed contract next to the code, and the

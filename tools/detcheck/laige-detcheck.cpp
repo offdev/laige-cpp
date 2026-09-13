@@ -142,12 +142,9 @@
 
 #include <array>
 #include <cctype>
-#include <cstdarg>
-#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -168,65 +165,6 @@
 #endif
 
 namespace {
-
-// --- Diagnostic sink (M0-TEST-01 Windows CI investigation) ---------------
-// Every diagnostic line goes to stderr AND is accumulated in g_diag. The
-// test harness sets LAIGE_DETCHECK_DIAG_FILE; main() flushes g_diag there
-// on every exit path (RAII). ctest hides the output of passing tests, so
-// this file is how a passing instance's diagnostics reach the CI log (the
-// Windows job cats the files after ctest).
-std::string g_diag;
-
-void diagf(const char* fmt, ...) {
-  char buf[4096];
-  va_list ap;
-  va_start(ap, fmt);
-  const int n = std::vsnprintf(buf, sizeof buf, fmt, ap);
-  va_end(ap);
-  if (n > 0) {
-    const std::size_t len = static_cast<std::size_t>(
-        n < static_cast<int>(sizeof buf) ? n : static_cast<int>(sizeof buf) - 1);
-    std::fprintf(stderr, "%s", buf);
-    g_diag.append(buf, len);
-  }
-}
-
-// Read an environment variable into a fixed buffer (portable: MSVC
-// degrades getenv to C4996, so use getenv_s there).
-bool readEnvVar(const char* name, char* buf, std::size_t size) {
-#ifdef _WIN32
-  std::size_t len = 0;
-  return getenv_s(&len, buf, static_cast<std::size_t>(size), name) == 0 &&
-         len > 0;
-#else
-  const char* v = std::getenv(name);
-  if (v == nullptr) return false;
-  const std::size_t n = std::strlen(v);
-  if (n >= size) return false;
-  std::memcpy(buf, v, n + 1);
-  return true;
-#endif
-}
-
-// Flush g_diag to $LAIGE_DETCHECK_DIAG_FILE (truncating stale content) on
-// every exit path from main().
-struct DiagFlush {
-  ~DiagFlush() {
-    char path[1024] = {};
-    if (readEnvVar("LAIGE_DETCHECK_DIAG_FILE", path, sizeof path)) {
-      std::FILE* f = nullptr;
-#ifdef _WIN32
-      if (fopen_s(&f, path, "w") != 0) f = nullptr;
-#else
-      f = std::fopen(path, "w");
-#endif
-      if (f != nullptr) {
-        std::fwrite(g_diag.data(), 1, g_diag.size(), f);
-        std::fclose(f);
-      }
-    }
-  }
-};
 
 // --- Named constants (CORE-005) ------------------------------------------
 
@@ -392,444 +330,7 @@ std::wstring quoteArg(std::string_view arg) {
   return q;
 }
 
-// Environment diagnostic (CI comparison between failing and passing
-// process instances): the CWD, every environment variable name, and the
-// full values of the test-wiring variables (LAIGE_/CTEST_ prefixes) and
-// PATH. GetEnvironmentStringsW returns a double-NUL-terminated block of
-// "NAME=VALUE" entries.
-void dumpEnvironmentDiagnostics() {
-  wchar_t cwd[1024] = {};
-  const DWORD cwdLen = GetCurrentDirectoryW(1024, cwd);
-  std::string cwdUtf8;
-  if (cwdLen > 0) {
-    const int n = WideCharToMultiByte(CP_UTF8, 0, cwd, -1, nullptr, 0,
-                                       nullptr, nullptr);
-    if (n > 0) {
-      cwdUtf8.resize(static_cast<std::size_t>(n - 1));
-      WideCharToMultiByte(CP_UTF8, 0, cwd, -1, cwdUtf8.data(), n, nullptr,
-                          nullptr);
-    }
-  }
-  diagf("laige-detcheck: env cwd=%s\n", cwdUtf8.c_str());
-  LPWCH env = GetEnvironmentStringsW();
-  if (env == nullptr) {
-    diagf("laige-detcheck: env: unavailable\n");
-    return;
-  }
-  // Only the test-wiring variables (compact; the full name dump was log
-  // noise and has served its purpose — the wiring is intact).
-  int testVars = 0;
-  for (const wchar_t* block = env; *block != L'\0';) {
-    const size_t len = wcslen(block);
-    const wchar_t* eq = wcschr(block, L'=');
-    const std::wstring name(block, eq ? static_cast<size_t>(eq - block)
-                                      : len);
-    const std::wstring value(eq ? eq + 1 : L"");
-    const bool isTestVar = name.rfind(L"LAIGE_", 0) == 0 ||
-                           name.rfind(L"CTEST_", 0) == 0 ||
-                           name == L"PATH";
-    if (isTestVar) {
-      std::string nameUtf8, valueUtf8;
-      {
-        const int n = WideCharToMultiByte(CP_UTF8, 0, name.data(),
-                                           static_cast<int>(name.size()),
-                                           nullptr, 0, nullptr, nullptr);
-        nameUtf8.resize(static_cast<std::size_t>(n));
-        WideCharToMultiByte(CP_UTF8, 0, name.data(),
-                            static_cast<int>(name.size()), nameUtf8.data(), n,
-                            nullptr, nullptr);
-        const int m = WideCharToMultiByte(CP_UTF8, 0, value.data(),
-                                           static_cast<int>(value.size()),
-                                           nullptr, 0, nullptr, nullptr);
-        valueUtf8.resize(static_cast<std::size_t>(m));
-        WideCharToMultiByte(CP_UTF8, 0, value.data(),
-                            static_cast<int>(value.size()), valueUtf8.data(),
-                            m, nullptr, nullptr);
-      }
-      diagf("laige-detcheck: env %s=%s\n", nameUtf8.c_str(),
-            valueUtf8.c_str());
-      ++testVars;
-    }
-    block += len + 1;
-  }
-  FreeEnvironmentStringsW(env);
-  diagf("laige-detcheck: env: %d test-wiring variables present\n", testVars);
-}
-
-// Handle flag bits for the diagnostics. GetHandleInformation uses
-// HANDLE_FLAG_INHERIT = 0x1 and HANDLE_FLAG_PROTECT_FROM_CLOSE = 0x2
-// (NOT 0x80/0x100 - those values belong to no handle API).
-std::string handleBits(HANDLE h) {
-  DWORD info = 0;
-  GetHandleInformation(h, &info);
-  char b[96];
-  std::snprintf(b, sizeof b, "inherit=%d protect=%d (raw=0x%lx)",
-                (info & HANDLE_FLAG_INHERIT) ? 1 : 0,
-                (info & HANDLE_FLAG_PROTECT_FROM_CLOSE) ? 1 : 0, info);
-  return std::string(b);
-}
-
-// One probe launch. With redirectStdio the child's stdout (and usually
-// stderr) are set through STARTUPINFO; outMode selects the stdout source:
-//   0 = a fresh CreatePipe write end we drain (baseline);
-//   1 = detcheck's OWN stdout/stderr handles (kernel-assigned at process
-//      start) - the child's marker then lands in detcheck's own streams
-//      (harness-captured), so capturedOut/capturedErr stay empty;
-//   2 = a fresh CreatePipe whose write end is first re-created through
-//      DuplicateHandle(dwInheritable=TRUE) before use - tests whether a
-//      freshly duplicated inheritable handle is delivered where the
-//      original pipe handle is not;
-//   3 = a self-created FILE handle (a temp file) as the child's stdout -
-//      run 24 showed STARTUPINFO delivers detcheck's kernel-assigned
-//      handles but NOT self-created pipes (even duplicated); if a
-//      self-created FILE handle delivers, file capture is the scenario
-//      path. The file is read back after the child exits (capturedOut
-//      carries the marker; capturedErr still comes from a fresh pipe).
-// Without redirectStdio the child inherits detcheck's own standard
-// handles (the plain-inheritance control). Returns false only when the
-// spawn itself failed (errOut).
-bool probeAttempt(const wchar_t* appname, std::wstring cmd,
-                  bool redirectStdio, int outMode, DWORD& exitCode,
-                  std::string& capturedOut, std::string& capturedErr,
-                  std::string& errOut) {
-  SECURITY_ATTRIBUTES sa{};
-  sa.nLength = sizeof sa;
-  sa.bInheritHandle = TRUE;
-  HANDLE outR = INVALID_HANDLE_VALUE, outW = INVALID_HANDLE_VALUE;
-  HANDLE errR = INVALID_HANDLE_VALUE, errW = INVALID_HANDLE_VALUE;
-  HANDLE dupOut = INVALID_HANDLE_VALUE;
-  HANDLE outTarget = INVALID_HANDLE_VALUE;
-  std::wstring outFile;  // mode 3 only: the child's stdout file
-  bool outDrained = false, errDrained = false;
-  auto cleanup = [&]() {
-    if (outR != INVALID_HANDLE_VALUE) CloseHandle(outR);
-    if (outW != INVALID_HANDLE_VALUE) CloseHandle(outW);
-    if (dupOut != INVALID_HANDLE_VALUE) CloseHandle(dupOut);
-    if (errR != INVALID_HANDLE_VALUE) CloseHandle(errR);
-    if (errW != INVALID_HANDLE_VALUE) CloseHandle(errW);
-  };
-  if (redirectStdio) {
-    if (outMode == 1) {
-      // Kernel-assigned: detcheck's own stdout; the child's stderr goes
-      // to detcheck's own stderr (both harness-captured).
-      outTarget = GetStdHandle(STD_OUTPUT_HANDLE);
-    } else if (outMode == 3) {
-      // Self-created FILE handle (temp file) as the child's stdout:
-      // if this delivers where self-created pipes do not, file capture
-      // is the scenario path. Read back after the child exits.
-      wchar_t tmp[512] = {};
-      const DWORD tmpLen = GetTempPathW(512, tmp);
-      if (tmpLen == 0 || tmpLen >= 512) {
-        errOut = "GetTempPathW failed (lastError=" +
-                 std::to_string(GetLastError()) + ")";
-        cleanup();
-        return false;
-      }
-      outFile = std::wstring(tmp, static_cast<std::size_t>(tmpLen)) +
-                L"laige-detcheck-probe-" +
-                std::to_wstring(GetCurrentProcessId()) + L".tmp";
-      const HANDLE f = CreateFileW(outFile.c_str(), GENERIC_WRITE,
-                                   FILE_SHARE_READ, &sa, CREATE_ALWAYS,
-                                   FILE_ATTRIBUTE_NORMAL, nullptr);
-      if (f == INVALID_HANDLE_VALUE) {
-        errOut = "CreateFileW failed (lastError=" +
-                 std::to_string(GetLastError()) + ")";
-        cleanup();
-        return false;
-      }
-      outTarget = f;
-    } else {
-      if (!CreatePipe(&outR, &outW, &sa, 0)) {
-        errOut = "CreatePipe failed (lastError=" +
-                 std::to_string(GetLastError()) + ")";
-        cleanup();
-        return false;
-      }
-      outDrained = true;
-      if (outMode == 2) {
-        // Re-create the write end as a fresh inheritable duplicate.
-        if (!DuplicateHandle(GetCurrentProcess(), outW, GetCurrentProcess(),
-                             &dupOut, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
-          errOut = "DuplicateHandle failed (lastError=" +
-                   std::to_string(GetLastError()) + ")";
-          cleanup();
-          return false;
-        }
-        outTarget = dupOut;
-      } else {
-        outTarget = outW;
-      }
-    }
-    if (outMode != 1 && !CreatePipe(&errR, &errW, &sa, 0)) {
-      errOut = "CreatePipe(err) failed (lastError=" +
-               std::to_string(GetLastError()) + ")";
-      cleanup();
-      return false;
-    }
-    errDrained = (outMode != 1);
-    if (outDrained) {
-      SetHandleInformation(outW, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-    }
-    if (errDrained) {
-      SetHandleInformation(errW, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-    }
-    if (outMode == 1) {
-      diagf("laige-detcheck: probe handles out=kernel-fd1 (0x%p %s) "
-            "err=kernel-fd2 (0x%p %s)\n",
-            static_cast<void*>(outTarget), handleBits(outTarget).c_str(),
-            static_cast<void*>(GetStdHandle(STD_ERROR_HANDLE)),
-            handleBits(GetStdHandle(STD_ERROR_HANDLE)).c_str());
-    } else if (outMode == 3) {
-      diagf("laige-detcheck: probe handles out=file 0x%p %s"
-            " | err r=0x%p w=0x%p type=%lu %s\n",
-            static_cast<void*>(outTarget), handleBits(outTarget).c_str(),
-            static_cast<void*>(errR), static_cast<void*>(errW),
-            GetFileType(errW), handleBits(errW).c_str());
-    } else {
-      std::string dupNote;
-      if (outMode == 2) {
-        char nb[128];
-        std::snprintf(nb, sizeof nb, " | wdup=0x%p %s",
-                      static_cast<void*>(dupOut),
-                      handleBits(dupOut).c_str());
-        dupNote = nb;
-      }
-      diagf("laige-detcheck: probe handles out r=0x%p w=0x%p type=%lu %s%s"
-            "| err r=0x%p w=0x%p type=%lu %s\n",
-            static_cast<void*>(outR), static_cast<void*>(outW),
-            GetFileType(outW), handleBits(outTarget).c_str(),
-            dupNote.c_str(), static_cast<void*>(errR),
-            static_cast<void*>(errW), GetFileType(errW),
-            handleBits(errW).c_str());
-    }
-  }
-  STARTUPINFOW si{};
-  si.cb = sizeof si;
-  si.dwFlags = redirectStdio ? STARTF_USESTDHANDLES : 0;
-  if (redirectStdio) {
-    si.hStdOutput = outTarget;
-    si.hStdError = outMode == 1 ? GetStdHandle(STD_ERROR_HANDLE) : errW;
-  }
-  si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-  PROCESS_INFORMATION pi{};
-  if (!CreateProcessW(appname, cmd.data(), nullptr, nullptr, TRUE, 0,
-                       nullptr, nullptr, &si, &pi)) {
-    errOut = "CreateProcessW failed (lastError=" +
-             std::to_string(GetLastError()) + ")";
-    cleanup();
-    return false;
-  }
-  // The child now owns the write ends; drop our copies.
-  if (outW != INVALID_HANDLE_VALUE) CloseHandle(outW);
-  if (dupOut != INVALID_HANDLE_VALUE) CloseHandle(dupOut);
-  if (errW != INVALID_HANDLE_VALUE) CloseHandle(errW);
-  if (redirectStdio && (outDrained || errDrained)) {
-    auto drain = [](HANDLE r, std::string& out) {
-      char buf[256];
-      for (;;) {
-        if (WaitForSingleObject(r, INFINITE) != WAIT_OBJECT_0) break;
-        DWORD n = 0;
-        if (!PeekNamedPipe(r, buf, sizeof buf, &n, nullptr, nullptr)) break;
-        if (n == 0) break;
-        DWORD got = 0;
-        if (!ReadFile(r, buf, n, &got, nullptr)) break;
-        out.append(buf, got);
-      }
-      CloseHandle(r);
-    };
-    if (outDrained) drain(outR, capturedOut);
-    if (errDrained) drain(errR, capturedErr);
-  }
-  WaitForSingleObject(pi.hProcess, INFINITE);
-  exitCode = 0;
-  GetExitCodeProcess(pi.hProcess, &exitCode);
-  // Mode 3: the child's stdout landed in a file; read it back now that
-  // the child has exited (all of its writes are complete).
-  if (!outFile.empty()) {
-    const HANDLE rf = CreateFileW(outFile.c_str(), GENERIC_READ,
-                                  FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                                  FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (rf != INVALID_HANDLE_VALUE) {
-      char buf[4096];
-      for (;;) {
-        DWORD n = 0;
-        if (!ReadFile(rf, buf, sizeof buf, &n, nullptr) || n == 0) break;
-        capturedOut.append(buf, n);
-      }
-      CloseHandle(rf);
-    }
-    DeleteFileW(outFile.c_str());
-  }
-  CloseHandle(pi.hThread);
-  CloseHandle(pi.hProcess);
-  return true;
-}
-
-// Control probe (diagnostic): in this process instance, launch known-good
-// children through the exact machinery used for scenario runs and record
-// what each one received:
-//
-//   attempt 1: laige-detcheck-probe (the diagnostic helper from our own
-//              module directory) — its stderr self-reports the std
-//              handles the kernel assigned to it (value/type/flags),
-//              captured in capturedErr; its stdout marker is captured in
-//              capturedOut.
-//   attempt 2: same helper, explicit lpApplicationName.
-//   attempt 3: cmd.exe /c echo marker — the classic control.
-//   attempt 4: same helper, NO STARTUPINFO redirection — plain handle
-//              inheritance only (stdout follows detcheck's own fd1).
-//   attempt 5: same helper, STARTUPINFO with detcheck's OWN (kernel-
-//              assigned) fd1/fd2 — if this delivers while 1-3 do not,
-//              the failure is specific to handles this process created.
-//              (Success shows up as an extra PROBE_HELPER_OK line in
-//              detcheck's own stdout and an extra self-report line in
-//              its stderr; capturedOut/capturedErr stay empty by design.)
-//   attempt 6: same helper, STARTUPINFO with a fresh pipe whose write
-//              end was re-created via DuplicateHandle(dwInheritable) —
-//              tests whether a freshly duplicated inheritable handle is
-//              delivered where the original pipe handle is not.
-//   attempt 7: same helper, STARTUPINFO with a self-created FILE handle
-//              (temp file) as the child's stdout — if this delivers
-//              where self-created pipes do not (run 24: kernel-assigned
-//              handles delivered, self-created pipes not, even when
-//              duplicated), file capture is the scenario path. Success
-//              shows up as PROBE_HELPER_OK inside capturedOut.
-void probeControlSpawn() {
-  // The helper lives next to us in the build bin directory.
-  wchar_t mod[1024] = {};
-  const DWORD modLen = GetModuleFileNameW(nullptr, mod, 1024);
-  std::wstring helper;
-  if (modLen > 0 && modLen < 1024) {
-    const std::wstring m(mod, modLen);
-    const std::size_t slash = m.find_last_of(L'\\');
-    if (slash != std::wstring::npos) {
-      helper = m.substr(0, slash + 1) + L"laige-detcheck-probe.exe";
-    }
-  }
-  // Non-const so .data() yields wchar_t* for CreateProcessW (C++20).
-  const std::wstring helperCmd = L"\"" + helper + L"\"";
-  const std::wstring controlCmd = L"cmd.exe /c echo LAIGE_DETCHECK_CONTROL_OK";
-  auto runAttempt = [&](int n, const wchar_t* app, const std::wstring& cmd,
-                         bool redirect, int outMode, const char* desc) {
-    DWORD code = 0;
-    std::string out, err, why;
-    const bool ok = probeAttempt(app, cmd, redirect, outMode, code, out, err,
-                                 why);
-    diagf("laige-detcheck: control probe attempt %d (%s): spawned=%d "
-          "exit=%lu out='%s' err='%s' why=%s\n",
-          n, desc, ok ? 1 : 0, static_cast<unsigned long>(code), out.c_str(),
-          err.c_str(), why.c_str());
-  };
-  if (!helper.empty()) {
-    runAttempt(1, nullptr, helperCmd, true, 0, "helper, cmdline path");
-    runAttempt(2, helper.c_str(), helperCmd, true, 0, "helper, explicit app");
-    // Kernel-assigned handles through STARTUPINFO: if this one delivers
-    // while the fresh-pipe ones do not, the failure is specific to
-    // handles this process created itself.
-    runAttempt(5, nullptr, helperCmd, true, 1,
-               "helper, kernel fd1/fd2 via STARTUPINFO");
-    // Fresh pipe whose write end is re-created as an inheritable
-    // duplicate: if this delivers where the original did not, use the
-    // DuplicateHandle path for scenario capture.
-    runAttempt(6, nullptr, helperCmd, true, 2,
-               "helper, dup handle via STARTUPINFO");
-    // Self-created FILE handle as the child's stdout (temp file, read
-    // back after the child exits): if this delivers where self-created
-    // pipes do not, file capture is the scenario path.
-    runAttempt(7, nullptr, helperCmd, true, 3,
-               "helper, file via STARTUPINFO");
-  }
-  runAttempt(3, nullptr, controlCmd, true, 0, "cmd marker");
-  runAttempt(4, nullptr, helperCmd, false, 0, "helper, no redirect (control)");
-}
-
-// Best-effort parent-process identification (M0-TEST-01 Windows CI
-// diagnosis): a diag file can be written by a detcheck invocation OTHER
-// than the check script's; the parent's pid and command line say who
-// launched this process. NtQueryInformationProcess is resolved through
-// GetProcAddress (no new import; both process-info classes are stable on
-// x64). Every step is best-effort: any failure yields (unavailable).
-std::string parentProcessInfo() {
-  struct Pbi {
-    long exitStatus;
-    void* peb;
-    unsigned long long affinity;
-    unsigned char priority;
-    unsigned long pid;
-    unsigned long long inheritedFrom;
-  } pbi = {};
-  typedef long(* NtQIP_t)(HANDLE, int, void*, unsigned long, unsigned long*);
-  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-  if (!ntdll) return "parent=(unavailable)";
-  const NtQIP_t ntq = reinterpret_cast<NtQIP_t>(
-      GetProcAddress(ntdll, "NtQueryInformationProcess"));
-  if (!ntq) return "parent=(unavailable)";
-  if (ntq(GetCurrentProcess(), 0, &pbi, sizeof pbi, nullptr) != 0) {
-    return "parent=(unavailable)";
-  }
-  std::string s = "parent=" +
-                  std::to_string(static_cast<unsigned long>(pbi.inheritedFrom));
-  std::string cmd;
-  HANDLE ph = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE,
-                          static_cast<DWORD>(pbi.inheritedFrom));
-  if (ph) {
-    struct Us {
-      unsigned short length;
-      unsigned short maximumLength;
-      wchar_t* buffer;
-    } us = {};
-    unsigned long need = 0;
-    if (ntq(ph, 60, &us, sizeof us, &need) != 0 && need > sizeof us) {
-      std::vector<wchar_t> buf(need / 2 + 1, 0);
-      us.buffer = buf.data();
-      us.maximumLength = static_cast<unsigned short>(need);
-      if (ntq(ph, 60, &us, sizeof us, nullptr) == 0 && us.length > 0) {
-        const int n = WideCharToMultiByte(CP_UTF8, 0, buf.data(),
-                                           static_cast<int>(us.length / 2),
-                                           nullptr, 0, nullptr, nullptr);
-        if (n > 0) {
-          cmd.resize(static_cast<std::size_t>(n));
-          WideCharToMultiByte(CP_UTF8, 0, buf.data(),
-                              static_cast<int>(us.length / 2), cmd.data(), n,
-                              nullptr, nullptr);
-        }
-      }
-    }
-    CloseHandle(ph);
-  }
-  s += cmd.empty() ? " parent-cmd=(unavailable)"
-                  : " parent-cmd=\"" + cmd + "\"";
-  return s;
-}
-
-#else  // POSIX (Linux, macOS)
-
-// POSIX counterpart of the Windows parent-process identification: the
-// parent pid plus its /proc command line (Linux; macOS has no /proc, so
-// only the pid is reported there).
-std::string parentProcessInfo() {
-  const int pp = static_cast<int>(::getppid());
-  std::string s = "parent=" + std::to_string(pp);
-  char path[128];
-  std::snprintf(path, sizeof path, "/proc/%d/cmdline", pp);
-  std::FILE* f = std::fopen(path, "rb");
-  if (!f) {
-    return s + " parent-cmd=(unavailable)";
-  }
-  char buf[1024];
-  const std::size_t n = std::fread(buf, 1, sizeof buf, f);
-  std::fclose(f);
-  std::string cmd(buf, n);
-  for (char& c : cmd) {
-    if (c == '\0') c = ' ';
-  }
-  while (!cmd.empty() && cmd.back() == ' ') cmd.pop_back();
-  s += cmd.empty() ? " parent-cmd=(unavailable)"
-                  : " parent-cmd=\"" + cmd + "\"";
-  return s;
-}
-
-#endif  // _WIN32
+#endif  // defined(_WIN32)
 
 // --- Scenario spawn with markers (mode 2, phase 1) -------------------------
 //
@@ -859,18 +360,6 @@ std::string parentProcessInfo() {
 int spawnScenarioWithMarkers(const std::string& exe,
                              const std::vector<std::string>& args,
                              const std::string& label, std::string& error) {
-  // The env dump and control probes describe THIS process instance; run
-  // them once per process and BEFORE the first BEGIN marker, so their
-  // (probe) stdout, if any, precedes the marker windows and never lands
-  // inside an extracted run stream.
-  static bool probed = false;
-  if (!probed) {
-#ifdef _WIN32
-    dumpEnvironmentDiagnostics();
-    probeControlSpawn();
-#endif
-    probed = true;
-  }
   // The BEGIN marker must reach the capture BEFORE the child is born, so
   // the child's ticks (on the same stream) cannot precede it.
   std::printf("@@DETCHK-RUN-%s-BEGIN@@\n", label.c_str());
@@ -889,10 +378,10 @@ int spawnScenarioWithMarkers(const std::string& exe,
       // Zeroed STARTUPINFO (no dwFlags): the child inherits this process's
       // standard handles (the harness's capture). No self-created handle
       // is involved - the kind the CI Windows runner never delivers (see
-      // above). A NULL STARTUPINFO is NOT used: the runner's CreateProcess
-      // machinery fails on it (measured in the M0-TEST-01 CI, run
-      // 34732057356: the probe's no-redirect control passes a zeroed
-      // STARTUPINFO and spawns fine, while the NULL form fails).
+      // above). A zeroed STARTUPINFO is passed rather than NULL: on the
+      // CI Windows runner the NULL form makes CreateProcessW fail while
+      // the zeroed form spawns fine (measured in the M0-TEST-01 CI, run
+      // 34732057356) - do not "simplify" this to NULL.
       STARTUPINFOW si{};
       si.cb = sizeof si;
       PROCESS_INFORMATION pi{};
@@ -901,8 +390,6 @@ int spawnScenarioWithMarkers(const std::string& exe,
         error = "CreateProcessW failed (lastError=" +
                 std::to_string(GetLastError()) + "): " + exe;
       } else {
-        diagf("laige-detcheck: spawned run-%s child pid=%lu (inherit stdio)\n",
-              label.c_str(), static_cast<unsigned long>(pi.dwProcessId));
         // Wait for termination BEFORE reading the exit code
         // (GetExitCodeProcess on a live process returns STILL_ACTIVE).
         if (WaitForSingleObject(pi.hProcess, INFINITE) != WAIT_OBJECT_0) {
@@ -1154,11 +641,7 @@ CompareResult compareStreams(const std::vector<std::string>& a,
 void report(std::string_view scenarioName, const CompareResult& c,
             std::size_t ticks, std::string_view labelA,
             std::string_view labelB) {
-  auto emit = [](const char* line) {
-    std::printf("%s\n", line);
-    g_diag.append(line);
-    g_diag += "\n";
-  };
+  auto emit = [](const char* line) { std::printf("%s\n", line); };
   if (c.ok) {
     char buf[256];
     std::snprintf(buf, sizeof buf,
@@ -1304,29 +787,6 @@ bool parseArgs(int argc, char** argv, Args& a) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  // Flush the accumulated diagnostics to $LAIGE_DETCHECK_DIAG_FILE on
-  // every exit path (ctest hides passing-test output; the file is how
-  // those diagnostics reach the CI log).
-  DiagFlush diagFlush;
-  // Diagnostic begin marker (identifies the run and its writer in the
-  // flushed file: a diag file can be overwritten by a later detcheck
-  // invocation with the same LAIGE_DETCHECK_DIAG_FILE).
-  {
-    std::string cmdLine;
-    for (int i = 0; i < argc; ++i) {
-      if (i > 0) cmdLine += " ";
-      cmdLine += argv[i];
-    }
-#ifdef _WIN32
-    diagf("laige-detcheck: diag begin pid=%lu %s argv=%s\n",
-          static_cast<unsigned long>(GetCurrentProcessId()),
-          parentProcessInfo().c_str(), cmdLine.c_str());
-#else
-    diagf("laige-detcheck: diag begin pid=%d %s argv=%s\n",
-          static_cast<int>(::getpid()), parentProcessInfo().c_str(),
-          cmdLine.c_str());
-#endif
-  }
   Args a;
   if (!parseArgs(argc, argv, a)) {
     printUsage(stderr);
@@ -1413,12 +873,12 @@ int main(int argc, char** argv) {
     }
     const std::string errA = validateStream(linesA, kMaxTicks);
     if (!errA.empty()) {
-      diagf("laige-detcheck: scenario run-a: %s\n", errA.c_str());
+      std::fprintf(stderr, "laige-detcheck: scenario run-a: %s\n", errA.c_str());
       return 2;
     }
     const std::string errB = validateStream(linesB, kMaxTicks);
     if (!errB.empty()) {
-      diagf("laige-detcheck: scenario run-b: %s\n", errB.c_str());
+      std::fprintf(stderr, "laige-detcheck: scenario run-b: %s\n", errB.c_str());
       return 2;
     }
     const CompareResult c = compareStreams(linesA, linesB);
@@ -1437,11 +897,11 @@ int main(int argc, char** argv) {
     const int codeA =
         spawnScenarioWithMarkers(a.runA, a.positionals, "A", errA);
     if (codeA < 0) {
-      diagf("laige-detcheck: scenario run-a: %s\n", errA.c_str());
+      std::fprintf(stderr, "laige-detcheck: scenario run-a: %s\n", errA.c_str());
       return 2;
     }
     if (codeA != 0) {
-      diagf("laige-detcheck: scenario run-a: scenario process exited with "
+      std::fprintf(stderr, "laige-detcheck: scenario run-a: scenario process exited with "
             "code %d (command: %s)\n",
             codeA, a.runA.c_str());
       return 2;
@@ -1450,11 +910,11 @@ int main(int argc, char** argv) {
     const int codeB =
         spawnScenarioWithMarkers(a.runB, a.positionals, "B", errB);
     if (codeB < 0) {
-      diagf("laige-detcheck: scenario run-b: %s\n", errB.c_str());
+      std::fprintf(stderr, "laige-detcheck: scenario run-b: %s\n", errB.c_str());
       return 2;
     }
     if (codeB != 0) {
-      diagf("laige-detcheck: scenario run-b: scenario process exited with "
+      std::fprintf(stderr, "laige-detcheck: scenario run-b: scenario process exited with "
             "code %d (command: %s)\n",
             codeB, a.runB.c_str());
       return 2;

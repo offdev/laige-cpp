@@ -218,42 +218,8 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
       - name: Build
         run: cmake --build build --config Debug -j
-      - name: Warm up scenario binaries
-        # The first execution of a freshly built .exe on a Windows runner
-        # can be disrupted by the file filter's first-open scan (observed
-        # in the M0-TEST-01 CI: the first launches of the fresh detcheck
-        # fixture exes exited 0 with their stdout capture lost, while
-        # later launches of the same binaries succeeded). Running each
-        # spawned test binary once here absorbs that outside the ctest
-        # assertions.
-        run: |
-          $bin = ".\build\bin\Debug"
-          & "$bin\laige-detcheck.exe" --scenario=synthetic
-          & "$bin\laige-fuzz.exe" json_parse --runs=1
-          & "$bin\detcheck-fixture-scenario.exe" --ticks=1
-          & "$bin\detcheck-fixture-scenario-perturbed.exe" --ticks=1
-          & "$bin\detcheck-fixture-scenario-bad.exe" --ticks=1
-          & "$bin\detcheck-fixture-scenario-fail.exe" --ticks=1
-          & "$bin\detcheck-fixture-scenario-short.exe" --ticks=1
-          & "$bin\laige-detcheck-probe.exe"
       - name: Test (unit)
-        # ctest hides passing-test output, so the per-test detcheck
-        # diagnostic files are printed here, regardless of the ctest
-        # outcome; the step still exits with ctest's status. Two files
-        # per test: <name>.txt is detcheck's own spawn diagnostics
-        # (spawn handles, control probes — see tools/detcheck);
-        # <name>.txt.check is the check script's captured output of the
-        # same invocation (written by the cmake process, not detcheck).
-        run: |
-          ctest --test-dir build -C Debug --output-on-failure
-          $ctestExit = $LASTEXITCODE
-          Get-ChildItem .\build\tests\detcheck\diag -File -ErrorAction SilentlyContinue |
-            Sort-Object Name |
-            ForEach-Object {
-              Write-Host "===== detcheck diag: $($_.Name) ====="
-              Get-Content $_.FullName
-            }
-          exit $ctestExit
+        run: ctest --test-dir build -C Debug --output-on-failure
 
   macos-arm64:
     name: macOS arm64 (AppleClang)
