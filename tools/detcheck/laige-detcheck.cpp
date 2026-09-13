@@ -457,7 +457,13 @@ std::string handleBits(HANDLE h) {
 //   2 = a fresh CreatePipe whose write end is first re-created through
 //      DuplicateHandle(dwInheritable=TRUE) before use - tests whether a
 //      freshly duplicated inheritable handle is delivered where the
-//      original pipe handle is not.
+//      original pipe handle is not;
+//   3 = a self-created FILE handle (a temp file) as the child's stdout -
+//      run 24 showed STARTUPINFO delivers detcheck's kernel-assigned
+//      handles but NOT self-created pipes (even duplicated); if a
+//      self-created FILE handle delivers, file capture is the scenario
+//      path. The file is read back after the child exits (capturedOut
+//      carries the marker; capturedErr still comes from a fresh pipe).
 // Without redirectStdio the child inherits detcheck's own standard
 // handles (the plain-inheritance control). Returns false only when the
 // spawn itself failed (errOut).
@@ -472,6 +478,7 @@ bool probeAttempt(const wchar_t* appname, std::wstring cmd,
   HANDLE errR = INVALID_HANDLE_VALUE, errW = INVALID_HANDLE_VALUE;
   HANDLE dupOut = INVALID_HANDLE_VALUE;
   HANDLE outTarget = INVALID_HANDLE_VALUE;
+  std::wstring outFile;  // mode 3 only: the child's stdout file
   bool outDrained = false, errDrained = false;
   auto cleanup = [&]() {
     if (outR != INVALID_HANDLE_VALUE) CloseHandle(outR);
@@ -485,6 +492,31 @@ bool probeAttempt(const wchar_t* appname, std::wstring cmd,
       // Kernel-assigned: detcheck's own stdout; the child's stderr goes
       // to detcheck's own stderr (both harness-captured).
       outTarget = GetStdHandle(STD_OUTPUT_HANDLE);
+    } else if (outMode == 3) {
+      // Self-created FILE handle (temp file) as the child's stdout:
+      // if this delivers where self-created pipes do not, file capture
+      // is the scenario path. Read back after the child exits.
+      wchar_t tmp[512] = {};
+      const DWORD tmpLen = GetTempPathW(512, tmp);
+      if (tmpLen == 0 || tmpLen >= 512) {
+        errOut = "GetTempPathW failed (lastError=" +
+                 std::to_string(GetLastError()) + ")";
+        cleanup();
+        return false;
+      }
+      outFile = std::wstring(tmp, static_cast<std::size_t>(tmpLen)) +
+                L"laige-detcheck-probe-" +
+                std::to_wstring(GetCurrentProcessId()) + L".tmp";
+      const HANDLE f = CreateFileW(outFile.c_str(), GENERIC_WRITE,
+                                   FILE_SHARE_READ, &sa, CREATE_ALWAYS,
+                                   FILE_ATTRIBUTE_NORMAL, nullptr);
+      if (f == INVALID_HANDLE_VALUE) {
+        errOut = "CreateFileW failed (lastError=" +
+                 std::to_string(GetLastError()) + ")";
+        cleanup();
+        return false;
+      }
+      outTarget = f;
     } else {
       if (!CreatePipe(&outR, &outW, &sa, 0)) {
         errOut = "CreatePipe failed (lastError=" +
@@ -526,6 +558,12 @@ bool probeAttempt(const wchar_t* appname, std::wstring cmd,
             static_cast<void*>(outTarget), handleBits(outTarget).c_str(),
             static_cast<void*>(GetStdHandle(STD_ERROR_HANDLE)),
             handleBits(GetStdHandle(STD_ERROR_HANDLE)).c_str());
+    } else if (outMode == 3) {
+      diagf("laige-detcheck: probe handles out=file 0x%p %s"
+            " | err r=0x%p w=0x%p type=%lu %s\n",
+            static_cast<void*>(outTarget), handleBits(outTarget).c_str(),
+            static_cast<void*>(errR), static_cast<void*>(errW),
+            GetFileType(errW), handleBits(errW).c_str());
     } else {
       std::string dupNote;
       if (outMode == 2) {
@@ -584,6 +622,23 @@ bool probeAttempt(const wchar_t* appname, std::wstring cmd,
   WaitForSingleObject(pi.hProcess, INFINITE);
   exitCode = 0;
   GetExitCodeProcess(pi.hProcess, &exitCode);
+  // Mode 3: the child's stdout landed in a file; read it back now that
+  // the child has exited (all of its writes are complete).
+  if (!outFile.empty()) {
+    const HANDLE rf = CreateFileW(outFile.c_str(), GENERIC_READ,
+                                  FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (rf != INVALID_HANDLE_VALUE) {
+      char buf[4096];
+      for (;;) {
+        DWORD n = 0;
+        if (!ReadFile(rf, buf, sizeof buf, &n, nullptr) || n == 0) break;
+        capturedOut.append(buf, n);
+      }
+      CloseHandle(rf);
+    }
+    DeleteFileW(outFile.c_str());
+  }
   CloseHandle(pi.hThread);
   CloseHandle(pi.hProcess);
   return true;
@@ -612,6 +667,12 @@ bool probeAttempt(const wchar_t* appname, std::wstring cmd,
 //              end was re-created via DuplicateHandle(dwInheritable) —
 //              tests whether a freshly duplicated inheritable handle is
 //              delivered where the original pipe handle is not.
+//   attempt 7: same helper, STARTUPINFO with a self-created FILE handle
+//              (temp file) as the child's stdout — if this delivers
+//              where self-created pipes do not (run 24: kernel-assigned
+//              handles delivered, self-created pipes not, even when
+//              duplicated), file capture is the scenario path. Success
+//              shows up as PROBE_HELPER_OK inside capturedOut.
 void probeControlSpawn() {
   // The helper lives next to us in the build bin directory.
   wchar_t mod[1024] = {};
@@ -651,6 +712,11 @@ void probeControlSpawn() {
     // DuplicateHandle path for scenario capture.
     runAttempt(6, nullptr, helperCmd, true, 2,
                "helper, dup handle via STARTUPINFO");
+    // Self-created FILE handle as the child's stdout (temp file, read
+    // back after the child exits): if this delivers where self-created
+    // pipes do not, file capture is the scenario path.
+    runAttempt(7, nullptr, helperCmd, true, 3,
+               "helper, file via STARTUPINFO");
   }
   runAttempt(3, nullptr, controlCmd, true, 0, "cmd marker");
   runAttempt(4, nullptr, helperCmd, false, 0, "helper, no redirect (control)");
