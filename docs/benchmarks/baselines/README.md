@@ -16,5 +16,8 @@ and the exact command + commit that produced it. Baseline files are
 **immutable**: superseding a baseline adds a new file and updates
 `measured` in `budgets.json` — it never edits an existing baseline.
 
-No baselines are recorded yet (every `budgets.json` entry has
-`measured: 0`); the first lands with M0-EXIT-01.
+Every `budgets.json` entry still has `measured: 0` (their subsystems land
+in M1+); the first recorded baseline is
+[m0-synthetic.md](m0-synthetic.md) (M0-EXIT-01, 2026-09-13) — the
+synthetic harness workload, which proves the measurement pipeline end to
+end but does not measure any real budget.

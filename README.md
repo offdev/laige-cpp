@@ -8,11 +8,12 @@ isometric-first rendering, and a server-authoritative MMO path.
 - **License:** MIT (engine code). Samples and assets are separately
   licensed; each sample ships its own `LICENSE`
   ([ADR 0001](docs/decisions/0001-name-and-license.md)).
-- **Status:** **M0 — Foundations**, in progress. The repository skeleton,
-  build system, `laige-core` library target, and dependency lock
-  (`deps.lock` with vendored GoogleTest) have landed; the functional core
-  (math, pools, Result, logging, config) lands over the remaining M0 steps
-  in [roadmap/M0-foundations.md](roadmap/M0-foundations.md). So far:
+- **Status:** **M0 — Foundations complete** (exit gate M0-EXIT-01,
+  2026-09-13). The repository skeleton, CI on all P0 OSes, build system,
+  `laige-core` (math, pools, alloc, Result, logging, config), dependency
+  lock (`deps.lock` with vendored GoogleTest), and the API manifest
+  generator are in place — see
+  [roadmap/M0-foundations.md](roadmap/M0-foundations.md). Landed so far:
   `laige::Result<T,E>` / `laige::Status` plus the error-code registry
   (M0-CORE-01), the structured logging facade (M0-CORE-02), the SimMath
   deterministic-math interface with the default `fpx16_16` backend
