@@ -156,7 +156,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 | Milestone | Steps | Done | Status |
 |---|---|---|---|
 | M0 | 22 | 22 | ✅ complete (2026-09-13, M0-EXIT-01) |
-| M1 | 25 | 5 | 🚧 in progress (M1-ECS-05) |
+| M1 | 25 | 7 | 🚧 in progress (M1-ECS-07) |
 | M2 | 32 | 0 | ⬜ not started |
 | M3 | 36 | 0 | ⬜ not started |
 | M4 | 12 | 0 | ⬜ not started |
