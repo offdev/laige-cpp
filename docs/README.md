@@ -6,7 +6,8 @@ has started (M1-ECS-01: the entity handle and world entity storage;
 M1-ECS-02: the component type registry; M1-ECS-03: archetype SoA
 component storage; M1-ECS-04: the query API + iteration legality;
 M1-ECS-05: the deterministic iteration contract; M1-ECS-06: the
-ECS guardrails G-R3/G-R4).
+ECS guardrails G-R3/G-R4; M1-ECS-07: the ECS stress + memory
+accounting suite; M1-SYS-01: the system registry).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -53,6 +54,11 @@ still to land.
   order, entities in ascending slot id, the dense-id-order scheme
   under moves, no unordered containers in the iteration path, and the
   convergence property test (M1-ECS-05; `laige-sim`).
+- [System registry](api/system_registry.md) — plain registered
+  functions (`LAIGE_SYSTEM` + `SystemDef`) with declared time budgets
+  (fpx16_16 ms) and declared component I/O (`Io<T, Access>`),
+  `World::registerSystem`/`system`/`systemCount`, and
+  `SystemContext`'s delegated `each` (M1-SYS-01; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,

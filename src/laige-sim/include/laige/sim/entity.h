@@ -20,7 +20,10 @@
 //            removeComponent + the per-slot archetype record);
 //            M1-ECS-04 adds the query API and the iteration-legality
 //            guard (query.h: World::each<T1, T2, ...>(Read/Write
-//            tags..., fn) + the World-API mutation checks).
+//            tags..., fn) + the World-API mutation checks); M1-SYS-01
+//            adds the system registry (system.h: SystemDef,
+//            SystemContext, the LAIGE_SYSTEM macro,
+//            World::registerSystem/system/systemCount).
 //
 // ---------------------------------------------------------------------------
 // The handle contract (FR-1.2, CPP-007)
@@ -155,6 +158,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <utility>
 
 #include "laige/errors.h"
 #include "laige/logging.h"
@@ -163,6 +167,7 @@
 #include "laige/sim/archetype.h"
 #include "laige/sim/component.h"
 #include "laige/sim/query.h"
+#include "laige/sim/system.h"
 
 namespace laige {
 
@@ -517,6 +522,54 @@ class World {
   template <typename... Ts, typename... Acc, typename F>
   [[nodiscard]] Status each(F&& fn, Acc...) noexcept;
 
+  // -------------------------------------------------------------
+  // System registry (M1-SYS-01; full contract in system.h)
+  // -------------------------------------------------------------
+
+  // Register the system described by `def` in this world, declaring
+  // its component I/O as the Io<...> pack (zero entries = a system
+  // that touches no components). Setup phase (world construction,
+  // before the loop), like registerComponent<T>: O(n) in the number
+  // of registered systems, no allocation (the def is copied into the
+  // fixed kMaxSystems record table; the I/O sets are written in
+  // place).
+  //
+  //   moved-from world (no registry)   -> InvalidArgument
+  //   def.name null or empty            -> InvalidArgument + warn
+  //                                        (system/name_invalid)
+  //   def.run nullptr                   -> InvalidArgument + warn
+  //                                        (system/run_invalid)
+  //   def.budgetMs <= 0                 -> InvalidArgument + warn
+  //                                        (system/budget_invalid) —
+  //                                        the budget must be explicit
+  //   duplicate name in this world      -> InvalidArgument + warn
+  //                                        (system/duplicate)
+  //   Io<T> T not a Laige component     -> compile error (static_assert)
+  //   Io<T> T not registered (this world)
+  //                                   -> InvalidArgument + warn
+  //                                        (system/io_unregistered)
+  //   the same component declared twice by one system (any access
+  //   combination)                     -> InvalidArgument + warn
+  //                                        (system/io_duplicate)
+  //   more than kMaxSystems            -> BudgetExhausted + warn
+  //                                        (system/budget_exhausted)
+  //
+  // Returns the new SystemId (dense, from 1, in registration order —
+  // the component.h id contract).
+  template <typename... Ios>
+  [[nodiscard]] Result<SystemId, ErrorCode> registerSystem(const SystemDef& def, Ios...) noexcept;
+
+  // The number of systems registered so far (0 .. kMaxSystems). O(1),
+  // no side effects.
+  [[nodiscard]] std::uint32_t systemCount() const noexcept;
+
+  // The registered system's record under `id` (SystemInfo: the def
+  // value copy plus the declared I/O membership queries). O(1), no
+  // allocation. `id` invalid (0 or above systemCount()) or a
+  // moved-from world -> ErrorCode::InvalidArgument (a pure query,
+  // like componentInfo).
+  [[nodiscard]] Result<SystemInfo, ErrorCode> system(SystemId id) const noexcept;
+
   // Destroy every live entity (shutdown path, CONC-006). Every handle
   // becomes stale; the capacity is unchanged and the world is
   // immediately reusable. O(capacity + detached rows * row-stride),
@@ -649,6 +702,21 @@ class World {
   // Reject clear() while any matched archetype of the active
   // iteration still holds live rows (ecs/iteration_clear).
   [[nodiscard]] Status guardClear() noexcept;
+
+  // -------------------------------------------------------------
+  // M1-SYS-01 system-registry helper (defined in this header with
+  // registerSystem; full contract in system.h)
+  // -------------------------------------------------------------
+
+  // Resolve one Io<T, Access> entry of registerSystem: resolve T's
+  // ComponentTypeId in this world (0 when T is unregistered) and set
+  // the declared bit in the matching set. The sets are mutated only
+  // on Ok. `failedId` receives the resolved component id for the
+  // Duplicate case (the log field; left 0 otherwise).
+  template <typename Tag>
+  detail::IoResolution resolveIoEntry(detail::IdSet256& read,
+                                      detail::IdSet256& write,
+                                      std::uint32_t* failedId) const noexcept;
 
   // -------------------------------------------------------------
   // M1-ECS-06 guardrail checks (G-R3/G-R4; defined in guardrails.cpp)
@@ -819,6 +887,13 @@ class World {
   bool iterationActive_{false};
   detail::IdSet256 iterationArchetypes_{};
   detail::IdSet256 iterationReadComponents_{};
+  // System registry (M1-SYS-01; system.h): the fixed engine budget
+  // (kMaxSystems records), indexed by (system id - 1); a dense id is
+  // assigned at registration (registration order, component.h
+  // precedent). Setup state: clear() does not touch it (a system is
+  // not per-entity data).
+  std::unique_ptr<detail::SystemRecord[]> systems_;
+  std::uint32_t systemCount_{0};
 };
 
 // Component registration (M1-ECS-02). Header-defined: it is a template,
@@ -872,6 +947,148 @@ Result<ComponentTypeId, ErrorCode> World::registerComponent() noexcept {
   noteComponentKey(key, id.value);  // M1-ECS-03: the type -> id lookup
   ++componentCount_;
   return id;  // ids are dense, from 1
+}
+
+// ---------------------------------------------------------------------------
+// System registry (M1-SYS-01). Header-defined like registerComponent:
+// templates must be visible to every translation unit that registers a
+// system. See system.h for the full contract (the validation order
+// below, the I/O resolution, and the determinism note).
+// ---------------------------------------------------------------------------
+
+template <typename Tag>
+detail::IoResolution World::resolveIoEntry(detail::IdSet256& read,
+                                           detail::IdSet256& write,
+                                           std::uint32_t* failedId) const noexcept {
+  // Tag is an Io<C, Access> (the static_asserts in registerSystem).
+  using C = detail::IoComponent<Tag>::type;
+  const std::uint32_t id =
+      componentIdOfKey(&detail::ComponentTypeKey<C>::kMarker);
+  if (id == 0) return detail::IoResolution::Unregistered;
+  if (read.contains(id) || write.contains(id)) {
+    // The component is already declared by this system (any access
+    // combination): the I/O is a set, not a multiset (system.h).
+    *failedId = id;
+    return detail::IoResolution::Duplicate;
+  }
+  if (detail::IoComponent<Tag>::access == Access::Read) read.set(id);
+  else write.set(id);
+  return detail::IoResolution::Ok;
+}
+
+template <typename... Ios>
+Result<SystemId, ErrorCode> World::registerSystem(const SystemDef& def, Ios...) noexcept {
+  // I/O pack validation (compile time, not runtime surprises):
+  // every entry must be an Io<T, Access> tag and its component type
+  // must be a Laige component (FR-1.2, S-8).
+  static_assert((detail::IsIoTag<Ios>::value && ...),
+                "registerSystem: every I/O entry must be an "
+                "Io<T, Access> tag value (laige/sim/system.h)");
+  static_assert((detail::IsIoComponent<Ios>::value && ...),
+                "registerSystem: every Io<T, ...> component type must "
+                "be marked with LAIGE_COMPONENT(T) (FR-1.2, S-8)");
+  if (systems_ == nullptr) {
+    // Moved-from world: no registry (the same "valid empty world"
+    // contract as the component registry, component.h).
+    return ErrorCode::InvalidArgument;
+  }
+  // The validation order is normative (system.h preamble): the def's
+  // fields first, then the name uniqueness, then the I/O entries,
+  // lastly the engine budget. Every failure is one rate-limited
+  // structured warn + a Status (FR-12.3: never silent; LOG-004).
+  if (def.name == nullptr || def.name[0] == '\0') {
+    // The name cannot be logged (it is null or empty); the message
+    // names the field, and the budget identifies the def.
+    LAIGE_LOG_WARN("system", "name_invalid",
+                   "System has no registration name (the def's name is "
+                   "null or empty)",
+                   laige::log::field("budget_raw", def.budgetMs.raw));
+    return ErrorCode::InvalidArgument;
+  }
+  if (def.run == nullptr) {
+    LAIGE_LOG_WARN("system", "run_invalid",
+                   "System has no run function; build the def with "
+                   "LAIGE_SYSTEM or set run explicitly",
+                   laige::log::field("name", def.name));
+    return ErrorCode::InvalidArgument;
+  }
+  if (def.budgetMs.raw <= 0) {
+    // The budget must be explicit and strictly positive (FR-1.3;
+    // fpx16_16 is exact, so raw <= 0 is exactly "not > 0 ms").
+    LAIGE_LOG_WARN("system", "budget_invalid",
+                   "System time budget must be explicit and > 0 ms",
+                   laige::log::field("name", def.name),
+                   laige::log::field("budget_raw", def.budgetMs.raw));
+    return ErrorCode::InvalidArgument;
+  }
+  for (std::uint32_t i = 0; i < systemCount_; ++i) {
+    if (std::strcmp(systems_[i].def.name, def.name) == 0) {
+      // Duplicate name is an error (M1-SYS-01 scope); the facade
+      // rate-limits the warn per event (LOG-004).
+      LAIGE_LOG_WARN("system", "duplicate",
+                     "System name is already registered in this world; "
+                     "duplicate names are an error",
+                     laige::log::field("name", def.name),
+                     laige::log::field("existing_system_id", i + 1u));
+      return ErrorCode::InvalidArgument;
+    }
+  }
+  // The I/O entries, resolved against this world's component registry
+  // (per-world ids, component.h). The fold short-circuits on the first
+  // failure (the sets are mutated only on Ok, so a failed registration
+  // changes nothing). The unnamed Ios pack is intentional: only the
+  // TYPES are used — a named pack would be an unreferenced parameter
+  // (MSVC C4100, fatal under /WX; NFR-8.10), the each() precedent.
+  detail::IdSet256 read, write;
+  std::uint32_t failedId = 0;
+  detail::IoResolution io = detail::IoResolution::Ok;
+  ((io = (io == detail::IoResolution::Ok
+                ? this->template resolveIoEntry<Ios>(read, write, &failedId)
+                : io)),
+   ...);
+  if (io != detail::IoResolution::Ok) {
+    if (io == detail::IoResolution::Unregistered) {
+      LAIGE_LOG_WARN("system", "io_unregistered",
+                     "System declares I/O for a component type that is "
+                     "not registered in this world; register it at world "
+                     "setup",
+                     laige::log::field("name", def.name));
+    } else {
+      LAIGE_LOG_WARN("system", "io_duplicate",
+                     "System declares the same component more than once "
+                     "in its I/O list (any access combination)",
+                     laige::log::field("name", def.name),
+                     laige::log::field("component_id", failedId));
+    }
+    return ErrorCode::InvalidArgument;
+  }
+  if (systemCount_ >= kMaxSystems) {
+    // The engine-level system budget (system.h preamble).
+    LAIGE_LOG_WARN("system", "budget_exhausted",
+                   "The world has kMaxSystems systems; a new system "
+                   "cannot be registered (M1 bound - raise it through "
+                   "an ADR)",
+                   laige::log::field("name", def.name),
+                   laige::log::field("systems", systemCount_));
+    return ErrorCode::BudgetExhausted;
+  }
+  detail::SystemRecord& rec = systems_[systemCount_];
+  rec.def = def;  // value copy: the user's def may be stack-scoped
+  rec.readComponents = read;
+  rec.writeComponents = write;
+  const std::uint32_t id = systemCount_ + 1;
+  ++systemCount_;
+  return SystemId{id};  // ids are dense, from 1
+}
+
+// The context's delegated each (M1-SYS-01). Out-of-line here (not in
+// system.h) because the delegated call is checked against the
+// complete World: World is only forward-declared in system.h. The
+// pack is named so its VALUES can be forwarded (an unnamed pack
+// cannot be forwarded — C++ has no pack of packless values).
+template <typename... Ts, typename... Acc, typename F>
+[[nodiscard]] Status SystemContext::each(F&& fn, Acc... acc) noexcept {
+  return world.each<Ts...>(std::forward<F>(fn), std::forward<Acc>(acc)...);
 }
 
 // ---------------------------------------------------------------------------

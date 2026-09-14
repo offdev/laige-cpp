@@ -72,7 +72,9 @@ World::World(World&& other) noexcept
       churnWarns_(other.churnWarns_),
       iterationActive_(other.iterationActive_),
       iterationArchetypes_(other.iterationArchetypes_),
-      iterationReadComponents_(other.iterationReadComponents_) {
+      iterationReadComponents_(other.iterationReadComponents_),
+      systems_(std::move(other.systems_)),
+      systemCount_(other.systemCount_) {
   other.capacity_ = 0;
   other.freeCount_ = 0;
   other.inUse_ = 0;
@@ -105,6 +107,10 @@ World::World(World&& other) noexcept
   other.iterationActive_ = false;
   other.iterationArchetypes_ = detail::IdSet256{};
   other.iterationReadComponents_ = detail::IdSet256{};
+  // M1-SYS-01: the system registry travels with the storage; the
+  // moved-from world is a valid empty world in every field (no
+  // registry: registerSystem returns InvalidArgument on it).
+  other.systemCount_ = 0;
 }
 
 World& World::operator=(World&& other) noexcept {
@@ -150,6 +156,9 @@ World& World::operator=(World&& other) noexcept {
   iterationActive_ = other.iterationActive_;
   iterationArchetypes_ = other.iterationArchetypes_;
   iterationReadComponents_ = other.iterationReadComponents_;
+  // M1-SYS-01: the system registry travels with the storage.
+  systems_ = std::move(other.systems_);
+  systemCount_ = other.systemCount_;
   other.capacity_ = 0;
   other.freeCount_ = 0;
   other.inUse_ = 0;
@@ -177,6 +186,9 @@ World& World::operator=(World&& other) noexcept {
   other.iterationActive_ = false;
   other.iterationArchetypes_ = detail::IdSet256{};
   other.iterationReadComponents_ = detail::IdSet256{};
+  // M1-SYS-01: the moved-from world is a valid empty world in every
+  // field (no registry: registerSystem returns InvalidArgument on it).
+  other.systemCount_ = 0;
   return *this;
 }
 
@@ -195,6 +207,11 @@ Result<World, ErrorCode> World::create(Options options) noexcept {
   // budget (kMaxComponentTypes), a setup-path allocation like the
   // entity tables below.
   w.components_ = std::make_unique<detail::ComponentRecord[]>(kMaxComponentTypes);
+  // System registry table (M1-SYS-01): the fixed engine-level budget
+  // (kMaxSystems records, value-initialized), a setup-path
+  // allocation like the component registry above — allocated even
+  // for a zero-capacity world so it stays a valid empty world.
+  w.systems_ = std::make_unique<detail::SystemRecord[]>(kMaxSystems);
   // Archetype storage (M1-ECS-03): the fixed archetype table
   // (kMaxArchetypes records, value-initialized) and the type-key
   // index (kComponentKeyIndexSize slots) — setup-path allocations,
