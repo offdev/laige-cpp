@@ -122,7 +122,10 @@ void burnMs(double ms) {
   const auto start = std::chrono::steady_clock::now();
   while (std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
              std::chrono::steady_clock::now() - start).count() < ms) {
-    gBurnSink += 1;
+    // Ordinary assignment: compound assignment to a volatile is
+    // deprecated in C++20 (P1152R2) and a hard error under
+    // -Werror,-Wdeprecated-volatile (AppleClang on the macos-14 job).
+    gBurnSink = gBurnSink + 1;
   }
 }
 
@@ -306,8 +309,13 @@ TEST(SystemTiming, HealthyTicksLogNothingAndTrackStats) {
   EXPECT_EQ(st.value().warns, 0u);
   EXPECT_EQ(st.value().errors, 0u);
   // A noop system on an empty world runs in microseconds — well
-  // under its 1 ms budget, with margin for a slow machine.
-  EXPECT_GT(st.value().lastMs, 0.0);
+  // under its 1 ms budget, with margin for a slow machine. The lower
+  // bound is >= 0.0, not > 0.0: a run shorter than the platform's
+  // steady_clock tick measures as exactly 0.0 ms (the start and end
+  // reads land on the same tick), and that sub-resolution reading is
+  // a legitimate value, not a failure (the tracked-state check is
+  // the runs counter above; lastMs is a diagnostic).
+  EXPECT_GE(st.value().lastMs, 0.0);
   EXPECT_LT(st.value().lastMs, 1.0);
 
   const laige::Histogram* win = w.systemTimingWindow(SystemId{1});

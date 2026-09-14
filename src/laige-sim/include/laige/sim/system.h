@@ -537,7 +537,10 @@ struct SystemTimingStats {
   // Measured runs of the system since world construction.
   std::uint64_t runs{};
   // The measured time (ms) of the most recent run (0 before the first
-  // run).
+  // run). A run shorter than the platform's steady_clock tick
+  // measures as exactly 0.0 ms — a legitimate sub-resolution reading
+  // (wall-clock resolution is platform-sensitive; ARCH-009), not a
+  // failure state.
   double lastMs{};
   // The system/budget_overrun warns issued since construction.
   std::uint32_t warns{};
@@ -597,7 +600,8 @@ struct SystemTimingRecord {
   // constructor, so the record holds it as a unique_ptr — the one
   // level of indirection is bounded by kMaxSystems).
   std::unique_ptr<Histogram> window;
-  double lastMs{};       // most recent measured run (0 before first)
+  double lastMs{};  // most recent measured run (0 before first; a run
+                   // shorter than the steady_clock tick reads 0.0)
   std::uint64_t runs{};  // measured runs since construction
   std::uint32_t warns{};  // budget_overrun warns issued
   std::uint32_t errors{}; // budget_critical errors issued
