@@ -23,7 +23,11 @@
 //            tags..., fn) + the World-API mutation checks); M1-SYS-01
 //            adds the system registry (system.h: SystemDef,
 //            SystemContext, the LAIGE_SYSTEM macro,
-//            World::registerSystem/system/systemCount).
+//            World::registerSystem/system/systemCount); M1-SYS-02
+//            adds the system scheduler (system.h: SystemSchedule,
+//            the depends_on spec, World::scheduleSystems/
+//            runSystems — execution order, depends_on, and the
+//            pre-run I/O validation).
 //
 // ---------------------------------------------------------------------------
 // The handle contract (FR-1.2, CPP-007)
@@ -542,6 +546,10 @@ class World {
   //   def.budgetMs <= 0                 -> InvalidArgument + warn
   //                                        (system/budget_invalid) —
   //                                        the budget must be explicit
+  //   malformed depends_on spec (empty
+  //   token, duplicate name, more than
+  //   kMaxSystemDependencies)          -> InvalidArgument + warn
+  //                                        (system/dep_spec_invalid)
   //   duplicate name in this world      -> InvalidArgument + warn
   //                                        (system/duplicate)
   //   Io<T> T not a Laige component     -> compile error (static_assert)
@@ -569,6 +577,47 @@ class World {
   // moved-from world -> ErrorCode::InvalidArgument (a pure query,
   // like componentInfo).
   [[nodiscard]] Result<SystemInfo, ErrorCode> system(SystemId id) const noexcept;
+
+  // -------------------------------------------------------------
+  // System scheduler (M1-SYS-02; full contract in system.h,
+  // "Scheduler")
+  // -------------------------------------------------------------
+
+  // Compute and validate this world's execution order into `out`
+  // (SystemSchedule). Setup phase (after all registrations, before
+  // the loop); a pure read of the registry (const). The order is the
+  // stable topological sort of the registration order plus the
+  // declared depends_on edges (system.h). Validation order (first
+  // failure wins): unknown dependency name (system/dep_missing),
+  // dependency cycle (system/dependency_cycle), two systems writing
+  // the same component (system/double_writer) — each InvalidArgument
+  // + one rate-limited warn; a declared read ordered before a
+  // declared write of the same component WARNs without failing
+  // (system/read_before_write). Success: `out` fully populated,
+  // nothing logged (LOG-003). Setup path: O(n·d·n + c·n²) in the
+  // system count n (≤ kMaxSystems), direct dependencies d (≤
+  // kMaxSystemDependencies), and component count c (≤
+  // kMaxComponentTypes); no allocation.
+  [[nodiscard]] Status scheduleSystems(SystemSchedule& out) const noexcept;
+
+  // Run the systems of `schedule` once — one sim tick's system phase
+  // (the M1-LOOP-01 accumulator calls this once per tick). The
+  // systems run strictly one at a time, in schedule order, on the
+  // world's single owner thread (PRD §10.2); each gets a fresh
+  // non-owning SystemContext. O(n) dispatch plus the systems' own
+  // work; no allocation (PERF-003), no logging on the success path
+  // (LOG-003).
+  //
+  //   schedule.systemCount != the world's systemCount
+  //                                   -> InvalidArgument + warn
+  //                                        (system/schedule_stale) —
+  //                                        the registry changed since
+  //                                        the schedule was computed
+  //   order entry 0, above systemCount, or a duplicate id
+  //                                   -> InvalidArgument + warn
+  //                                        (system/schedule_invalid)
+  //   schedule.systemCount == 0       -> ok, runs nothing
+  [[nodiscard]] Status runSystems(const SystemSchedule& schedule) noexcept;
 
   // Destroy every live entity (shutdown path, CONC-006). Every handle
   // becomes stale; the capacity is unchanged and the world is
@@ -1019,6 +1068,25 @@ Result<SystemId, ErrorCode> World::registerSystem(const SystemDef& def, Ios...) 
                    "System time budget must be explicit and > 0 ms",
                    laige::log::field("name", def.name),
                    laige::log::field("budget_raw", def.budgetMs.raw));
+    return ErrorCode::InvalidArgument;
+  }
+  // The depends_on spec (M1-SYS-02, system.h "Scheduler"): a
+  // malformed name list is a def-level defect — a registration error,
+  // like a malformed name or budget. The names themselves are
+  // resolved against this world at SCHEDULING time, so forward
+  // dependencies (a system registered later) are legal.
+  detail::DepSpecParse parsedDep;
+  const detail::DepSpecError depErr =
+      detail::parseDepSpec(def.dependsOn, &parsedDep);
+  if (depErr != detail::DepSpecError::Ok) {
+    LAIGE_LOG_WARN("system", "dep_spec_invalid",
+                   "System depends_on spec is malformed (empty token, "
+                   "duplicate name, or more than "
+                   "kMaxSystemDependencies dependencies); fix the "
+                   "LAIGE_SYSTEM depends_on list",
+                   laige::log::field("name", def.name),
+                   laige::log::field("error",
+                                     detail::depSpecErrorName(depErr)));
     return ErrorCode::InvalidArgument;
   }
   for (std::uint32_t i = 0; i < systemCount_; ++i) {

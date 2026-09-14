@@ -103,7 +103,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R system_registry` green.
   - **Size:** ~150 lines + tests
 
-- [ ] **M1-SYS-02 · System scheduler**
+- [x] **M1-SYS-02 · System scheduler**
   - **Refs:** FR-1.3 (engine enforces iteration legality); PRD §10.2 (sim thread)
   - **Depends:** M1-SYS-01
   - **Scope:**
