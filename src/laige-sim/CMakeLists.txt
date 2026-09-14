@@ -19,8 +19,11 @@
 # index); entity.cpp keeps the handle/slot storage and the World
 # lifecycle. M1-ECS-04 adds query.cpp: the iteration-legality guard
 # behind World::each (the query template itself is header-defined in
-# entity.h, next to the component access templates).
-set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp)
+# entity.h, next to the component access templates). M1-ECS-06 adds
+# guardrails.cpp: the G-R3 entity-count thresholds and the G-R4
+# per-frame churn budget (the check hooks live in entity.cpp's
+# create() and entity.h's add/remove templates).
+set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})

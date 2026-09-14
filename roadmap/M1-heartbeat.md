@@ -70,7 +70,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R iter_order` green (property test with fixed PRNG seed).
   - **Size:** ~100 lines + tests
 
-- [ ] **M1-ECS-06 · ECS guardrails (G-R3, G-R4)**
+- [x] **M1-ECS-06 · ECS guardrails (G-R3, G-R4)**
   - **Refs:** PRD §9.3 G-R3, G-R4; FR-12.3
   - **Depends:** M1-ECS-01, M0-CORE-02
   - **Scope:**

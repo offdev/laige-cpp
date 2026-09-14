@@ -5,7 +5,8 @@ Documentation index and navigation (DOC-001). The engine is at **M1**
 has started (M1-ECS-01: the entity handle and world entity storage;
 M1-ECS-02: the component type registry; M1-ECS-03: archetype SoA
 component storage; M1-ECS-04: the query API + iteration legality;
-M1-ECS-05: the deterministic iteration contract).
+M1-ECS-05: the deterministic iteration contract; M1-ECS-06: the
+ECS guardrails G-R3/G-R4).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -31,7 +32,10 @@ still to land.
 
 - [Entity handle and world entity storage](api/entity.md) —
   `laige::Entity` (32-bit id+generation handle) and `laige::World`
-  entity storage (M1-ECS-01; `laige-sim`).
+  entity storage, including the M1-ECS-06 guardrails: the G-R3
+  entity-count thresholds (`beginFrame()`, `guardrailStats()`,
+  `ecs/entity_budget_{25,50,100}`) and the G-R4 per-frame churn
+  budget (`ecs/churn_per_frame`) (M1-ECS-01/06; `laige-sim`).
 - [Component type registry](api/component_registry.md) —
   `ComponentTypeId`, `LAIGE_COMPONENT`, `World::registerComponent<T>`
   (M1-ECS-02; `laige-sim`).

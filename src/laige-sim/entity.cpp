@@ -57,6 +57,19 @@ World::World(World&& other) noexcept
       totalAdds_(other.totalAdds_), totalRemoves_(other.totalRemoves_),
       totalArchetypeGrowth_(other.totalArchetypeGrowth_),
       totalReservations_(other.totalReservations_),
+      churnPerFrameBudget_(other.churnPerFrameBudget_),
+      entityThreshold_{other.entityThreshold_[0], other.entityThreshold_[1],
+                       other.entityThreshold_[2]},
+      entityBudgetWarnedThisFrame_{other.entityBudgetWarnedThisFrame_[0],
+                                   other.entityBudgetWarnedThisFrame_[1],
+                                   other.entityBudgetWarnedThisFrame_[2]},
+      churnWarnedThisFrame_(other.churnWarnedThisFrame_),
+      frameAdds_(other.frameAdds_),
+      frameRemoves_(other.frameRemoves_),
+      entityBudgetWarns_{other.entityBudgetWarns_[0],
+                         other.entityBudgetWarns_[1],
+                         other.entityBudgetWarns_[2]},
+      churnWarns_(other.churnWarns_),
       iterationActive_(other.iterationActive_),
       iterationArchetypes_(other.iterationArchetypes_),
       iterationReadComponents_(other.iterationReadComponents_) {
@@ -71,6 +84,20 @@ World::World(World&& other) noexcept
   other.totalRemoves_ = 0;
   other.totalArchetypeGrowth_ = 0;
   other.totalReservations_ = 0;
+  // M1-ECS-06: the guardrail state travels with the storage; the
+  // moved-from world must be a valid empty world in every field (a
+  // zero budget disables the G-R4 check on it — nothing can churn
+  // there anyway: every create() fails).
+  other.churnPerFrameBudget_ = 0;
+  for (std::uint32_t i = 0; i < 3; ++i) {
+    other.entityThreshold_[i] = 0;
+    other.entityBudgetWarnedThisFrame_[i] = false;
+    other.entityBudgetWarns_[i] = 0;
+  }
+  other.churnWarnedThisFrame_ = false;
+  other.frameAdds_ = 0;
+  other.frameRemoves_ = 0;
+  other.churnWarns_ = 0;
   // The iteration guard travels with the storage (a live world cannot
   // be moved while an iteration is active — the iteration is
   // synchronous on the owner thread — but the moved-from world must
@@ -108,6 +135,18 @@ World& World::operator=(World&& other) noexcept {
   totalRemoves_ = other.totalRemoves_;
   totalArchetypeGrowth_ = other.totalArchetypeGrowth_;
   totalReservations_ = other.totalReservations_;
+  // M1-ECS-06: the guardrail state is re-taken from `other` (moved-
+  // from world emptied below).
+  churnPerFrameBudget_ = other.churnPerFrameBudget_;
+  for (std::uint32_t i = 0; i < 3; ++i) {
+    entityThreshold_[i] = other.entityThreshold_[i];
+    entityBudgetWarnedThisFrame_[i] = other.entityBudgetWarnedThisFrame_[i];
+    entityBudgetWarns_[i] = other.entityBudgetWarns_[i];
+  }
+  churnWarnedThisFrame_ = other.churnWarnedThisFrame_;
+  frameAdds_ = other.frameAdds_;
+  frameRemoves_ = other.frameRemoves_;
+  churnWarns_ = other.churnWarns_;
   iterationActive_ = other.iterationActive_;
   iterationArchetypes_ = other.iterationArchetypes_;
   iterationReadComponents_ = other.iterationReadComponents_;
@@ -122,6 +161,19 @@ World& World::operator=(World&& other) noexcept {
   other.totalRemoves_ = 0;
   other.totalArchetypeGrowth_ = 0;
   other.totalReservations_ = 0;
+  // M1-ECS-06: the guardrail state is re-taken from `other` above;
+  // the moved-from world is a valid empty world in every field (a
+  // zero budget disables the G-R4 check on it).
+  other.churnPerFrameBudget_ = 0;
+  for (std::uint32_t i = 0; i < 3; ++i) {
+    other.entityThreshold_[i] = 0;
+    other.entityBudgetWarnedThisFrame_[i] = false;
+    other.entityBudgetWarns_[i] = 0;
+  }
+  other.churnWarnedThisFrame_ = false;
+  other.frameAdds_ = 0;
+  other.frameRemoves_ = 0;
+  other.churnWarns_ = 0;
   other.iterationActive_ = false;
   other.iterationArchetypes_ = detail::IdSet256{};
   other.iterationReadComponents_ = detail::IdSet256{};
@@ -136,6 +188,9 @@ Result<World, ErrorCode> World::create(Options options) noexcept {
   }
   World w;
   w.capacity_ = options.capacity;
+  // M1-ECS-06 (G-R3/G-R4): the guardrail configuration (setup path).
+  w.churnPerFrameBudget_ = options.churnPerFrameBudget;
+  w.initEntityBudgetThresholds();
   // Component registry table (M1-ECS-02): the fixed engine-level
   // budget (kMaxComponentTypes), a setup-path allocation like the
   // entity tables below.
@@ -181,6 +236,8 @@ Result<Entity, ErrorCode> World::create() noexcept {
   ++inUse_;
   if (inUse_ > peakInUse_) peakInUse_ = inUse_;
   ++totalCreated_;
+  // M1-ECS-06 (G-R3): the 25/50/100% crossing check (guardrails.cpp).
+  checkEntityBudget();
   return Entity{slot, generations_[slot]};
 }
 

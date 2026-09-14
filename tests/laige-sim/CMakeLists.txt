@@ -1,19 +1,21 @@
-# laige-sim tests (M1-ECS-01/02/03/04/05): entity handle + World entity
-# storage, component type registry, archetype SoA storage, query API +
-# iteration legality, deterministic iteration order.
+# laige-sim tests (M1-ECS-01/02/03/04/05/06): entity handle + World
+# entity storage, component type registry, archetype SoA storage,
+# query API + iteration legality, deterministic iteration order, and
+# the ECS guardrails (G-R3/G-R4).
 #
 # One executable per module (tests/README.md; docs/testing.md is the
 # source of truth): laige-sim_tests links the module under test plus
 # gtest_main. The unfiltered entry runs the whole module; the `entity`,
-# `component_registry`, `archetype`, `query`, and `iter_order` entries
-# are the M1-ECS-01, M1-ECS-02, M1-ECS-03, M1-ECS-04, and M1-ECS-05
-# Verify commands (`ctest -R entity`, `ctest -R component_registry`,
-# `ctest -R archetype`, `ctest -R query`, `ctest -R iter_order`),
-# selecting exactly the suites below from the shared executable.
+# `component_registry`, `archetype`, `query`, `iter_order`, and
+# `ecs_guardrails` entries are the M1-ECS-01, M1-ECS-02, M1-ECS-03,
+# M1-ECS-04, M1-ECS-05, and M1-ECS-06 Verify commands (`ctest -R entity`,
+# `ctest -R component_registry`, `ctest -R archetype`, `ctest -R query`,
+# `ctest -R iter_order`, `ctest -R ecs_guardrails`), selecting exactly
+# the suites below from the shared executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            archetype_tests.cpp query_tests.cpp
-                           iter_order_tests.cpp)
+                           iter_order_tests.cpp ecs_guardrails_tests.cpp)
 # M1-ECS-03: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own
 # new/delete (strong symbols in the Clang/GCC TSan runtime archives,
@@ -91,9 +93,18 @@ add_test(NAME iter_order
          COMMAND laige-sim_tests
          --gtest_filter=IterOrder.*)
 
+# M1-ECS-06: ECS guardrails (G-R3 entity-count thresholds, G-R4
+# per-frame component churn). The step's Verify command is
+# `ctest -R ecs_guardrails`; this entry selects exactly the
+# EcsGuardrails suites from the shared laige-sim_tests executable.
+add_test(NAME ecs_guardrails
+         COMMAND laige-sim_tests
+         --gtest_filter=EcsGuardrails.*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
   set_tests_properties(laige-sim_tests entity component_registry archetype
-    query iter_order PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
+    query iter_order ecs_guardrails
+    PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

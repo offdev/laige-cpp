@@ -863,12 +863,36 @@ TEST(ArchetypeLogging, ArchetypeBudgetWarnsOnce) {
     }
   }
 
-  ASSERT_EQ(sinkPtr->entries.size(), 1u);
-  EXPECT_EQ(sinkPtr->entries[0].severity, laige::log::Severity::Warn);
-  EXPECT_EQ(sinkPtr->entries[0].subsystem, "ecs");
-  EXPECT_EQ(sinkPtr->entries[0].event, "archetype_budget");
+  // M1-ECS-06: this window also trips the guardrail warns — the 259
+  // creates cross the 25% (inUse 75) and 50% (inUse 150) entity-
+  // budget levels, and the setup-phase adds (780 component ops, no
+  // beginFrame driven) exceed the default 256 per-frame churn
+  // budget. The expected events are counted by event name (LOG-001),
+  // not by position.
+  std::size_t budget25 = 0;
+  std::size_t budget50 = 0;
+  std::size_t churn = 0;
+  std::size_t archBudget = 0;
+  const MemorySink::Entry* archEntry = nullptr;
+  for (const auto& e : sinkPtr->entries) {
+    if (e.event == "entity_budget_25") ++budget25;
+    if (e.event == "entity_budget_50") ++budget50;
+    if (e.event == "churn_per_frame") ++churn;
+    if (e.event == "archetype_budget") {
+      ++archBudget;
+      archEntry = &e;
+    }
+  }
+  EXPECT_EQ(budget25, 1u);
+  EXPECT_EQ(budget50, 1u);
+  EXPECT_EQ(churn, 1u);
+  ASSERT_EQ(archBudget, 1u);
+  ASSERT_EQ(sinkPtr->entries.size(), 4u);
+  ASSERT_NE(archEntry, nullptr);
+  EXPECT_EQ(archEntry->severity, laige::log::Severity::Warn);
+  EXPECT_EQ(archEntry->subsystem, "ecs");
   bool foundCount = false;
-  for (const auto& [key, value] : sinkPtr->entries[0].fields) {
+  for (const auto& [key, value] : archEntry->fields) {
     if (key == "archetype_count" && value == "256") foundCount = true;
   }
   EXPECT_TRUE(foundCount);
@@ -876,10 +900,14 @@ TEST(ArchetypeLogging, ArchetypeBudgetWarnsOnce) {
   // Controlled shutdown drains the pending rate-limit summary
   // (CONC-006/LOG-007/LOG-004).
   laige::log::Logger::instance().shutdown();
-  ASSERT_EQ(sinkPtr->entries.size(), 2u);
-  EXPECT_EQ(sinkPtr->entries[1].event, laige::log::kRateLimitedEvent);
+  ASSERT_EQ(sinkPtr->entries.size(), 5u);
+  const MemorySink::Entry* summary = nullptr;
+  for (const auto& e : sinkPtr->entries) {
+    if (e.event == laige::log::kRateLimitedEvent) summary = &e;
+  }
+  ASSERT_NE(summary, nullptr);
   bool foundSuppressed = false;
-  for (const auto& [key, value] : sinkPtr->entries[1].fields) {
+  for (const auto& [key, value] : summary->fields) {
     if (key == "suppressed" && value == "2") foundSuppressed = true;
   }
   EXPECT_TRUE(foundSuppressed);
