@@ -5,13 +5,16 @@ API-006, PERF-003): plain, registered functions with declared time
 budgets and declared component I/O. Public header:
 `src/laige-sim/include/laige/sim/system.h` (`SystemId`, `SystemDef`,
 `SystemFn`, `SystemContext`, `Io<T, Access>`, `SystemInfo`, the
-`LAIGE_SYSTEM` macro, the `detail::SystemRecord`/trait types, the
-full contract) plus the `World::registerSystem`/`system`/`systemCount`
-members in `src/laige-sim/include/laige/sim/entity.h`; implementation:
+`SystemSchedule` and `kMaxSystemDependencies` of the M1-SYS-02
+scheduler, the `LAIGE_SYSTEM` macro, the `detail::SystemRecord`/trait
+types, the full contract) plus the `World::registerSystem`/`system`/
+`systemCount` members in
+`src/laige-sim/include/laige/sim/entity.h`; implementation:
 `src/laige-sim/systems.cpp` (the non-template World methods and the
 `SystemInfo` queries) + the header-defined `registerSystem` template
 (entity.h). Unit suite: `ctest -R system_registry`
-(`tests/laige-sim/system_registry_tests.cpp`).
+(`tests/laige-sim/system_registry_tests.cpp`). The scheduler built on
+top of the registry is documented in [scheduler.md](scheduler.md).
 
 A game's setup path registers components and systems once, in one
 documented place:
@@ -46,17 +49,18 @@ inheritance, no state object. The function plus its `SystemDef`
   to `World::each` (the PRD Appendix B sketch's `ctx.each<...>()`;
   identical semantics, visit order, and iteration-legality behavior —
   [query.md](query.md)). The context is built per system per tick by
-  the scheduler (M1-SYS-02); never store it across ticks.
+  the scheduler (M1-SYS-02, [scheduler.md](scheduler.md)); never
+  store it across ticks.
 - Systems are deterministic when the engine runs in deterministic
   mode (M1-DET-01) and must stay within their declared budget
   (M1-SYS-03 measures per-system time).
 
-`LAIGE_SYSTEM(Name, budget_ms)` (namespace scope, directly above the
-function) expands to the function declaration plus
+`LAIGE_SYSTEM(Name, budget_ms, Dep..., ...)` (namespace scope,
+directly above the function) expands to the function declaration plus
 
 ```cpp
 inline const laige::SystemDef Name##_Def = laige::SystemDef{
-    #Name, &Name, laige::fpx16_16::fromFloat(budget_ms)};
+    #Name, &Name, laige::fpx16_16::fromFloat(budget_ms), #__VA_ARGS__};
 ```
 
 so `Name` is both the C++ function name and the system's
@@ -64,7 +68,12 @@ registration name (stringified), and the def variable is `Name##Def`.
 `budget_ms` is a numeric literal in milliseconds (1, 0.5, …); the
 conversion to the exact `fpx16_16` happens once, at program start
 (setup path, never a hot path). The macro and the function
-definition live in the same translation unit.
+definition live in the same translation unit. The optional trailing
+`Dep...` names are the **depends_on** spec (M1-SYS-02): the
+registration names of the systems `Name` must run after, stringified
+verbatim into the def's `dependsOn` field — see
+[scheduler.md](scheduler.md) for the format and the ordering
+semantics.
 
 ## SystemIds and registration (component.h id contract)
 
@@ -113,8 +122,8 @@ declared component:
   pure function of the sets).
 - M1-SYS-02 consumes these sets: two systems writing the same
   component type in one tick is rejected at scheduling time
-  (FR-12.3), and read-after-write orderings are warned where
-  declared.
+  (FR-12.3), and a declared read ordered before a declared write of
+  the same component is warned ([scheduler.md](scheduler.md)).
 
 ## Registration validation (FR-12.1, CORE-008)
 
@@ -128,6 +137,7 @@ rate-limited structured warn (subsystem `system`, LOG-004) plus a
 | `def.name` null or empty | `InvalidArgument` + warn | `system/name_invalid` |
 | `def.run` null | `InvalidArgument` + warn | `system/run_invalid` |
 | `def.budgetMs` ≤ 0 | `InvalidArgument` + warn | `system/budget_invalid` |
+| malformed `depends_on` spec (empty token, duplicate name, more than `kMaxSystemDependencies`) | `InvalidArgument` + warn | `system/dep_spec_invalid` |
 | duplicate name in this world | `InvalidArgument` + warn | `system/duplicate` |
 | `Io<T>`: `T` not a Laige component | compile error | — |
 | `Io<T>`: `T` not registered (this world) | `InvalidArgument` + warn | `system/io_unregistered` |

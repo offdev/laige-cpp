@@ -21,9 +21,13 @@
 //   SystemInfo      A registered system's snapshot (def + the declared
 //                   I/O membership queries) for the scheduler
 //                   (M1-SYS-02) and the profiler (M1-PROF-01).
+//   SystemSchedule  The computed execution order of a world's systems
+//                   (M1-SYS-02): the systemCount plus the SystemId
+//                   values in execution order.
 //   LAIGE_SYSTEM    The one-line declaration of a system: the plain
 //                   function declaration plus the SystemDef, at
-//                   namespace scope directly above the function.
+//                   namespace scope directly above the function;
+//                   optional trailing depends_on names (M1-SYS-02).
 //
 // ---------------------------------------------------------------------------
 // The system shape (FR-1.3: plain functions, no inheritance)
@@ -50,7 +54,7 @@
 //
 //   void Movement(laige::World&, laige::SystemContext&);
 //   inline const laige::SystemDef Movement_Def = laige::SystemDef{
-//       "Movement", &Movement, laige::fpx16_16::fromFloat(1)};
+//       "Movement", &Movement, laige::fpx16_16::fromFloat(1), ""};
 //
 // so `Name` is both the C++ function name and the system's
 // registration name (stringified), and the def variable is `Name##Def`.
@@ -59,6 +63,19 @@
 // numeric literal in milliseconds (1, 0.5, ...); the conversion to
 // the exact fpx16_16 happens once, at program start (a setup path,
 // never a hot path).
+//
+// M1-SYS-02 adds the optional trailing `depends_on` names:
+//
+//   LAIGE_SYSTEM(Health, 1, Spawner)
+//
+// The names after `budget_ms` are the registration names of the
+// systems `Health` must run after — stringified verbatim into the
+// def's `dependsOn` spec ("Spawner"). They may name systems
+// registered LATER in the same world (forward dependencies: the spec
+// is validated against the world at scheduling time, not at
+// registration). The empty list (no trailing names) is "" = no
+// dependencies. See the "Scheduler" section below for the spec format
+// and the ordering semantics.
 //
 // ---------------------------------------------------------------------------
 // Registration and the id contract (FR-1.3, component.h precedent)
@@ -120,15 +137,125 @@
 // and none per tick (the registry is read-only during the loop).
 //
 // ---------------------------------------------------------------------------
+// Scheduler (M1-SYS-02): execution order, depends_on, validation
+// ---------------------------------------------------------------------------
+//
+// The scheduler turns the registry (registration order + declared
+// depends_on + declared component I/O) into the per-tick execution
+// order, and runs the systems in that order:
+//
+//   SystemSchedule sched;
+//   Status s = world.scheduleSystems(sched);   // setup phase, once
+//   ...                                        // before the loop
+//   for (tick) {                               // M1-LOOP-01 owns this
+//     world.beginFrame();
+//     world.runSystems(sched);
+//   }
+//
+// Execution order:
+//
+//   - The BASE order is the registration order (ascending SystemId).
+//     Without depends_on, the computed order is exactly that.
+//   - A depends_on edge (system X lists system Y in its spec) means
+//     X runs AFTER Y. Forward edges are legal (Y may be registered
+//     later: the spec is resolved against the world at scheduling
+//     time, not at registration).
+//   - The computed order is the STABLE topological sort: repeatedly
+//     pick the smallest unrun SystemId whose dependencies are all
+//     already placed (Kahn's algorithm with a min-id tie-break). The
+//     order is a pure function of the registration order and the
+//     declared edges — deterministic (ARCH-010) — and it never moves a
+//     system earlier than registration order would place it; a
+//     system only moves later, behind its dependencies.
+//
+// The depends_on spec (the def's `dependsOn` string; the macro builds
+// it from the trailing names): a comma-separated list of registration
+// names. Each token is trimmed of ASCII whitespace, must be non-empty,
+// and must not repeat (the dependency list is a set, not a multiset —
+// the declared-I/O precedent). At most kMaxSystemDependencies (16)
+// direct dependencies: a longer list means the registration order
+// should carry the ordering (a barrier is registration position, not a
+// dependency list). nullptr or "" means no dependencies.
+//
+// Pre-run validation — World::scheduleSystems (normative order, first
+// failure wins; every failure is one rate-limited structured warn,
+// subsystem "system", LOG-004, plus a Status — FR-12.3: never silent):
+//
+//   1. A dependency name that is not registered in this world
+//      (first in ascending (system id, spec position) order)
+//                                          -> InvalidArgument
+//                                             (system/dep_missing)
+//   2. A dependency cycle: Kahn's leaves systems with unsatisfied
+//      dependencies (one concrete cycle is reported — the
+//      deterministic walk from the smallest remaining id, following
+//      each system's first spec-listed dependency that is still
+//      remaining)
+//                                          -> InvalidArgument
+//                                             (system/dependency_cycle)
+//   3. Two systems both declaring Write of the same component type in
+//      one tick (first conflict in ascending component-id, then
+//      ascending writer-id order; order-independent: the last write
+//      would silently win)
+//                                          -> InvalidArgument
+//                                             (system/double_writer)
+//   4. (WARN ONLY — scheduling succeeds) a declared read that the
+//      computed order places BEFORE a declared write of the same
+//      component: the reader observes the previous tick's value, not
+//      this tick's write (each such (reader, writer, component) triple
+//      warns once, in ascending component-id, reader-id, writer-id
+//      order)
+//                                          -> Warn
+//                                             (system/read_before_write)
+//
+// On success `out` is fully populated and nothing is logged
+// (LOG-003: the success path has no diagnostics).
+//
+// Running — World::runSystems(schedule):
+//
+//   - The schedule must describe the CURRENT registry: a systemCount
+//     mismatch (systems registered after the schedule was computed)
+//     is rejected (system/schedule_stale); the order entries must be
+//     unique ids in 1..systemCount (a hand-built malformed schedule is
+//     rejected, system/schedule_invalid). Both are InvalidArgument +
+//     one rate-limited warn.
+//   - The systems run STRICTLY ONE AT A TIME, in schedule order, on
+//     the world's single owner thread (PRD §10.2: simulation is
+//     single-threaded; API-004: the system phase is the mutation
+//     phase). The per-tick SystemContext is built per system (a
+//     non-owning view — never stored). The M1-ECS-04 iteration
+//     legality guard (query.h) applies inside every system exactly as
+//     for a direct World::each: nested each() and illegal mutations
+//     are rejected per system, and the declared-I/O validation above
+//     is the cross-system complement (one writer per component,
+//     read-before-write surfaced).
+//   - A system's run function is void: per-entity Status results from
+//     its own each() calls are the system's to handle (check them,
+//     CORE-008). runSystems itself reports only schedule-level
+//     failures. Calling runSystems from inside a system (nesting
+//     system phases) is misuse — the declared order contract no
+//     longer holds (the one-writer-per-component invariant still
+//     prevents state corruption; see the misuse warnings).
+//
+// Determinism (ARCH-010): scheduling is pure integer/string
+// bookkeeping — id scans, string comparisons over the registration
+// names, Kahn's with a min-id rule. No floating point, no randomness,
+// no addresses enter the order or the warning set. Two worlds (two
+// process runs, two builds) with the same registration order, specs,
+// and declared I/O produce bit-identical schedules and identical
+// warning sequences.
+//
+// ---------------------------------------------------------------------------
 // Threading and failure
 // ---------------------------------------------------------------------------
 //
-// Registration is a setup-phase operation on the world's single
-// owner thread (CONC-001; API-004: mutation in an explicit phase).
-// The run function is sim-thread code (PRD §10.2: simulation is
-// single-threaded). All failures are Result/Status values with one
-// rate-limited structured warn each (LOG-004); no exceptions
-// (FR-12.1, NFR-8.10).
+// Registration, scheduling, and running are all setup-phase or
+// sim-thread operations on the world's single owner thread (CONC-001;
+// API-004: mutations in explicit phases). scheduleSystems is a pure
+// read of the registry (const); runSystems is the per-tick mutation
+// phase; the run functions are sim-thread code (PRD §10.2:
+// simulation is single-threaded). All failures are Result/Status
+// values with one rate-limited structured warn each (LOG-004); no
+// exceptions (FR-12.1, NFR-8.10).
 //
 // ---------------------------------------------------------------------------
 // Misuse warnings
@@ -145,6 +272,24 @@
 //   - A system's I/O may declare a component it does not touch (a
 //     conservative declaration), never one it touches without
 //     declaring.
+//   - depends_on names registration names, not function addresses or
+//     SystemIds (ids are per-world runtime values, names are the
+//     stable identity). A dependency on a name that is never
+//     registered in this world fails at scheduling time — a
+//     dependency on a system registered in ANOTHER world is always
+//     such a failure (systems never cross worlds).
+//   - A schedule is computed for the registry it was computed with:
+//     registering systems after scheduleSystems() and then
+//     runSystems() with the old schedule is rejected
+//     (system/schedule_stale). Recompute the schedule after any
+//     registration change.
+//   - A system that reads a component written by a LATER system in
+//     the computed order reads the previous tick's value: the
+//     scheduler warns (system/read_before_write). If the read must
+//     see this tick's write, declare `depends_on` (or register the
+//     writer earlier); a deliberate cross-tick read is declared by
+//     not declaring the write at all (undeclared I/O is invisible to
+//     the check — use it consciously).
 //   - The LAIGE_SYSTEM macro is namespace-scope only: the def
 //     variable it builds is `inline const` (block scope is
 //     ill-formed) and the function it declares must match the
@@ -193,6 +338,13 @@ inline bool operator!=(SystemId a, SystemId b) noexcept {
 // an ADR, not a knob).
 inline constexpr std::uint32_t kMaxSystems = 256;
 
+// The bound on one system's direct depends_on list (CORE-005). A
+// direct dependency list is a small hand-written declaration; beyond
+// 16 the ordering should be carried by registration position (a
+// barrier is registration order, not a dependency list). Raising it
+// is an ADR.
+inline constexpr std::uint32_t kMaxSystemDependencies = 16;
+
 // The system function signature (FR-1.3): a plain free function — no
 // class, no inheritance. `world` is the world the system runs on;
 // `ctx` is that tick's SystemContext (one world, one owner thread,
@@ -204,15 +356,32 @@ using SystemFn = void (*)(World&, SystemContext&);
 // `name` is the stable registration name (unique per world); `run` is
 // the plain system function; `budgetMs` is the declared per-tick time
 // budget in MILLISECONDS (fpx16_16 — exact, no floating point; ADR
-// 0002). The declared component I/O is NOT part of the def (per-world
-// runtime ids, see the preamble): it is declared at registration
-// (the Io<...> pack of World::registerSystem) and stored in the
-// world's record. The def is a small trivially-copyable value —
-// registerSystem copies it, so a def on the stack is safe.
+// 0002). `dependsOn` is the raw depends_on spec (M1-SYS-02): a
+// comma-separated list of registration names — nullptr or "" means
+// no dependencies (see the preamble "Scheduler" for the format and
+// the validation). The declared component I/O is NOT part of the def
+// (per-world runtime ids, see the preamble): it is declared at
+// registration (the Io<...> pack of World::registerSystem) and stored
+// in the world's record. The def is a small trivially-copyable value
+// — registerSystem copies it, so a def on the stack is safe.
 struct SystemDef {
   const char* name;
   SystemFn run;
   fpx16_16 budgetMs;
+  const char* dependsOn;  // nullptr or "" = no dependencies
+};
+
+// The computed execution order of one world's systems (M1-SYS-02).
+// A plain value: built by World::scheduleSystems (setup phase),
+// consumed by World::runSystems once per tick, owned by the caller
+// (the game's engine object — M1-HEAD-01). `systemCount` is the
+// world's system count AT SCHEDULING TIME (runSystems' staleness
+// check); `order[i]` is the SystemId of the system that runs i-th
+// (order[0] first, order[systemCount - 1] last; no repeats, dense
+// 1..systemCount).
+struct SystemSchedule {
+  std::uint32_t systemCount{};
+  std::uint32_t order[kMaxSystems]{};
 };
 
 // The per-tick context handed to a system's run() (FR-1.3; the PRD
@@ -292,18 +461,23 @@ struct SystemInfo {
 // name and the system's registration name (stringified); `budget_ms`
 // is the declared per-tick time budget in milliseconds (a numeric
 // literal, e.g. 1 or 0.5 — converted to the exact fpx16_16 once, at
-// program start). Expands to the function declaration plus
+// program start); the optional trailing `Dep...` names are the
+// depends_on spec (M1-SYS-02): the registration names of the systems
+// `Name` must run after, stringified verbatim into the def's
+// `dependsOn` field (comma-separated, as written). Expands to the
+// function declaration plus
 //
 //   inline const laige::SystemDef Name##Def = laige::SystemDef{
-//       #Name, &Name, laige::fpx16_16::fromFloat(budget_ms)};
+//       #Name, &Name, laige::fpx16_16::fromFloat(budget_ms),
+//       #__VA_ARGS__};
 //
 // The def variable (e.g. `Movement_Def`) is what World::registerSystem
 // takes, together with the Io<...> pack. The macro and the function
 // definition live in the same translation unit.
-#define LAIGE_SYSTEM(Name, budget_ms)                                   \
-  void Name(laige::World&, laige::SystemContext&);                     \
+#define LAIGE_SYSTEM(Name, budget_ms, ...)                             \
+  void Name(laige::World&, laige::SystemContext&);                    \
   inline const laige::SystemDef Name##_Def = laige::SystemDef{        \
-      #Name, &Name, laige::fpx16_16::fromFloat(budget_ms)};
+      #Name, &Name, laige::fpx16_16::fromFloat(budget_ms), #__VA_ARGS__};
 
 namespace detail {
 
@@ -359,6 +533,38 @@ struct IoComponent<Io<T, A>> {
   using type = T;
   static constexpr Access access = A;
 };
+
+// The parsed form of a depends_on spec (M1-SYS-02). `names[i]`
+// points into the spec string itself (tokens are substrings — the
+// spec is a compile-time string literal owned by the program, so the
+// pointers are stable for the process lifetime), with `lengths[i]`
+// the token length (tokens are NOT NUL-terminated). Setup path only
+// — registration validation (registerSystem) and resolution
+// (scheduleSystems); never on a tick. No copy, no allocation.
+struct DepSpecParse {
+  std::uint32_t count{};
+  const char* names[kMaxSystemDependencies]{};
+  std::uint32_t lengths[kMaxSystemDependencies]{};
+};
+
+// The outcome of parseDepSpec (the first failure wins; on any error
+// the out parameter is left empty — count 0, no partial parse).
+enum class DepSpecError : std::uint8_t {
+  Ok = 0,
+  EmptyToken = 1,    // a token is empty or all whitespace
+  DuplicateToken = 2,  // the same name listed twice (the list is a set)
+  TooMany = 3,       // more than kMaxSystemDependencies dependencies
+};
+
+// Parse one depends_on spec (the raw SystemDef::dependsOn string):
+// split on ',', trim ASCII whitespace (space, tab, CR, LF) around
+// each token, and record the token pointers in `out`. nullptr or a
+// whitespace-only spec is Ok with count 0 (no dependencies).
+DepSpecError parseDepSpec(const char* spec, DepSpecParse* out) noexcept;
+
+// The stable token for a DepSpecError (the `error` field of the
+// system/dep_spec_invalid warn; LOG-001 machine-searchable).
+const char* depSpecErrorName(DepSpecError error) noexcept;
 
 }  // namespace detail
 

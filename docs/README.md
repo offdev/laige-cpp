@@ -59,6 +59,12 @@ still to land.
   (fpx16_16 ms) and declared component I/O (`Io<T, Access>`),
   `World::registerSystem`/`system`/`systemCount`, and
   `SystemContext`'s delegated `each` (M1-SYS-01; `laige-sim`).
+- [System scheduler](api/scheduler.md) —
+  `World::scheduleSystems`/`runSystems`: the execution order (the
+  registration order plus the declared `depends_on` edges), the
+  pre-run validation (unknown dependency, cycle, double writer,
+  read-before-write warn), and the per-tick system phase
+  (M1-SYS-02; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,
@@ -147,7 +153,9 @@ still to land.
   [component_registry.md](api/component_registry.md),
   [archetype.md](api/archetype.md),
   [query.md](api/query.md),
-  [iteration_order.md](api/iteration_order.md).)
+  [iteration_order.md](api/iteration_order.md),
+  [system_registry.md](api/system_registry.md),
+  [scheduler.md](api/scheduler.md).)
 
 ## Related
 

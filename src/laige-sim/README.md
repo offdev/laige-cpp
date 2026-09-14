@@ -47,6 +47,15 @@ and declared component I/O (`Io<T, Access>`),
 `systems.cpp`; API contract in
 [docs/api/system_registry.md](../docs/api/system_registry.md), tests
 under [tests/laige-sim](../tests/laige-sim), CTest entry
-`system_registry`).
-The system loop (M1-SYS-02 onward) and the game loop (M1-LOOP) land in
-the remaining M1 steps; physics, input, and animation in M3.
+`system_registry`). M1-SYS-02 landed the system scheduler — the
+execution order (the registration order plus the declared
+`depends_on` edges, the stable topological sort), the pre-run
+validation (unknown dependency, dependency cycle, double writer,
+read-before-write warn), `SystemSchedule`, and
+`World::scheduleSystems`/`runSystems` (`include/laige/sim/system.h`,
+`systems.cpp`; API contract in
+[docs/api/scheduler.md](../docs/api/scheduler.md), tests under
+[tests/laige-sim](../tests/laige-sim), CTest entry `scheduler`).
+The system timing/budget measurement (M1-SYS-03 onward) and the game
+loop (M1-LOOP) land in the remaining M1 steps; physics, input, and
+animation in M3.

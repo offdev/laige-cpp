@@ -26,7 +26,10 @@
 # systems.cpp: the non-template World methods of the system registry
 # (systemCount, system + the SystemInfo queries); the registration
 # template (registerSystem) is header-defined in entity.h like
-# registerComponent (the M1-ECS-02 pattern).
+# registerComponent (the M1-ECS-02 pattern). M1-SYS-02 adds the
+# system scheduler to the same systems.cpp (scheduleSystems,
+# runSystems + the depends_on spec parse — no new source file; the
+# public types and contract live in include/laige/sim/system.h).
 set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
                      systems.cpp)
 
