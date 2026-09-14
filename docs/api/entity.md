@@ -183,7 +183,8 @@ if (!world.isValid(handle)) { /* stale — drop it, log if unexpected */ }
   `World::each<T1, T2, ...>(fn, Read/Write tags...)` iterates the
   archetype rows with a stack-scoped guard (no hidden allocations);
   see [query.md](query.md).
-- **M1-ECS-05:** deterministic iteration (archetype order, entity id
-  order — PRD §10.3) over the visit order M1-ECS-04 pins.
+- **M1-ECS-05 (done):** deterministic iteration (archetype order,
+  entity id order — PRD §10.3) over the visit order M1-ECS-04 pins —
+  see [iteration_order.md](iteration_order.md).
 - **M1-ECS-06:** the G-R3 warn thresholds (25%/50%/100% of the
   declared budget) pull `stats()`.

@@ -28,6 +28,12 @@ release), and the 10k-entity zero-allocation iteration window
 (`include/laige/sim/query.h`, `query.cpp`; API contract in
 [docs/api/query.md](../docs/api/query.md), tests under
 [tests/laige-sim](../tests/laige-sim), CTest entry `query`).
-The deterministic iteration contract (M1-ECS-05), the system loop
-(M1-SYS), and the game loop (M1-LOOP) land in the remaining M1 steps;
-physics, input, and animation in M3.
+M1-ECS-05 landed the deterministic iteration contract — the
+`World::each` visit order (archetypes in first-seen/creation order,
+entities in ascending slot id), the dense-id-order scheme under
+component moves, the no-unordered-containers rule for the iteration
+path, and the convergent-worlds property test (API contract in
+[docs/api/iteration_order.md](../docs/api/iteration_order.md), tests
+under [tests/laige-sim](../tests/laige-sim), CTest entry `iter_order`).
+The system loop (M1-SYS) and the game loop (M1-LOOP) land in the
+remaining M1 steps; physics, input, and animation in M3.

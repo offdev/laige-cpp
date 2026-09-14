@@ -54,9 +54,11 @@ world.each<ArchPos, ArchVel>(fn, laige::Read{}, laige::Write{});
 
 Ascending archetype id (creation order), then ascending slot id
 within the archetype (the slot-ordered rows of archetype.h — invariant
-I2). The empty query visits ascending slot id directly. M1-ECS-05
-documents this as the deterministic iteration contract; the suite
-pins the exact sequence.
+I2). The empty query visits ascending slot id directly. The full
+deterministic iteration contract — including the dense-id-order
+scheme under moves, the no-unordered-containers rule, and the
+convergence property pinned by the `iter_order` suite — is
+[iteration_order.md](iteration_order.md) (M1-ECS-05).
 
 ## Iteration legality (API-004, FR-12.3)
 
@@ -135,8 +137,8 @@ assert fires before the log).
 - **Traps:**
   - The visit order is not sorted by component values and is not
     the entity-creation order — the archetype-id/slot-id scheme is
-    the contract (M1-ECS-05 documents it; deterministic replay is
-    what M1-ECS-05 builds on).
+    the contract ([iteration_order.md](iteration_order.md),
+    M1-ECS-05; deterministic replay is what M1-DET-02/03/04 build on).
   - A query over many archetypes pays the O(256 × N) scan even when
     few rows match — M1 keeps N small by design; the per-tick
     system pattern is few components, many entities (API-002).
@@ -210,9 +212,11 @@ world.each<>([](laige::Entity e) { /* e.g. despawn sweep bookkeeping */ });
   [archetype.md](archetype.md).
 - **M1-ECS-04 (this step):** the query API + iteration legality
   above.
-- **M1-ECS-05:** the deterministic iteration contract over the visit
-  order pinned by this step (replay/hash tests at the promised scope,
-  ARCH-010).
+- **M1-ECS-05 (done):** the deterministic iteration contract over
+  the visit order pinned by this step — the convergence property and
+  the dense-id-order scheme — see
+  [iteration_order.md](iteration_order.md) (replay/hash tests at the
+  promised scope land in M1-DET-02/03/04, ARCH-010).
 - **M1-SYS-01/02:** the system loop and `SystemContext` — the
   `ctx.each` of the PRD sketch delegates to `World::each` (one
   world, one owner thread).

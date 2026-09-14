@@ -4,7 +4,8 @@ Documentation index and navigation (DOC-001). The engine is at **M1**
 (heartbeat): `laige-core` holds the M0 foundations, and `laige-sim`
 has started (M1-ECS-01: the entity handle and world entity storage;
 M1-ECS-02: the component type registry; M1-ECS-03: archetype SoA
-component storage; M1-ECS-04: the query API + iteration legality).
+component storage; M1-ECS-04: the query API + iteration legality;
+M1-ECS-05: the deterministic iteration contract).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -43,6 +44,11 @@ still to land.
   rows: superset match, per-component access, the stack-scoped
   iteration-legality guard, and the 10k-entity zero-allocation window
   (M1-ECS-04; `laige-sim`).
+- [Deterministic iteration order](api/iteration_order.md) — the
+  `World::each` visit contract: archetypes in first-seen (creation)
+  order, entities in ascending slot id, the dense-id-order scheme
+  under moves, no unordered containers in the iteration path, and the
+  convergence property test (M1-ECS-05; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,
@@ -130,7 +136,8 @@ still to land.
   [entity.md](api/entity.md),
   [component_registry.md](api/component_registry.md),
   [archetype.md](api/archetype.md),
-  [query.md](api/query.md).)
+  [query.md](api/query.md),
+  [iteration_order.md](api/iteration_order.md).)
 
 ## Related
 
