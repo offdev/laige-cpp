@@ -22,8 +22,13 @@
 # entity.h, next to the component access templates). M1-ECS-06 adds
 # guardrails.cpp: the G-R3 entity-count thresholds and the G-R4
 # per-frame churn budget (the check hooks live in entity.cpp's
-# create() and entity.h's add/remove templates).
-set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp)
+# create() and entity.h's add/remove templates). M1-SYS-01 adds
+# systems.cpp: the non-template World methods of the system registry
+# (systemCount, system + the SystemInfo queries); the registration
+# template (registerSystem) is header-defined in entity.h like
+# registerComponent (the M1-ECS-02 pattern).
+set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
+                     systems.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})

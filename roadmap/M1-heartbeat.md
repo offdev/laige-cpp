@@ -92,7 +92,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 ## System framework
 
-- [ ] **M1-SYS-01 · System registry**
+- [x] **M1-SYS-01 · System registry**
   - **Refs:** FR-1.3 (plain registered functions, declared budgets + I/O)
   - **Depends:** M1-ECS-04
   - **Scope:**

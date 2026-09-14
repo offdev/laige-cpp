@@ -35,5 +35,18 @@ component moves, the no-unordered-containers rule for the iteration
 path, and the convergent-worlds property test (API contract in
 [docs/api/iteration_order.md](../docs/api/iteration_order.md), tests
 under [tests/laige-sim](../tests/laige-sim), CTest entry `iter_order`).
-The system loop (M1-SYS) and the game loop (M1-LOOP) land in the
-remaining M1 steps; physics, input, and animation in M3.
+M1-ECS-06 landed the ECS guardrails — the G-R3 entity-count
+thresholds and the G-R4 per-frame churn budget (`guardrails.cpp`;
+CTest entry `ecs_guardrails`). M1-ECS-07 landed the ECS stress +
+memory accounting suite (CTest entry `ecs_stress`). M1-SYS-01 landed
+the system registry — the plain registered functions
+(`LAIGE_SYSTEM` + `SystemDef`), declared time budgets (fpx16_16 ms)
+and declared component I/O (`Io<T, Access>`),
+`World::registerSystem`/`system`/`systemCount`, and
+`SystemContext`'s delegated `each` (`include/laige/sim/system.h`,
+`systems.cpp`; API contract in
+[docs/api/system_registry.md](../docs/api/system_registry.md), tests
+under [tests/laige-sim](../tests/laige-sim), CTest entry
+`system_registry`).
+The system loop (M1-SYS-02 onward) and the game loop (M1-LOOP) land in
+the remaining M1 steps; physics, input, and animation in M3.
