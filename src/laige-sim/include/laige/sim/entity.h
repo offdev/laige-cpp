@@ -1020,8 +1020,15 @@ detail::IoResolution World::resolveIoEntry(detail::IdSet256& read,
     *failedId = id;
     return detail::IoResolution::Duplicate;
   }
-  if (detail::IoComponent<Tag>::access == Access::Read) read.set(id);
-  else write.set(id);
+  // if constexpr, not if: the access is a compile-time constant of the
+  // Io tag, and a plain if trips MSVC C4127 (fatal under /WX) in every
+  // instantiating translation unit. The discarded branch is never
+  // emitted — the behavior is identical.
+  if constexpr (detail::IoComponent<Tag>::access == Access::Read) {
+    read.set(id);
+  } else {
+    write.set(id);
+  }
   return detail::IoResolution::Ok;
 }
 
