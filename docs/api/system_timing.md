@@ -38,6 +38,15 @@ the window — the measurement is the system's work, not the
 scheduler's. The sample is handed to the system's rolling window and
 the budget check in schedule order.
 
+A run shorter than the platform's `steady_clock` tick measures as
+exactly `0.0` ms (the start and end reads land on the same tick —
+e.g. a sub-tick run on a platform whose clock tick is tens of
+nanoseconds or more). `0.0` is a legitimate reading, not a failure
+state: it records in the window like any sample, and the budget check
+simply sees a run far under budget. Resolution is platform-sensitive
+(ARCH-009), so consumers must not treat a `0.0` measurement as
+"not measured".
+
 ## The rolling window
 
 One `Histogram` per system (M0-CORE-08): fixed capacity
