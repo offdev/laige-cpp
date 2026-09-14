@@ -34,9 +34,13 @@
 # enforcement (the World::systemTimingStats/systemTimingWindow
 # queries and the World::checkSystemBudget hook that runSystems
 # calls per system per tick; the public types and contract live in
-# include/laige/sim/system.h).
+# include/laige/sim/system.h). M1-LOOP-01 adds game_loop.cpp: the
+# fixed-timestep accumulator loop (GameLoop::create/frame/runOneTick
+# — the exact-ticks due computation, the bounded catch-up run loop,
+# the tick_dropped overload warn; the public types and contract live
+# in include/laige/sim/game_loop.h).
 set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
-                     systems.cpp system_timing.cpp)
+                     systems.cpp system_timing.cpp game_loop.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})

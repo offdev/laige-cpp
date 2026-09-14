@@ -156,10 +156,11 @@
 //   SystemSchedule sched;
 //   Status s = world.scheduleSystems(sched);   // setup phase, once
 //   ...                                        // before the loop
-//   for (tick) {                               // M1-LOOP-01 owns this
-//     world.beginFrame();
-//     world.runSystems(sched);
-//   }
+//   GameLoop loop =                            // M1-LOOP-01 owns this
+//       GameLoop::create(world, sched, opts).value();
+//   while (running) loop.frame();             // beginFrame once per
+//                                             // frame, runSystems per
+//                                             // tick (game_loop.h)
 //
 // Execution order:
 //

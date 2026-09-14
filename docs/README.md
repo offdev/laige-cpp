@@ -7,7 +7,9 @@ M1-ECS-02: the component type registry; M1-ECS-03: archetype SoA
 component storage; M1-ECS-04: the query API + iteration legality;
 M1-ECS-05: the deterministic iteration contract; M1-ECS-06: the
 ECS guardrails G-R3/G-R4; M1-ECS-07: the ECS stress + memory
-accounting suite; M1-SYS-01: the system registry).
+accounting suite; M1-SYS-01: the system registry; M1-SYS-02: the
+system scheduler; M1-SYS-03: the per-system timing + budget
+enforcement; M1-LOOP-01: the fixed-timestep game loop core).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -70,6 +72,11 @@ still to land.
   (`system/budget_overrun` warn, `system/budget_critical` error), and
   the `World::systemTimingStats`/`systemTimingWindow` profiler feed
   (M1-SYS-03; `laige-sim`).
+- [Fixed-timestep game loop core](api/game_loop.md) — the `GameLoop`
+  accumulator loop: integer ticks at a validated 20–120 Hz rate
+  (default 60), the exact due computation, the bounded catch-up with
+  the `loop/tick_dropped` overload warn (drop, never silent), and the
+  `GameLoopStats` profiler feed (M1-LOOP-01; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,
@@ -161,7 +168,8 @@ still to land.
   [iteration_order.md](api/iteration_order.md),
   [system_registry.md](api/system_registry.md),
   [scheduler.md](api/scheduler.md),
-  [system_timing.md](api/system_timing.md).)
+  [system_timing.md](api/system_timing.md),
+   [game_loop.md](api/game_loop.md).)
 
 ## Related
 
