@@ -17,7 +17,13 @@ and the exact command + commit that produced it. Baseline files are
 `measured` in `budgets.json` — it never edits an existing baseline.
 
 Every `budgets.json` entry still has `measured: 0` (their subsystems land
-in M1+); the first recorded baseline is
-[m0-synthetic.md](m0-synthetic.md) (M0-EXIT-01, 2026-09-13) — the
-synthetic harness workload, which proves the measurement pipeline end to
-end but does not measure any real budget.
+in M1+). Recorded so far:
+
+- [m0-synthetic.md](m0-synthetic.md) (M0-EXIT-01, 2026-09-13) — the
+  synthetic harness workload; proves the measurement pipeline end to
+  end but does not measure any real budget.
+- [m1-ecs-stress.md](m1-ecs-stress.md) (M1-ECS-07, 2026-09-14) — the
+  M1 ECS stress workload (10k entities × 6 component types × 10k frames
+  of add/remove churn): no leaks (ASan), pool high-water stable,
+  iteration within the documented cost, accounted ECS storage bytes.
+  Not a `budgets.json` workload — no `measured` field updated.

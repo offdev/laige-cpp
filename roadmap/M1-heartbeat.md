@@ -81,7 +81,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R ecs_guardrails` green; log output matches the error grammar.
   - **Size:** ~150 lines + tests
 
-- [ ] **M1-ECS-07 · ECS stress + memory accounting test**
+- [x] **M1-ECS-07 · ECS stress + memory accounting test**
   - **Refs:** AGENTS TEST-001/007; PRD §8.1 (base memory)
   - **Depends:** M1-ECS-06
   - **Scope:**

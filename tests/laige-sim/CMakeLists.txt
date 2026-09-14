@@ -1,21 +1,24 @@
-# laige-sim tests (M1-ECS-01/02/03/04/05/06): entity handle + World
+# laige-sim tests (M1-ECS-01/02/03/04/05/06/07): entity handle + World
 # entity storage, component type registry, archetype SoA storage,
-# query API + iteration legality, deterministic iteration order, and
-# the ECS guardrails (G-R3/G-R4).
+# query API + iteration legality, deterministic iteration order, the
+# ECS guardrails (G-R3/G-R4), and the ECS stress + memory accounting
+# suite.
 #
 # One executable per module (tests/README.md; docs/testing.md is the
 # source of truth): laige-sim_tests links the module under test plus
 # gtest_main. The unfiltered entry runs the whole module; the `entity`,
-# `component_registry`, `archetype`, `query`, `iter_order`, and
-# `ecs_guardrails` entries are the M1-ECS-01, M1-ECS-02, M1-ECS-03,
-# M1-ECS-04, M1-ECS-05, and M1-ECS-06 Verify commands (`ctest -R entity`,
-# `ctest -R component_registry`, `ctest -R archetype`, `ctest -R query`,
-# `ctest -R iter_order`, `ctest -R ecs_guardrails`), selecting exactly
+# `component_registry`, `archetype`, `query`, `iter_order`,
+# `ecs_guardrails`, and `ecs_stress` entries are the M1-ECS-01,
+# M1-ECS-02, M1-ECS-03, M1-ECS-04, M1-ECS-05, M1-ECS-06, and M1-ECS-07
+# Verify commands (`ctest -R entity`, `ctest -R component_registry`,
+# `ctest -R archetype`, `ctest -R query`, `ctest -R iter_order`,
+# `ctest -R ecs_guardrails`, `ctest -R ecs_stress`), selecting exactly
 # the suites below from the shared executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            archetype_tests.cpp query_tests.cpp
-                           iter_order_tests.cpp ecs_guardrails_tests.cpp)
+                           iter_order_tests.cpp ecs_guardrails_tests.cpp
+                           ecs_stress_tests.cpp)
 # M1-ECS-03: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own
 # new/delete (strong symbols in the Clang/GCC TSan runtime archives,
@@ -101,10 +104,20 @@ add_test(NAME ecs_guardrails
          COMMAND laige-sim_tests
          --gtest_filter=EcsGuardrails.*)
 
+# M1-ECS-07: ECS stress + memory accounting. The step's Verify command
+# is `ctest -R ecs_stress` (required green under ASan: the leak-free
+# build-asan run of this window is the no-leak check); this entry
+# selects exactly the EcsStress suite from the shared laige-sim_tests
+# executable (the machine-greppable window/iteration/memory lines land
+# in the ctest output).
+add_test(NAME ecs_stress
+         COMMAND laige-sim_tests
+         --gtest_filter=EcsStress.*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
   set_tests_properties(laige-sim_tests entity component_registry archetype
-    query iter_order ecs_guardrails
+    query iter_order ecs_guardrails ecs_stress
     PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

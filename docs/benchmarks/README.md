@@ -9,10 +9,12 @@ Benchmark methodology, baselines, results, and the regression policy
   map onto them, the baseline-file convention, the PRD §8.1 regression
   policy, and workload discipline.
 - [baselines/](baselines/README.md) — recorded baseline reports
-  (`<milestone>-<workload>.md`). **Currently empty**: every
-  `budgets.json` entry has `measured: 0`. The first baseline,
-  `baselines/m0-synthetic.md`, lands with M0-EXIT-01, and
-  `baselines/m1-profiler-cost.md` with M1-PROF-01.
+  (`<milestone>-<workload>.md`). Every `budgets.json` entry still has
+  `measured: 0`: the two baselines recorded so far
+  (`baselines/m0-synthetic.md`, M0-EXIT-01, and
+  `baselines/m1-ecs-stress.md`, M1-ECS-07) measure harness and stress
+  workloads that update no budget. `baselines/m1-profiler-cost.md`
+  lands with M1-PROF-01.
 - Per-milestone performance results (M1 10k-entity tick, M2 50k-sprite
   scene, M6/M7 zone server, …) land here as their milestones close —
   see the [roadmap progress board](../../roadmap/README.md).
