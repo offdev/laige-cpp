@@ -231,6 +231,11 @@ inline constexpr std::uint32_t kInvalidRowIndex = 0xFFFFFFFFu;
 //   totalReservations     column block reservations since construction
 //                         (archetype creation + growth) — the pool
 //                         accounting the zero-allocation property reads
+//   totalRowShifts        rows moved by attachSlot/removeRow tail
+//                         shifts since construction (the cost unit of
+//                         the O(tail * row-stride) move; growth
+//                         reallocation copies are NOT counted — they
+//                         are totalReservations/totalArchetypeGrowth)
 struct ArchetypeStats {
   std::uint32_t archetypeCount{};
   std::uint32_t rowsLive{};
@@ -240,6 +245,7 @@ struct ArchetypeStats {
   std::uint64_t totalRemoves{};
   std::uint64_t totalArchetypeGrowth{};
   std::uint64_t totalReservations{};
+  std::uint64_t totalRowShifts{};
 };
 
 namespace detail {

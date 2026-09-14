@@ -412,8 +412,12 @@ class World {
   //                    (query.h)
   //   Complexity       O(kMaxArchetypes * N) scan + one visit per
   //                    matching entity (PERF-007)
+  // The access-tag VALUES are unnamed: only their TYPES are used (the
+  // static_asserts and template arguments in the definition) — a named
+  // pack would be an unreferenced parameter (MSVC C4100, fatal under
+  // /WX; NFR-8.10).
   template <typename... Ts, typename... Acc, typename F>
-  [[nodiscard]] Status each(F&& fn, Acc... accesses) noexcept;
+  [[nodiscard]] Status each(F&& fn, Acc...) noexcept;
 
   // Destroy every live entity (shutdown path, CONC-006). Every handle
   // becomes stale; the capacity is unchanged and the world is
@@ -674,6 +678,9 @@ class World {
   std::uint64_t totalRemoves_{0};
   std::uint64_t totalArchetypeGrowth_{0};
   std::uint64_t totalReservations_{0};
+  // Rows moved by attachSlot/removeRow tail shifts (ArchetypeStats feed;
+  // the churn test's deterministic work KAT — archetype.h).
+  std::uint64_t totalRowShifts_{0};
   // Iteration-legality guard (M1-ECS-04; query.h): live while a
   // World::each runs, on the world's single owner thread. The matched
   // set names the archetypes the active query visits (complete before
@@ -1034,8 +1041,10 @@ Status World::removeComponent(Entity entity) noexcept {
 // registerComponent: a template, visible to every translation unit.
 // ---------------------------------------------------------------------------
 
+// The access-tag values are unnamed (only their types are used — see the
+// declaration's note); a named pack would trigger MSVC C4100 under /WX.
 template <typename... Ts, typename... Acc, typename F>
-Status World::each(F&& fn, Acc... accesses) noexcept {
+Status World::each(F&& fn, Acc...) noexcept {
   static_assert(sizeof...(Ts) <= kMaxArchetypeComponents,
                 "a query lists at most kMaxArchetypeComponents (32) "
                 "components: no entity can carry more (the M1 bound — "

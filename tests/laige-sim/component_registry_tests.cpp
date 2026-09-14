@@ -128,15 +128,19 @@ laige::World makeWorld(std::uint32_t capacity) {
 
 // Register SimBulkComp<Lo> .. SimBulkComp<Hi-1>; false on the first
 // failure. Compile-time recursion over the non-type parameter (test
-// setup code, not a hot path).
+// setup code, not a hot path). The explicit else (not a trailing return)
+// keeps MSVC /WX clean: in the Lo < Hi instantiations the trailing return
+// would be unreachable (C4702), while a discarded else branch is never
+// emitted.
 template <int Lo, int Hi>
 bool registerRange(laige::World& world) {
   if constexpr (Lo < Hi) {
     auto r = world.registerComponent<SimBulkComp<Lo>>();
     if (!r.ok()) return false;
     return registerRange<Lo + 1, Hi>(world);
+  } else {
+    return true;
   }
-  return true;
 }
 
 }  // namespace

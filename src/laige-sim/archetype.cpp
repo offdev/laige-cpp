@@ -246,6 +246,7 @@ void World::removeRow(detail::ArchetypeRecord& arch, std::uint32_t row) noexcept
                    column.base + static_cast<std::size_t>(row + 1) * column.size,
                    tailRows * column.size);
     }
+    totalRowShifts_ += tailRows;  // accounted work (ArchetypeStats)
   }
   --arch.size;
   for (std::uint32_t r = row; r < arch.size; ++r) {
@@ -291,6 +292,7 @@ std::uint32_t World::attachSlot(std::uint32_t slot,
                    column.base + static_cast<std::size_t>(row) * column.size,
                    tailRows * column.size);
     }
+    totalRowShifts_ += tailRows;  // accounted work (ArchetypeStats)
   }
   arch.slotCol[row] = static_cast<std::uint16_t>(slot);
   ++arch.size;
@@ -324,6 +326,7 @@ ArchetypeStats World::archetypeStats() const noexcept {
   s.totalRemoves = totalRemoves_;
   s.totalArchetypeGrowth = totalArchetypeGrowth_;
   s.totalReservations = totalReservations_;
+  s.totalRowShifts = totalRowShifts_;
   return s;
 }
 
