@@ -301,7 +301,12 @@ Scenario buildScenario(laige::Prng rng, bool deterministic) {
       if (!isDead(i)) live.push_back(i);
     }
     if (!deterministic) {
-      for (std::uint32_t j = live.size(); j > 1; --j) {
+      // live holds at most kScenarioEntities (a uint32_t constant)
+      // elements, so its size fits a uint32_t: an explicit narrowing
+      // keeps MSVC C4267 quiet under /WX.
+      const std::uint32_t liveCount =
+          static_cast<std::uint32_t>(live.size());
+      for (std::uint32_t j = liveCount; j > 1; --j) {
         const std::uint32_t k = rng.next_range(0u, j);
         std::swap(live[j - 1], live[k]);
       }

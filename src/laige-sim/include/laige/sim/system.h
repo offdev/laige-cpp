@@ -73,9 +73,14 @@
 // def's `dependsOn` spec ("Spawner"). They may name systems
 // registered LATER in the same world (forward dependencies: the spec
 // is validated against the world at scheduling time, not at
-// registration). The empty list (no trailing names) is "" = no
-// dependencies. See the "Scheduler" section below for the spec format
-// and the ordering semantics.
+// registration). The empty list (no trailing names) is the no-
+// dependencies spec: "" where the preprocessor stringizes the empty
+// variadic pack (GCC/Clang, [cpp.stringize]) and nullptr where it
+// leaves the pack empty and the 4th initializer value-initializes
+// (MSVC 2022) — both are the documented no-deps form
+// (SystemDef::dependsOn), and parseDepSpec treats them alike. See
+// the "Scheduler" section below for the spec format and the ordering
+// semantics.
 //
 // ---------------------------------------------------------------------------
 // Registration and the id contract (FR-1.3, component.h precedent)
