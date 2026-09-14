@@ -65,6 +65,11 @@ still to land.
   pre-run validation (unknown dependency, cycle, double writer,
   read-before-write warn), and the per-tick system phase
   (M1-SYS-02; `laige-sim`).
+- [Per-system timing and budget enforcement](api/system_timing.md) —
+  the per-tick rolling time windows, the G-R5 budget enforcement
+  (`system/budget_overrun` warn, `system/budget_critical` error), and
+  the `World::systemTimingStats`/`systemTimingWindow` profiler feed
+  (M1-SYS-03; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,
@@ -155,7 +160,8 @@ still to land.
   [query.md](api/query.md),
   [iteration_order.md](api/iteration_order.md),
   [system_registry.md](api/system_registry.md),
-  [scheduler.md](api/scheduler.md).)
+  [scheduler.md](api/scheduler.md),
+  [system_timing.md](api/system_timing.md).)
 
 ## Related
 

@@ -53,7 +53,8 @@ inheritance, no state object. The function plus its `SystemDef`
   store it across ticks.
 - Systems are deterministic when the engine runs in deterministic
   mode (M1-DET-01) and must stay within their declared budget
-  (M1-SYS-03 measures per-system time).
+  (M1-SYS-03 measures per-system time and enforces the budget —
+  [system_timing.md](system_timing.md)).
 
 `LAIGE_SYSTEM(Name, budget_ms, Dep..., ...)` (namespace scope,
 directly above the function) expands to the function declaration plus
@@ -67,7 +68,9 @@ so `Name` is both the C++ function name and the system's
 registration name (stringified), and the def variable is `Name##Def`.
 `budget_ms` is a numeric literal in milliseconds (1, 0.5, …); the
 conversion to the exact `fpx16_16` happens once, at program start
-(setup path, never a hot path). The macro and the function
+(setup path, never a hot path). The budget is enforced per tick by
+the per-system timing (M1-SYS-03 —
+[system_timing.md](system_timing.md)). The macro and the function
 definition live in the same translation unit. The optional trailing
 `Dep...` names are the **depends_on** spec (M1-SYS-02): the
 registration names of the systems `Name` must run after, stringified

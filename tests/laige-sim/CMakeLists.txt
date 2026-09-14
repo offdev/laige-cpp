@@ -1,22 +1,25 @@
-# laige-sim tests (M1-ECS-01/02/03/04/05/06/07 + M1-SYS-01/02): entity
-# handle + World entity storage, component type registry, archetype
-# SoA storage, query API + iteration legality, deterministic iteration
-# order, the ECS guardrails (G-R3/G-R4), the ECS stress + memory
-# accounting suite, the system registry (plain registered functions,
-# declared budgets + component I/O), and the system scheduler
-# (execution order, depends_on, the declared-I/O pre-run validation).
+# laige-sim tests (M1-ECS-01/02/03/04/05/06/07 + M1-SYS-01/02/03):
+# entity handle + World entity storage, component type registry,
+# archetype SoA storage, query API + iteration legality,
+# deterministic iteration order, the ECS guardrails (G-R3/G-R4), the
+# ECS stress + memory accounting suite, the system registry (plain
+# registered functions, declared budgets + component I/O), the system
+# scheduler (execution order, depends_on, the declared-I/O pre-run
+# validation), and per-system timing + budget enforcement (the
+# rolling window, the G-R5 warn/error events, the profiler feed).
 #
 # One executable per module (tests/README.md; docs/testing.md is the
 # source of truth): laige-sim_tests links the module under test plus
 # gtest_main. The unfiltered entry runs the whole module; the `entity`,
 # `component_registry`, `archetype`, `query`, `iter_order`,
-# `ecs_guardrails`, `ecs_stress`, `system_registry`, and `scheduler`
-# entries are the M1-ECS-01, M1-ECS-02, M1-ECS-03, M1-ECS-04,
-# M1-ECS-05, M1-ECS-06, M1-ECS-07, M1-SYS-01, and M1-SYS-02 Verify
-# commands (`ctest -R entity`, `ctest -R component_registry`,
-# `ctest -R archetype`, `ctest -R query`, `ctest -R iter_order`,
-# `ctest -R ecs_guardrails`, `ctest -R ecs_stress`,
-# `ctest -R system_registry`, `ctest -R scheduler`), selecting exactly
+# `ecs_guardrails`, `ecs_stress`, `system_registry`, `scheduler`, and
+# `system_timing` entries are the M1-ECS-01, M1-ECS-02, M1-ECS-03,
+# M1-ECS-04, M1-ECS-05, M1-ECS-06, M1-ECS-07, M1-SYS-01, M1-SYS-02,
+# and M1-SYS-03 Verify commands (`ctest -R entity`,
+# `ctest -R component_registry`, `ctest -R archetype`, `ctest -R
+# query`, `ctest -R iter_order`, `ctest -R ecs_guardrails`,
+# `ctest -R ecs_stress`, `ctest -R system_registry`,
+# `ctest -R scheduler`, `ctest -R system_timing`), selecting exactly
 # the suites below from the shared executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
@@ -24,7 +27,8 @@ set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            iter_order_tests.cpp ecs_guardrails_tests.cpp
                            ecs_stress_tests.cpp
                            system_registry_tests.cpp
-                           scheduler_tests.cpp)
+                           scheduler_tests.cpp
+                           system_timing_tests.cpp)
 # M1-ECS-03: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own
 # new/delete (strong symbols in the Clang/GCC TSan runtime archives,
@@ -136,10 +140,20 @@ add_test(NAME scheduler
          COMMAND laige-sim_tests
          --gtest_filter=SystemScheduler.*)
 
+# M1-SYS-03: per-system timing + budget enforcement (PRD §9.3 G-R5).
+# The step's Verify command is `ctest -R system_timing`; this entry
+# selects exactly the SystemTiming suites from the shared
+# laige-sim_tests executable (the machine-greppable
+# system-timing-window / system-timing-zeroalloc lines land in the
+# ctest output).
+add_test(NAME system_timing
+         COMMAND laige-sim_tests
+         --gtest_filter=SystemTiming.*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
   set_tests_properties(laige-sim_tests entity component_registry archetype
     query iter_order ecs_guardrails ecs_stress system_registry scheduler
-    PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
+    system_timing PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

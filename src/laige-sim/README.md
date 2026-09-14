@@ -56,6 +56,15 @@ read-before-write warn), `SystemSchedule`, and
 `systems.cpp`; API contract in
 [docs/api/scheduler.md](../docs/api/scheduler.md), tests under
 [tests/laige-sim](../tests/laige-sim), CTest entry `scheduler`).
-The system timing/budget measurement (M1-SYS-03 onward) and the game
-loop (M1-LOOP) land in the remaining M1 steps; physics, input, and
-animation in M3.
+M1-SYS-03 landed the per-system timing + budget enforcement — the
+per-tick rolling time windows (`kSystemTimingWindowSamples`), the
+G-R5 budget enforcement (the `system/budget_overrun` warn and
+`system/budget_critical` error events,
+`kBudgetCriticalMultiplier`), and the
+`World::systemTimingStats`/`systemTimingWindow` profiler feed
+(`include/laige/sim/system.h`, `system_timing.cpp` + the per-system
+measurement in `runSystems` (`systems.cpp`); API contract in
+[docs/api/system_timing.md](../docs/api/system_timing.md), tests
+under [tests/laige-sim](../tests/laige-sim), CTest entry
+`system_timing`). The game loop (M1-LOOP) and the profiler land in
+the remaining M1 steps; physics, input, and animation in M3.

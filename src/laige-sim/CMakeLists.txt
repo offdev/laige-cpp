@@ -30,8 +30,13 @@
 # system scheduler to the same systems.cpp (scheduleSystems,
 # runSystems + the depends_on spec parse — no new source file; the
 # public types and contract live in include/laige/sim/system.h).
+# M1-SYS-03 adds system_timing.cpp: the per-system timing + budget
+# enforcement (the World::systemTimingStats/systemTimingWindow
+# queries and the World::checkSystemBudget hook that runSystems
+# calls per system per tick; the public types and contract live in
+# include/laige/sim/system.h).
 set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
-                     systems.cpp)
+                     systems.cpp system_timing.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})

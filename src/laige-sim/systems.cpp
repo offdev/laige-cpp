@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "laige/budget_harness.h"  // M1-SYS-03: TimeIt (the scope timer)
 #include "laige/logging.h"
 
 namespace laige {
@@ -380,7 +381,9 @@ Status World::scheduleSystems(SystemSchedule& out) const noexcept {
 // runSystems: one sim tick's system phase (M1-LOOP-01 calls it once
 // per tick). Strictly one system at a time, in schedule order, on the
 // world's single owner thread; a fresh non-owning SystemContext per
-// system. O(n) dispatch; no allocation, no logging on success.
+// system. O(n) dispatch plus the M1-SYS-03 per-system measurement (two
+// steady_clock reads, one O(1) ring write, two comparisons per
+// system); no allocation, no logging on success.
 Status World::runSystems(const SystemSchedule& schedule) noexcept {
   // The schedule must describe the CURRENT registry: a systemCount
   // mismatch means systems were registered after the schedule was
@@ -414,9 +417,15 @@ Status World::runSystems(const SystemSchedule& schedule) noexcept {
     seen.set(id);
   }
   for (std::uint32_t k = 0; k < count; ++k) {
-    const detail::SystemRecord& rec = systems_[schedule.order[k] - 1];
+    const std::uint32_t id = schedule.order[k];
+    const detail::SystemRecord& rec = systems_[id - 1];
     SystemContext ctx{*this};  // per-tick, per-system, non-owning
+    // M1-SYS-03: the system's own run time (the context is built
+    // outside the window — the measurement is the run function
+    // itself, not the dispatch bookkeeping).
+    TimeIt timer;
     rec.def.run(*this, ctx);
+    checkSystemBudget(id, timer.elapsedMs());
   }
   return Status{};
 }

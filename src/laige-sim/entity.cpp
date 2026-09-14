@@ -74,7 +74,8 @@ World::World(World&& other) noexcept
       iterationArchetypes_(other.iterationArchetypes_),
       iterationReadComponents_(other.iterationReadComponents_),
       systems_(std::move(other.systems_)),
-      systemCount_(other.systemCount_) {
+      systemCount_(other.systemCount_),
+      systemTiming_(std::move(other.systemTiming_)) {
   other.capacity_ = 0;
   other.freeCount_ = 0;
   other.inUse_ = 0;
@@ -111,6 +112,9 @@ World::World(World&& other) noexcept
   // moved-from world is a valid empty world in every field (no
   // registry: registerSystem returns InvalidArgument on it).
   other.systemCount_ = 0;
+  // M1-SYS-03: the per-system timing table travels with the registry
+  // (the move leaves the moved-from world's table null — no timing
+  // state survives the move, like the registry itself).
 }
 
 World& World::operator=(World&& other) noexcept {
@@ -159,6 +163,9 @@ World& World::operator=(World&& other) noexcept {
   // M1-SYS-01: the system registry travels with the storage.
   systems_ = std::move(other.systems_);
   systemCount_ = other.systemCount_;
+  // M1-SYS-03: the per-system timing table travels with the registry
+  // (this world's old table is released with the old state).
+  systemTiming_ = std::move(other.systemTiming_);
   other.capacity_ = 0;
   other.freeCount_ = 0;
   other.inUse_ = 0;
@@ -212,6 +219,18 @@ Result<World, ErrorCode> World::create(Options options) noexcept {
   // allocation like the component registry above — allocated even
   // for a zero-capacity world so it stays a valid empty world.
   w.systems_ = std::make_unique<detail::SystemRecord[]>(kMaxSystems);
+  // System timing table (M1-SYS-03): the fixed engine-level budget
+  // (kMaxSystems per-system timing records), parallel to the
+  // registry table above — allocated even for a zero-capacity world
+  // so it stays a valid empty world. Each record's rolling window is
+  // built with the fixed kSystemTimingWindowSamples capacity (the
+  // M0-CORE-08 Histogram's two backing allocations — a setup path,
+  // never a hot path).
+  w.systemTiming_ = std::make_unique<detail::SystemTimingRecord[]>(kMaxSystems);
+  for (std::uint32_t i = 0; i < kMaxSystems; ++i) {
+    w.systemTiming_[i].window = std::make_unique<Histogram>(
+        Histogram::Options{kSystemTimingWindowSamples});
+  }
   // Archetype storage (M1-ECS-03): the fixed archetype table
   // (kMaxArchetypes records, value-initialized) and the type-key
   // index (kComponentKeyIndexSize slots) — setup-path allocations,
