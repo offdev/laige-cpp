@@ -161,7 +161,9 @@ CTest entry pins the property.
   id check, and one `SystemContext` construction + one call per
   system) plus the systems' own work. **No allocation, no logging**
   on the success path — the per-tick cost is the systems' declared
-  budgets (M1-SYS-03 measures them).
+  budgets (M1-SYS-03 measures them; the per-system timing + budget
+  enforcement is documented in
+  [system_timing.md](system_timing.md)).
 - **Misuse:** scheduling a world near the `kMaxSystems` bound costs
   O(n³) worst case (~1M bounded integer ops for n = 256) — a setup
   cost, never a hot path; a game that outgrows 256 systems raises the

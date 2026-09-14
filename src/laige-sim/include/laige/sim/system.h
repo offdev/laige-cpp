@@ -24,6 +24,10 @@
 //   SystemSchedule  The computed execution order of a world's systems
 //                   (M1-SYS-02): the systemCount plus the SystemId
 //                   values in execution order.
+//   SystemTimingStats
+//                   One system's measured-run scalars (runs, last ms,
+//                   warn/error counts) for the profiler (M1-SYS-03,
+//                   M1-PROF-01/02).
 //   LAIGE_SYSTEM    The one-line declaration of a system: the plain
 //                   function declaration plus the SystemDef, at
 //                   namespace scope directly above the function;
@@ -250,6 +254,50 @@
 // warning sequences.
 //
 // ---------------------------------------------------------------------------
+// Timing and budget enforcement (M1-SYS-03; PRD §9.3 G-R5)
+// ---------------------------------------------------------------------------
+//
+// World::runSystems measures each system's own run time per tick
+// (TimeIt — the M0-CORE-08 steady_clock scope timer, ms as a double)
+// and hands the measurement to the system's rolling window and the
+// budget check:
+//
+//   - Rolling window — one fixed-capacity Histogram per system
+//     (kSystemTimingWindowSamples = 64 samples, ~1.1 s at the default
+//     60 Hz). record() is O(1) and allocates nothing (PERF-003);
+//     recording beyond the capacity drops the OLDEST sample, and
+//     totalRecorded() keeps counting every sample ever recorded
+//     (silent truncation is not allowed — the M0-CORE-08 contract).
+//     The window rolls across TICKS (it is not a per-frame window):
+//     beginFrame() does not touch it.
+//   - Budget enforcement — measured vs the declared SystemDef
+//     budget (fpx16_16 ms, converted to double exactly — raw/2^16 is
+//     a power-of-two scale):
+//       measured >  1 × budget  -> one system/budget_overrun WARN
+//                                   (the rolling window p99 is carried
+//                                   as a field)
+//       measured >= 3 × budget  -> one system/budget_critical ERROR
+//                                   (kBudgetCriticalMultiplier; PRD
+//                                   §9.3 G-R5: "over 3× → error event")
+//     Both events follow the NFR-13.3 5-field message grammar
+//     (build-stable text; the dynamic values are structured fields)
+//     and are rate-limited per (subsystem, event, severity) (LOG-004);
+//     the warn and the error count separately in SystemTimingStats.
+//     An over-budget system is STILL RUN — the timing is observation
+//     and reporting, never an execution gate (the engine does not skip
+//     or cancel a system; FR-12.3: the breach is surfaced, not hidden).
+//   - Profiler feed — World::systemTimingStats(id) (the cheap scalars,
+//     O(1), per frame) and World::systemTimingWindow(id) (the rolling
+//     window itself, cold path: the M1-PROF-02 frame graph's
+//     budgetCheck consumes it).
+//
+// Determinism (ARCH-009/ARCH-010): the measured times are DIAGNOSTIC
+// only — they never enter authoritative simulation state, state
+// hashes, or replays (wall-clock readings are platform-sensitive).
+// The only state the timing adds to a world is the window contents
+// and the counters: diagnostics, not sim state.
+//
+// ---------------------------------------------------------------------------
 // Threading and failure
 // ---------------------------------------------------------------------------
 //
@@ -257,10 +305,11 @@
 // sim-thread operations on the world's single owner thread (CONC-001;
 // API-004: mutations in explicit phases). scheduleSystems is a pure
 // read of the registry (const); runSystems is the per-tick mutation
-// phase; the run functions are sim-thread code (PRD §10.2:
-// simulation is single-threaded). All failures are Result/Status
-// values with one rate-limited structured warn each (LOG-004); no
-// exceptions (FR-12.1, NFR-8.10).
+// phase (it also owns the per-system timing state — written strictly
+// on the owner thread); the run functions are sim-thread code (PRD
+// §10.2: simulation is single-threaded). All failures are Result/
+// Status values with one rate-limited structured warn each (LOG-004);
+// no exceptions (FR-12.1, NFR-8.10).
 //
 // ---------------------------------------------------------------------------
 // Misuse warnings
@@ -308,7 +357,9 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 
+#include "laige/budget_harness.h"  // M1-SYS-03: the rolling window (Histogram)
 #include "laige/fpx16_16.h"
 #include "laige/result.h"
 #include "laige/sim/component.h"
@@ -349,6 +400,19 @@ inline constexpr std::uint32_t kMaxSystems = 256;
 // barrier is registration order, not a dependency list). Raising it
 // is an ADR.
 inline constexpr std::uint32_t kMaxSystemDependencies = 16;
+
+// The per-system rolling window capacity (M1-SYS-03; CORE-005): the
+// number of measured run times (ms) kept per system in the rolling
+// histogram — ~1.1 s of samples at the default 60 Hz tick rate. The
+// window is fixed at world construction (a setup-path allocation);
+// raising the capacity is an ADR, not a knob.
+inline constexpr std::uint32_t kSystemTimingWindowSamples = 64;
+
+// The over-budget multiplier that escalates the budget_overrun warn
+// into a budget_critical error event (M1-SYS-03; PRD §9.3 G-R5:
+// "over 3× → error event"; CORE-005). The warn fires strictly above
+// 1× the declared budget; the error at 3× or more.
+inline constexpr std::uint32_t kBudgetCriticalMultiplier = 3;
 
 // The system function signature (FR-1.3): a plain free function — no
 // class, no inheritance. `world` is the world the system runs on;
@@ -461,6 +525,27 @@ struct SystemInfo {
   detail::IdSet256 writeComponents_{};
 };
 
+// One system's measured-run scalars (M1-SYS-03; PRD §9.3 G-R5): the
+// cheap per-frame snapshot the profiler (M1-PROF-01) and the frame
+// graph (M1-PROF-02) pull through World::systemTimingStats(id) —
+// O(1), no allocation, no side effects. The window SAMPLES are not
+// here (the rolling histogram is read cold through
+// World::systemTimingWindow(id) — its stats() is O(n log n)). All
+// counters are since-construction; the window rolls across ticks
+// (kSystemTimingWindowSamples, not per-frame).
+struct SystemTimingStats {
+  // Measured runs of the system since world construction.
+  std::uint64_t runs{};
+  // The measured time (ms) of the most recent run (0 before the first
+  // run).
+  double lastMs{};
+  // The system/budget_overrun warns issued since construction.
+  std::uint32_t warns{};
+  // The system/budget_critical error events issued since
+  // construction.
+  std::uint32_t errors{};
+};
+
 // Declare a system (FR-1.3): at namespace scope, directly above the
 // plain system function's definition. `Name` is both the C++ function
 // name and the system's registration name (stringified); `budget_ms`
@@ -496,6 +581,26 @@ struct SystemRecord {
   SystemDef def{};
   IdSet256 readComponents;    // declared Read component ids (1..256)
   IdSet256 writeComponents;   // declared Write component ids (1..256)
+};
+
+// One per-system timing record (M1-SYS-03): the rolling window of
+// measured run times (ms — the M0-CORE-08 Histogram, fixed capacity
+// kSystemTimingWindowSamples) plus the cheap scalars exposed by
+// SystemTimingStats. World stores a dense array of these indexed by
+// (system id - 1) — parallel to the SystemRecord table (the M1-SYS-01
+// precedent: fixed engine budget, setup-path allocation, moves with
+// the world, survives clear()).
+struct SystemTimingRecord {
+  // The rolling window of measured run times (ms): the M0-CORE-08
+  // Histogram, fixed capacity kSystemTimingWindowSamples. Built in
+  // World::create (setup path; the Histogram has no default
+  // constructor, so the record holds it as a unique_ptr — the one
+  // level of indirection is bounded by kMaxSystems).
+  std::unique_ptr<Histogram> window;
+  double lastMs{};       // most recent measured run (0 before first)
+  std::uint64_t runs{};  // measured runs since construction
+  std::uint32_t warns{};  // budget_overrun warns issued
+  std::uint32_t errors{}; // budget_critical errors issued
 };
 
 // The outcome of one Io entry's resolution in World::registerSystem

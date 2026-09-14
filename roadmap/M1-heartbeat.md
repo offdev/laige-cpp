@@ -113,7 +113,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R scheduler` green.
   - **Size:** ~200 lines + tests
 
-- [ ] **M1-SYS-03 · Per-system timing + budget enforcement (G-R5)**
+- [x] **M1-SYS-03 · Per-system timing + budget enforcement (G-R5)**
   - **Refs:** PRD §9.3 G-R5; FR-11.1/11.2; FR-12.3
   - **Depends:** M1-SYS-02, M0-CORE-08
   - **Scope:**

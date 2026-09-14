@@ -27,7 +27,13 @@
 //            adds the system scheduler (system.h: SystemSchedule,
 //            the depends_on spec, World::scheduleSystems/
 //            runSystems — execution order, depends_on, and the
-//            pre-run I/O validation).
+//            pre-run I/O validation); M1-SYS-03 adds the per-system
+//            timing + budget enforcement (system.h:
+//            SystemTimingStats, kSystemTimingWindowSamples,
+//            kBudgetCriticalMultiplier,
+//            World::systemTimingStats/systemTimingWindow — the
+//            per-tick rolling windows plus the G-R5 warn/error
+//            events, driven from runSystems).
 //
 // ---------------------------------------------------------------------------
 // The handle contract (FR-1.2, CPP-007)
@@ -619,6 +625,28 @@ class World {
   //   schedule.systemCount == 0       -> ok, runs nothing
   [[nodiscard]] Status runSystems(const SystemSchedule& schedule) noexcept;
 
+  // -------------------------------------------------------------
+  // Per-system timing + budget enforcement (M1-SYS-03; full
+  // contract in system.h "Timing and budget enforcement" and
+  // docs/api/system_timing.md)
+  // -------------------------------------------------------------
+
+  // The per-system timing snapshot (SystemTimingStats: the run count,
+  // the last measured ms, and the warn/error counts). O(1), no
+  // allocation, no side effects (a pure query, like system()). `id`
+  // invalid (0 or above systemCount()) or a moved-from world ->
+  // ErrorCode::InvalidArgument.
+  [[nodiscard]] Result<SystemTimingStats, ErrorCode>
+  systemTimingStats(SystemId id) const noexcept;
+
+  // The per-system rolling window (the M0-CORE-08 Histogram of the
+  // last kSystemTimingWindowSamples measured run times, ms). Cold
+  // path: the M1-PROF-02 frame graph's budgetCheck consumes it (its
+  // stats() is O(n log n)). nullptr for an invalid id or a
+  // moved-from world. The window is owned by the world (one owner
+  // thread — CONC-001): never keep the reference past the world.
+  [[nodiscard]] const Histogram* systemTimingWindow(SystemId id) const noexcept;
+
   // Destroy every live entity (shutdown path, CONC-006). Every handle
   // becomes stale; the capacity is unchanged and the world is
   // immediately reusable. O(capacity + detached rows * row-stride),
@@ -786,6 +814,14 @@ class World {
   // frame).
   void checkChurnBudget() noexcept;
 
+  // M1-SYS-03: record one measured system run (ms) in the system's
+  // rolling window and enforce the declared budget (PRD §9.3 G-R5):
+  // the system/budget_overrun warn (measured strictly above the
+  // budget) and the system/budget_critical error event (measured at
+  // kBudgetCriticalMultiplier × the budget or more). Called from
+  // runSystems per system per tick (defined in system_timing.cpp).
+  void checkSystemBudget(std::uint32_t id, double measuredMs) noexcept;
+
   // M1-ECS-04 query helpers: compile-time recursion over the listed
   // components (N ≤ 32 — the M1 bound). Recursion, not a fold: the
   // per-index component TYPE must reach a template argument, which a
@@ -943,6 +979,14 @@ class World {
   // not per-entity data).
   std::unique_ptr<detail::SystemRecord[]> systems_;
   std::uint32_t systemCount_{0};
+  // Per-system timing (M1-SYS-03; system_timing.cpp): the fixed
+  // engine budget (kMaxSystems records), indexed by (system id - 1)
+  // — parallel to systems_ (the M1-SYS-01 table precedent). Allocated
+  // in create() alongside the registry, travels with the world on
+  // move, and survives clear(). Each record's rolling window carries
+  // the fixed kSystemTimingWindowSamples capacity (setup-path
+  // allocation only — PERF-003).
+  std::unique_ptr<detail::SystemTimingRecord[]> systemTiming_;
 };
 
 // Component registration (M1-ECS-02). Header-defined: it is a template,
