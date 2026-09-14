@@ -352,8 +352,16 @@ std::uint64_t fnv1a64(const std::uint64_t* values, std::size_t n) {
 // ---------------------------------------------------------------------------
 
 TEST(SystemScheduler, MacroCarriesDependsOnSpec) {
-  // No trailing names: the spec is "" (no dependencies).
-  EXPECT_STREQ(SchNoop_Def.dependsOn, "");
+  // No trailing names: the no-deps spec — nullptr or "" (both are the
+  // documented forms; SystemDef::dependsOn, parseDepSpec). The exact
+  // representation is a preprocessor property of an EMPTY variadic
+  // pack: "" where #__VA_ARGS__ stringizes it (GCC/Clang,
+  // [cpp.stringize]), nullptr where the pack stays empty and the 4th
+  // initializer value-initializes (MSVC 2022). The engine treats both
+  // alike, so the test pins the contract, not the representation
+  // (platform-dependent assertions do not travel across P0 platforms).
+  ASSERT_TRUE(SchNoop_Def.dependsOn == nullptr ||
+              SchNoop_Def.dependsOn[0] == '\0');
   // One trailing name, stringified verbatim:
   EXPECT_STREQ(SchDepOnNoop_Def.dependsOn, "SchNoop");
   // Two trailing names: the comma-separated list as written.
