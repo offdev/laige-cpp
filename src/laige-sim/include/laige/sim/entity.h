@@ -76,7 +76,9 @@
 // configuration change, never a runtime behavior. 0 is legal (every
 // create() fails). create() beyond the budget returns
 // ErrorCode::BudgetExhausted — the world never grows silently (S-2,
-// G-R1). The G-R3 warn thresholds (25%/50%/100%) land with M1-ECS-06.
+// G-R1). The G-R3 warn thresholds (25%/50%/100%) and the G-R4
+// per-frame churn budget are enforced by M1-ECS-06 (see the
+// "Guardrails" section below; guardrails.cpp).
 //
 // World::create(Options) performs the storage's only backing
 // allocations (a setup path, never a hot path). Every create()/
@@ -84,6 +86,39 @@
 // (the free list is a pre-allocated LIFO stack). The standing
 // zero-allocation check lands with M1-ALLOC-01; until then ASan + the
 // stats() accounting is the check (M1 milestone rules).
+//
+// ---------------------------------------------------------------------------
+// Guardrails (G-R3, G-R4; M1-ECS-06; PRD §9.3)
+// ---------------------------------------------------------------------------
+//
+// G-R3 (entity count): create() emits one structured warn exactly
+// when the live count REACHES 25%/50%/100% of the declared scene
+// budget — integer thresholds capacity * pct / 100 (a level whose
+// threshold computes to 0 never fires: the live count is 0 only
+// before the first create). A level warns at most ONCE PER FRAME:
+// dipping below and re-crossing within the same frame does not
+// re-warn. Frame boundaries are driven by beginFrame(); without one
+// the guardrail degrades to warn-once-per-lifetime (documented,
+// never silent). Events: ecs/entity_budget_{25,50,100}.
+//
+// G-R4 (per-frame component churn): the successful addComponent
+// calls (including in-place overwrites — the same counting as
+// ArchetypeStats::totalAdds) plus the removeComponent calls that
+// actually detach a row (no-op removes, destroy/clear detaches, and
+// the BudgetExhausted/invalid rejects are not counted) are counted
+// per frame. When the per-frame total STRICTLY EXCEEDS
+// Options::churnPerFrameBudget, one ecs/churn_per_frame warn fires
+// per frame. Budget 0 disables the guardrail.
+//
+// Both guardrails are O(1) integer bookkeeping on the hot path (no
+// allocation — the warn paths are cold: fields construct only when
+// the event is enabled, LOG-003). Their counters are pulled by the
+// profiler (M1-PROF-01) through guardrailStats() (a plain value, no
+// allocation, no side effects). Message text follows the NFR-13.3
+// 5-field error grammar ({code} | {what} | {why} | {fix} |
+// {doc_anchor}) and is build-stable; per PRD §9.3 ("warn (debug:
+// with advice)"), debug builds additionally carry an `advice`
+// structured FIELD — never message text.
 //
 // ---------------------------------------------------------------------------
 // Ownership, threading, determinism
@@ -173,6 +208,41 @@ struct EntityStats {
   std::size_t bytesInUse{};
 };
 
+// The default G-R4 per-frame component-churn budget (CORE-005). At
+// the M1 reference scene (10k entities, PRD §8.1) 256 lifecycle
+// ops per frame is ~2.6% of the scene — steady-state gameplay stays
+// far below it; a sustained breach indicates unbatched spawn/despawn
+// churn on the hot path (the guardrail's advice). Overridable per
+// world (World::Options::churnPerFrameBudget); scenes with a
+// legitimately churning lifecycle raise it through typed
+// configuration, and 0 disables the guardrail.
+inline constexpr std::uint32_t kDefaultChurnPerFrameBudget = 256;
+
+// M1-ECS-06 (G-R3, G-R4) guardrail snapshot. A plain value the M1
+// profiler (M1-PROF-01) pulls each frame (World::guardrailStats());
+// mirrors the EntityStats/ArchetypeStats snapshot shape:
+//
+//   capacity             the declared scene budget (G-R3 denominator)
+//   entityCount          live entities right now (G-R3 numerator)
+//   entityBudgetLevel    0, 25, 50, or 100 — the highest percentage of
+//                        the budget the PEAK live count reached since
+//                        construction (0 = never reached 25%)
+//   entityBudgetWarns    per-level warn counts since construction
+//                        (index 0 = 25%, 1 = 50%, 2 = 100%)
+//   frameChurn           component adds + removes since the last
+//                        beginFrame() (the G-R4 numerator)
+//   churnPerFrameBudget  the configured G-R4 budget (0 = disabled)
+//   churnWarns           churn warnings issued since construction
+struct GuardrailStats {
+  std::uint32_t capacity{};
+  std::uint32_t entityCount{};
+  std::uint32_t entityBudgetLevel{};
+  std::uint32_t entityBudgetWarns[3]{};
+  std::uint64_t frameChurn{};
+  std::uint32_t churnPerFrameBudget{};
+  std::uint32_t churnWarns{};
+};
+
 // M1-ECS-04 query helpers (detail: engine implementation, excluded
 // from the public API scan). Declared before World: the member
 // templates of the World class reference them by qualified name at
@@ -244,13 +314,20 @@ inline constexpr bool isAccessTags() {
 // allocation, ownership, threading, and determinism contracts.
 class World {
  public:
-  // The declared scene budget (G-R3), fixed at construction (API-006).
-  // 0 is legal: every create() fails. Values above
-  // Entity::kMaxEntities are rejected at construction — the 16-bit id
-  // space cannot address them (API-008: the invalid state stays
-  // unrepresentable).
+  // The declared scene budget (G-R3) and the G-R4 per-frame churn
+  // budget, fixed at construction (API-006).
   struct Options {
+    // The declared scene budget (G-R3). 0 is legal: every create()
+    // fails. Values above Entity::kMaxEntities are rejected at
+    // construction — the 16-bit id space cannot address them
+    // (API-008: the invalid state stays unrepresentable).
     std::uint32_t capacity{};
+    // The G-R4 per-frame component-churn budget: the number of
+    // component add/remove ops per frame (beginFrame() to
+    // beginFrame()) above which the world warns
+    // (ecs/churn_per_frame). Strictly-greater semantics; 0 disables
+    // the guardrail. Default: kDefaultChurnPerFrameBudget.
+    std::uint32_t churnPerFrameBudget{kDefaultChurnPerFrameBudget};
   };
 
   // Construction (setup path: the storage's only backing allocations).
@@ -293,6 +370,27 @@ class World {
   // Entity accounting snapshot for the profiler (M1-PROF-01) and the
   // G-R3 guardrail (M1-ECS-06). O(1), no allocation.
   [[nodiscard]] EntityStats stats() const noexcept;
+
+  // ---------------------------------------------------------------
+  // ECS guardrails (M1-ECS-06: G-R3, G-R4; full contract in the
+  // header preamble "Guardrails" and docs/api/entity.md)
+  // ---------------------------------------------------------------
+
+  // Mark the start of a frame (G-R3/G-R4): resets the per-frame
+  // component-churn counters and the once-per-frame entity-budget
+  // warn flags. O(1), no allocation, no log. The owning loop drives
+  // it once per frame (M1-LOOP-01); before the loop exists, the game
+  // or tests drive it manually. Never driven, the guardrails
+  // degrade to warn-once-per-lifetime (documented, never silent).
+  // Reading the per-frame counters: guardrailStats() before the next
+  // beginFrame() returns the just-completed frame's values.
+  void beginFrame() noexcept;
+
+  // The guardrail accounting snapshot for the profiler (M1-PROF-01):
+  // the G-R3 level/warn counts, the G-R4 per-frame churn and its
+  // budget, and the warn counters (GuardrailStats). O(1), no
+  // allocation, no side effects.
+  [[nodiscard]] GuardrailStats guardrailStats() const noexcept;
 
   // -----------------------------------------------------------------
   // Component registry (M1-ECS-02; full contract in component.h)
@@ -552,6 +650,25 @@ class World {
   // iteration still holds live rows (ecs/iteration_clear).
   [[nodiscard]] Status guardClear() noexcept;
 
+  // -------------------------------------------------------------
+  // M1-ECS-06 guardrail checks (G-R3/G-R4; defined in guardrails.cpp)
+  // -------------------------------------------------------------
+
+  // Compute the per-level entity-budget thresholds (25/50/100% of
+  // the declared capacity; a 0 threshold never fires) — setup path,
+  // called from World::create(Options).
+  void initEntityBudgetThresholds() noexcept;
+
+  // G-R3: the per-level crossing check, run at the end of every
+  // successful create(). Emits the ecs/entity_budget_{25,50,100}
+  // warns (at most once per level per frame).
+  void checkEntityBudget() noexcept;
+
+  // G-R4: the per-frame churn-budget check, run after every counted
+  // add/remove. Emits the ecs/churn_per_frame warn (at most once per
+  // frame).
+  void checkChurnBudget() noexcept;
+
   // M1-ECS-04 query helpers: compile-time recursion over the listed
   // components (N ≤ 32 — the M1 bound). Recursion, not a fold: the
   // per-index component TYPE must reach a template argument, which a
@@ -681,6 +798,18 @@ class World {
   // Rows moved by attachSlot/removeRow tail shifts (ArchetypeStats feed;
   // the churn test's deterministic work KAT — archetype.h).
   std::uint64_t totalRowShifts_{0};
+  // M1-ECS-06 guardrails (G-R3/G-R4; guardrails.cpp). Per-frame state
+  // is reset by beginFrame(); the rest is since-construction. The
+  // per-level arrays are indexed by level rank (0 = 25%, 1 = 50%,
+  // 2 = 100% — see the header preamble "Guardrails").
+  std::uint32_t churnPerFrameBudget_{0};
+  std::uint32_t entityThreshold_[3]{};  // capacity * level / 100 (0: never fires)
+  bool entityBudgetWarnedThisFrame_[3]{};  // G-R3 once-per-frame flags
+  bool churnWarnedThisFrame_{false};  // G-R4 once-per-frame flag
+  std::uint64_t frameAdds_{0};
+  std::uint64_t frameRemoves_{0};
+  std::uint32_t entityBudgetWarns_[3]{};  // per-level warn counts
+  std::uint32_t churnWarns_{0};
   // Iteration-legality guard (M1-ECS-04; query.h): live while a
   // World::each runs, on the world's single owner thread. The matched
   // set names the archetypes the active query visits (complete before
@@ -844,6 +973,10 @@ Status World::addComponent(Entity entity, const T& value) noexcept {
       detail::copyRow(column.base + static_cast<std::size_t>(curRow) * column.size,
               reinterpret_cast<const std::byte*>(&value), sizeof(T));
       ++totalAdds_;
+      // M1-ECS-06 (G-R4): an in-place overwrite is a counted add
+      // (the ArchetypeStats::totalAdds semantics).
+      ++frameAdds_;
+      checkChurnBudget();
       return Status{};
     }
   }
@@ -939,6 +1072,9 @@ Status World::addComponent(Entity entity, const T& value) noexcept {
   }
   if (curIdx != 0) removeRow(archetypes_[curIdx - 1], curRow);
   ++totalAdds_;
+  // M1-ECS-06 (G-R4): the structural add is counted (above).
+  ++frameAdds_;
+  checkChurnBudget();
   return Status{};
 }
 
@@ -981,6 +1117,9 @@ Status World::removeComponent(Entity entity) noexcept {
     archetypeOf_[entity.id] = 0;
     rowOf_[entity.id] = 0;
     ++totalRemoves_;
+    // M1-ECS-06 (G-R4): the detached row is a counted remove.
+    ++frameRemoves_;
+    checkChurnBudget();
     return Status{};
   }
   // Build the target signature (the entity's set minus T, still
@@ -1033,6 +1172,9 @@ Status World::removeComponent(Entity entity) noexcept {
   }
   removeRow(cur, curRow);
   ++totalRemoves_;
+  // M1-ECS-06 (G-R4): the detached row is a counted remove.
+  ++frameRemoves_;
+  checkChurnBudget();
   return Status{};
 }
 

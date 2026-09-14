@@ -53,6 +53,8 @@ worlds passes `isValid()` in both (the same cross-pool caveat as
 | `isValid(e)` | Generation-checked liveness; no side effects | O(1) |
 | `capacity()` / `entityCount()` | Declared budget / live count (the G-R3 numerator) | O(1) |
 | `stats()` | `EntityStats` accounting snapshot (G-R3 and M1-PROF-01 feed) | O(1), no allocation |
+| `beginFrame()` (M1-ECS-06) | Mark the frame start: resets the per-frame churn counters and the once-per-frame guardrail warn flags (G-R3/G-R4); no log, no return value. Driven once per frame by the owning loop (M1-LOOP-01); read the just-completed frame's counters with `guardrailStats()` before the next call | O(1), no allocation |
+| `guardrailStats()` (M1-ECS-06) | `GuardrailStats` guardrail snapshot: the G-R3 level/warn counts, the G-R4 per-frame churn + its budget, the warn counters (M1-PROF-01 feed) | O(1), no allocation, no side effects |
 | `clear()` | Destroy every live entity (shutdown path, CONC-006); each live row is detached (M1-ECS-03); every handle goes stale; capacity unchanged; world immediately reusable. Returns `Status`: under a live `each` iteration, `InvalidArgument` when a matched archetype holds live rows (query.md "Iteration legality") | O(capacity) scan + detaches, no allocation, idempotent |
 
 Move-only (O(1) pointer swap — the archetype tables move with it, so
@@ -86,6 +88,101 @@ per-(subsystem, event, severity) rate limit implements the
 "warn-once" semantics (LOG-004: the first event emits, repeats are
 counted and summarized).
 
+## Guardrails (G-R3, G-R4) (M1-ECS-06)
+
+The engine-enforced guardrails of PRD §9.3 for the entity storage.
+Both are structured `Warn` events under the subsystem `ecs`, with
+counters pulled by the profiler (M1-PROF-01) through
+`guardrailStats()`. Both are O(1) integer bookkeeping on the hot
+path — no allocation (PERF-003); the warn paths are cold (a budget
+being crossed) and their fields construct only when the event is
+enabled (LOG-003).
+
+### G-R3 — entity-count thresholds
+
+`create()` warns exactly when the live count **reaches** 25% / 50%
+/ 100% of the declared scene budget — integer thresholds
+`capacity * pct / 100`:
+
+| Level | Event | Fires when (capacity 2000 example) |
+|---|---|---|
+| 25% | `ecs/entity_budget_25` | `entityCount == 500` |
+| 50% | `ecs/entity_budget_50` | `entityCount == 1000` |
+| 100% | `ecs/entity_budget_100` | `entityCount == 2000` (the last successful `create()`; the next one fails with `BudgetExhausted`) |
+
+- A level whose threshold computes to **0 never fires** (the live
+  count is 0 only before the first `create()`): e.g. capacity 2
+  warns only at 50% (1) and 100% (2); capacity 1 warns only at 100%.
+- **Once per level per frame**: dipping below a threshold and
+  re-crossing it within the same frame does not re-warn. Frame
+  boundaries are driven by `beginFrame()`; if the world is never
+  frame-driven, the guardrail degrades to warn-once-per-lifetime
+  (documented, never silent). The facade's rate limit (LOG-004)
+  additionally collapses cross-frame repeats within its window.
+- The warn carries the fields `entity_count`, `capacity`, `level`
+  (25/50/100).
+
+### G-R4 — per-frame component churn
+
+The per-frame **churn** counts, per frame (`beginFrame()` to
+`beginFrame()`):
+
+- every successful `addComponent<T>` — including in-place
+  overwrites (the `ArchetypeStats::totalAdds` semantics); and
+- every `removeComponent<T>` that actually detaches a row.
+
+No-op removes (the entity lacks the component), `destroy()`/`clear()`
+detaches, and rejected calls (`BudgetExhausted`, invalid handle) are
+**not** counted. When the per-frame total **strictly exceeds**
+`World::Options::churnPerFrameBudget`, one `ecs/churn_per_frame`
+warn fires for that frame (the warn carries the fields
+`frame_churn`, `churn_budget`).
+
+- **Budget:** `Options::churnPerFrameBudget`, default
+  `laige::kDefaultChurnPerFrameBudget = 256` — at the M1 reference
+  scene (10k entities, PRD §8.1) that is ~2.6% of the scene per
+  frame: steady-state gameplay stays far below it, and a sustained
+  breach indicates unbatched spawn/despawn churn on the hot path.
+  Churn-heavy scenes raise it through typed configuration (API-006);
+  **0 disables** the guardrail (documented).
+
+### Message grammar (NFR-13.3) and the debug advice field
+
+Every guardrail warn's **message text** is the 5-field NFR-13.3
+error-grammar line, identical in every build (machine-parseable,
+stable):
+
+```text
+{code} | {what} | {why} | {fix} | {doc_anchor}
+```
+
+e.g.
+
+```text
+entity_budget_100 | live entities reached 100% of the declared scene budget | the scene budget is full; the next create() fails with BudgetExhausted | destroy entities before spawning more, or raise the scene budget through typed configuration | docs/api/entity.md#guardrails
+```
+
+Per PRD §9.3 ("warn (debug: with advice)"), **debug builds** add the
+advice as an extra structured `advice` FIELD — never as message
+text, so the 5-field grammar stays build-stable. The G-R4 advice is
+the PRD's: *move the churn to a spawn/despawn system* (the same
+advice the iteration-legality rejection points to, query.md).
+
+### `GuardrailStats` (the profiler feed)
+
+| Field | Meaning |
+|---|---|
+| `capacity` | the declared scene budget (G-R3 denominator) |
+| `entityCount` | live entities right now (G-R3 numerator) |
+| `entityBudgetLevel` | 0/25/50/100 — the highest percentage the **peak** live count reached since construction |
+| `entityBudgetWarns[3]` | per-level warn counts (index 0 = 25%, 1 = 50%, 2 = 100%) |
+| `frameChurn` | adds + removes since the last `beginFrame()` |
+| `churnPerFrameBudget` | the configured G-R4 budget (0 = disabled) |
+| `churnWarns` | churn warnings issued since construction |
+
+`beginFrame()` resets `frameChurn` (and the warn flags); the warn
+counters and `entityBudgetLevel` are since-construction.
+
 ## Stale-handle behavior matrix (FR-12.3, S-9)
 
 | Operation | Debug build | Release build |
@@ -109,6 +206,12 @@ stale handle assert in debug and degrade in release.
   M1-ECS-03). `EntityStats` reports `capacity × 11` / `inUse × 11`
   bytes; the archetype column blocks are accounted separately in
   `ArchetypeStats` (archetype.md).
+- **Guardrail cost (M1-ECS-06):** `create()` adds three threshold
+  comparisons; each counted add/remove adds one counter increment
+  plus one comparison; `beginFrame()` is a handful of stores. Pure
+  integer bookkeeping, no allocation — a zero-allocation test pins
+  the below-threshold window (`ecs_guardrails` suite,
+  `GuardrailChecksAllocateNothingBelowTheThresholds`).
 - **Zero-alloc enforcement:** the standing assertion lands with
   M1-ALLOC-01; until then the step is verified by ASan + the
   `stats()` accounting (M1 milestone rules).
@@ -139,6 +242,11 @@ stale handle assert in debug and degrade in release.
 auto w = laige::World::create(laige::World::Options{2000});  // scene budget (G-R3)
 if (w.isError()) { /* capacity above the 16-bit id space: configuration bug */ }
 laige::World& world = std::move(w).takeValue();
+
+// Per frame (the game loop, M1-LOOP-01): restart the guardrail windows.
+world.beginFrame();  // G-R3/G-R4 (M1-ECS-06): reset per-frame churn + warn flags
+// ...at frame end, before the next beginFrame():
+//   const auto g = world.guardrailStats();  // the profiler feed (M1-PROF-01)
 
 // Hot path (per tick): no allocation.
 auto r = world.create();
@@ -186,5 +294,8 @@ if (!world.isValid(handle)) { /* stale — drop it, log if unexpected */ }
 - **M1-ECS-05 (done):** deterministic iteration (archetype order,
   entity id order — PRD §10.3) over the visit order M1-ECS-04 pins —
   see [iteration_order.md](iteration_order.md).
-- **M1-ECS-06:** the G-R3 warn thresholds (25%/50%/100% of the
-  declared budget) pull `stats()`.
+- **M1-ECS-06 (done):** the G-R3 entity-count thresholds and the
+  G-R4 per-frame churn guardrail — `beginFrame()`,
+  `guardrailStats()`, the `ecs/entity_budget_{25,50,100}` and
+  `ecs/churn_per_frame` warns (the "Guardrails" section above);
+  suite `ctest -R ecs_guardrails`.

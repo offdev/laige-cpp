@@ -591,19 +591,39 @@ TEST(WorldLogging, StaleAccessWarnsOnce) {
     }
   }
 
-  ASSERT_EQ(sinkPtr->entries.size(), 1u);
-  EXPECT_EQ(sinkPtr->entries[0].severity, laige::log::Severity::Warn);
-  EXPECT_EQ(sinkPtr->entries[0].subsystem, "ecs");
-  EXPECT_EQ(sinkPtr->entries[0].event, "stale_entity_access");
+  // M1-ECS-06: the capacity-1 create() above crossed the 100%
+  // entity-budget level, so the ecs/entity_budget_100 guardrail warn
+  // precedes the stale warn in this window — the expected events are
+  // counted by event name (LOG-001), not by position.
+  std::size_t staleCount = 0;
+  std::size_t budget100 = 0;
+  for (const auto& e : sinkPtr->entries) {
+    if (e.event == "stale_entity_access") ++staleCount;
+    if (e.event == "entity_budget_100") ++budget100;
+  }
+  ASSERT_EQ(staleCount, 1u);
+  ASSERT_EQ(budget100, 1u);
+  ASSERT_EQ(sinkPtr->entries.size(), 2u);
+  const MemorySink::Entry* staleEntry = nullptr;
+  for (const auto& e : sinkPtr->entries) {
+    if (e.event == "stale_entity_access") staleEntry = &e;
+  }
+  ASSERT_NE(staleEntry, nullptr);
+  EXPECT_EQ(staleEntry->severity, laige::log::Severity::Warn);
+  EXPECT_EQ(staleEntry->subsystem, "ecs");
 
   // Controlled shutdown drains the pending rate-limit summary
   // (CONC-006/LOG-007/LOG-004).
   laige::log::Logger::instance().shutdown();
-  ASSERT_EQ(sinkPtr->entries.size(), 2u);
-  EXPECT_EQ(sinkPtr->entries[1].event, laige::log::kRateLimitedEvent);
+  ASSERT_EQ(sinkPtr->entries.size(), 3u);
+  const MemorySink::Entry* summary = nullptr;
+  for (const auto& e : sinkPtr->entries) {
+    if (e.event == laige::log::kRateLimitedEvent) summary = &e;
+  }
+  ASSERT_NE(summary, nullptr);
   bool foundEventField = false;
   bool foundCountField = false;
-  for (const auto& [key, value] : sinkPtr->entries[1].fields) {
+  for (const auto& [key, value] : summary->fields) {
     if (key == "event" && value == "stale_entity_access") foundEventField = true;
     if (key == "suppressed" && value == "2") foundCountField = true;
   }
