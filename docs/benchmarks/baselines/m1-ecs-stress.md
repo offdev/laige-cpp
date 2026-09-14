@@ -135,5 +135,5 @@ Zero new warnings under the NFR-8.10 policy on all trees.
 
 ## Measured on
 
-- Commit: `<filled in the same PR that lands this file>`
+- Commit: `2995ec7` (branch `m1-ecs-07-ecs-stress`, step M1-ECS-07)
 - Date: 2026-09-14 (13:00 UTC session time)
