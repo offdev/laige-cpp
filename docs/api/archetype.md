@@ -231,9 +231,10 @@ world.removeComponent<PlayerPos>(e.value());  // component-less, still alive
   `World::each` with per-component `Read`/`Write` access and the
   stack-scoped iteration-legality guard — see
   [query.md](query.md).
-- **M1-ECS-05:** the deterministic iteration contract over the stored
-  row order (the slot-ordered scheme above is what the query
-  iterates).
+- **M1-ECS-05 (done):** the deterministic iteration contract over
+  the stored row order (the slot-ordered scheme above is what the
+  query iterates) — see
+  [iteration_order.md](iteration_order.md).
 - **M1-ECS-06:** the G-R3 warn thresholds read the same slot tables.
 - **M1-PROF-01 / G-R4:** `archetypeStats()` feeds the profiler.
 - **M1-ALLOC-01:** the standing zero-allocation assertion over the

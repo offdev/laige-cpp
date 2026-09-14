@@ -200,8 +200,9 @@ if (pos.isError()) {
 - **M1-ECS-04 (done):** the query API resolves the listed component
   types to their ids (`world.each<T1, T2, ...>` — unregistered types
   match nothing) — see [query.md](query.md).
-- **M1-ECS-05:** deterministic iteration orders the component sets by
-  registration order (`operator<`).
+- **M1-ECS-05 (done):** deterministic iteration visits the component
+  sets (archetypes) in first-seen (creation) order — see
+  [iteration_order.md](iteration_order.md).
 - **M1-SYS-01:** system I/O declarations reference these ids.
 - **M1-DET-02:** the replay header's component-schema hash is computed
   from the registered (id, size, alignment) triples in id order.

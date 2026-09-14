@@ -60,7 +60,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R query` green; illegal-mutation test asserts in debug build.
   - **Size:** ~250 lines + tests
 
-- [ ] **M1-ECS-05 · Deterministic iteration order**
+- [x] **M1-ECS-05 · Deterministic iteration order**
   - **Refs:** PRD §10.3 (archetype order, entity id order); AGENTS ARCH-010
   - **Depends:** M1-ECS-04
   - **Scope:**
