@@ -66,5 +66,12 @@ G-R5 budget enforcement (the `system/budget_overrun` warn and
 measurement in `runSystems` (`systems.cpp`); API contract in
 [docs/api/system_timing.md](../docs/api/system_timing.md), tests
 under [tests/laige-sim](../tests/laige-sim), CTest entry
-`system_timing`). The game loop (M1-LOOP) and the profiler land in
-the remaining M1 steps; physics, input, and animation in M3.
+`system_timing`). M1-LOOP-01 landed the fixed-timestep game loop
+core — the `GameLoop` accumulator loop (integer ticks at a validated
+20–120 Hz rate, the exact due computation, the bounded catch-up with
+the `loop/tick_dropped` overload warn, the `GameLoopStats` profiler
+feed; `include/laige/sim/game_loop.h`, `game_loop.cpp`; API contract
+in [docs/api/game_loop.md](../docs/api/game_loop.md), tests under
+[tests/laige-sim](../tests/laige-sim), CTest entry `game_loop`).
+The profiler, determinism/replay, headless engine, and the remaining
+M1 steps land next; physics, input, and animation in M3.

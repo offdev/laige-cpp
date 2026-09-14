@@ -126,7 +126,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 ## Game loop
 
-- [ ] **M1-LOOP-01 · Fixed-timestep core**
+- [x] **M1-LOOP-01 · Fixed-timestep core**
   - **Refs:** FR-1.1 (default 60 Hz, 20–120 Hz configurable); ARCH-002; PRD §10.2
   - **Depends:** M1-SYS-03, M0-CORE-08
   - **Scope:**

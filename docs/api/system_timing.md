@@ -15,13 +15,14 @@ per-system measurement inside `World::runSystems`
 (`src/laige-sim/systems.cpp`). Unit suite: `ctest -R system_timing`
 (`tests/laige-sim/system_timing_tests.cpp`).
 
-The loop (M1-LOOP-01) runs the schedule every tick, and the timing
-is automatic — nothing per system is wired by the game:
+The loop (M1-LOOP-01, `GameLoop`) runs the schedule every tick, and
+the timing is automatic — nothing per system is wired by the game:
 
 ```cpp
-for (tick) {
-  world.beginFrame();
-  world.runSystems(schedule);  // measures every system (M1-SYS-03)
+GameLoop loop = GameLoop::create(world, sched, opts).value();
+while (running) {
+  loop.frame();  // beginFrame once per frame; runSystems per tick —
+                 // measures every system (M1-SYS-03)
   // ... read the feed, e.g. for the frame graph:
   //   auto st = world.systemTimingStats(id);
 }
