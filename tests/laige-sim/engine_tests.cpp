@@ -471,6 +471,15 @@ void diagOnTickHook(void* context, laige::World&, std::uint64_t tick) noexcept {
   if (gDiagSnapshot != nullptr) gDiagSnapshot->onTick(tick);
 }
 
+// The shutdown() probe (the temporary Logger::setAllocProbe hook):
+// prints the running allocation counter at every statement boundary
+// inside Logger::shutdown(), localizing the Windows-only allocation.
+int gDiagShutStep = 0;
+void diagShutProbe() {
+  std::printf("diag-shut step %d: allocs=%llu\n", ++gDiagShutStep,
+              static_cast<unsigned long long>(laige::test::allocCounter()));
+}
+
 }  // namespace
 
 TEST(EngineRun, DiagAllocBisectTemp) {
@@ -552,7 +561,10 @@ TEST(EngineRun, DiagAllocBisectTemp) {
     gDiagSnapshot = nullptr;
     stage(23);  // after the snapshot release
   }
+  gDiagShutStep = 0;
+  laige::log::Logger::setAllocProbe(&diagShutProbe);
   laige::log::Logger::instance().shutdown();
+  laige::log::Logger::setAllocProbe(nullptr);
   stage(24);  // after the logger shutdown (the engine shutdown tail)
   EXPECT_EQ(sink->entries.size(), 0u);
   restoreLogger();

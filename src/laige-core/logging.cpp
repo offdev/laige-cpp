@@ -443,20 +443,43 @@ void Logger::flush() {
   if (sink_ != nullptr) sink_->flush();
 }
 
+// TEMPORARY CI DIAGNOSTIC (delete before merge): the allocation-probe
+// hook (see the header). Null by default; a test installs a probe that
+// prints the running allocation counter, so the Windows-only
+// allocation inside shutdown() can be bisected per statement.
+namespace {
+Logger::AllocProbeFn gAllocProbe = nullptr;
+}  // namespace
+
+void Logger::setAllocProbe(AllocProbeFn fn) { gAllocProbe = fn; }
+
+static void probeAlloc() {
+  if (gAllocProbe != nullptr) gAllocProbe();
+}
+
 void Logger::shutdown() {
+  probeAlloc();  // SHUT-1: entry
   std::vector<RateEntry> pending;
+  probeAlloc();  // SHUT-2: after the pending vector declaration
   {
     std::lock_guard lk(stateMutex_);
+    probeAlloc();  // SHUT-3: after the lock acquire
     retired_.store(true, std::memory_order_relaxed);
+    probeAlloc();  // SHUT-4: after the retired store
     for (const RateEntry& e : rates_) {
       if (e.suppressed > 0) pending.push_back(e);  // copy: state is cleared
     }
+    probeAlloc();  // SHUT-5: after the rate-state drain
     rates_.clear();
+    probeAlloc();  // SHUT-6: after the clear
   }
+  probeAlloc();  // SHUT-7: after the lock release
   for (const RateEntry& e : pending) {
     emitRateSummary(e);
   }
+  probeAlloc();  // SHUT-8: after the pending summaries
   if (sink_ != nullptr) sink_->flush();
+  probeAlloc();  // SHUT-9: after the sink flush
 }
 
 // ---------------------------------------------------------------------------
