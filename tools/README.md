@@ -24,6 +24,19 @@ Engine tools and CI scripts, each landing with its roadmap step:
   vendored deps only from their `deps.lock` owner) and fails above the PRD
   §11 dependency budget of 10. Runs in CI on every PR and merge
   (job `include-lint`), and as CTest checks in `tests/tools`.
+- `laige-determinism-lint` — sim-source determinism scan (M1-DET-01;
+  the second half of the G-R8 guarantee — the first is the compile-time
+  trait in `World::registerSystem`). Pure Python 3 stdlib; run it as
+  `python3 tools/laige-determinism-lint [--root REPO_ROOT]`. Scans
+  `src/laige-sim/**` for raw `float`/`double` (type tokens, float and
+  double literals) and `unordered_*` containers, with same-line
+  `// LAIGE-DETERM-EXCEPTION: G-R8 <reason>` markers as the documented
+  false-positive policy (every suppressed line is counted and printed).
+  Exit codes: `0` pass · `1` violation · `2` structural. Runs in CI on
+  every PR and merge (job `determinism-lint`), and as CTest checks in
+  `tests/tools` (fixture trees + the real tree). Scope, rules, and the
+  exception policy:
+  [docs/concepts/determinism.md](../docs/concepts/determinism.md).
 - `laige-api` — public API manifest generator (M0-TOOL-01)
 - `laige-detcheck` — determinism checker skeleton (M0-TOOL-02, in
   `tools/detcheck`): runs a named scenario in two build configurations

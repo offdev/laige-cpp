@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+# ============================================================================
+# laige-determinism-lint — sim-source determinism scan (M1-DET-01)
+#
+# Roadmap:  roadmap/M1-heartbeat.md, step M1-DET-01
+# PRD refs: §10.3 (determinism contract: "the simulation code uses only
+#           engine math ops; using raw float/double inside deterministic
+#           systems is a compile-time/trait error"; "no unordered
+#           containers in sim hot paths"), §9.1 S-7 (deterministic by
+#           default), §9.3 G-R8 (determinism violation → compile error)
+# ADR refs: 0002 (deterministic math strategy: no raw FP / platform
+#           intrinsics outside SimMath in sim translation units), 0003
+#           (JSON numbers are doubles — the config-parse boundary)
+# AGENTS:   ARCH-010 (determinism scope stated + verified in CI),
+#           TEST-004 (determinism tests compare state hashes/replay
+#           outcomes), CORE-008 (no silent failure)
+#
+# Usage:
+#   python3 tools/laige-determinism-lint [--root REPO_ROOT]
+#
+# REPO_ROOT defaults to the current directory. CI runs it from the repo
+# root on every pull request (job `determinism-lint` in
+# .github/workflows/ci-pull.yml) and on every merge (ci.yml); it is also
+# registered as CTest tests in tests/tools (fixture trees + real tree).
+#
+# What it does
+# ------------
+# A second, independent enforcement layer for M1-DET-01 — the first is
+# the compile-time trait (laige/sim/determinism.h, checked in
+# World::registerSystem). The two layers cover each other's blind
+# spots: the trait checks the STORAGE of every component a system
+# declares I/O for; this scan checks the SOURCE of every sim
+# translation unit, including code a trait cannot see (a helper's
+# local `double`, an off-trait-path diagnostic).
+#
+# Scope: the sim module's translation units only — src/laige-sim/**
+# (headers and sources). laige-core is EXEMPT: it is the engine-math
+# home that defines the banned types (laige/sim_math.h declares the
+# fp32_pinned `float` Scalar, laige/fpx16_16.h, laige/prng.h).
+# tests/ and tools/ are out of scope (test fixtures may model anything).
+#
+# Rules (a violation is one finding per offending line):
+#
+#   D1  raw floating-point in a sim translation unit:
+#       D1a  the type tokens `float` / `double` (word-boundary match),
+#       D1b  float literals (numeric with an `f`/`F` suffix, e.g.
+#            `1e9f`, `0.5F`),
+#       D1c  double literals (numeric with a `.` or exponent and no
+#            integer/floating suffix, e.g. `0.5`, `1e9`, `65536.0`).
+#   D2  unordered containers: `unordered_map`, `unordered_set`,
+#       `unordered_multimap`, `unordered_multiset` (PRD §10.3: no
+#       unordered containers in sim hot paths; a deterministic
+#       container, if ever needed, gets an ADR first).
+#   D3  a malformed exception marker (below).
+#
+# Exception markers (the documented false-positive / legitimate-off-path
+# policy — see docs/concepts/determinism.md "Source scan and
+# exceptions"): a line is SUPPRESSED when it carries a same-line marker
+#
+#   // LAIGE-DETERM-EXCEPTION: G-R8 <one-line reason>
+#
+# The marker must name the rule id `G-R8` and carry a non-empty reason;
+# a line containing `LAIGE-DETERM-EXCEPTION` that does not match that
+# format is itself a violation (D3) — a marker cannot be half-written.
+# Every suppressed line is counted and reported in the summary
+# (EXC-006: exceptions stay visible — they appear in every CI run and
+# in ctest, so new markers need human review by construction).
+#
+# The current legitimate uses (all marked in-tree): wall-clock
+# diagnostics (the M1-SYS-03 system-timing doubles — ARCH-009: they
+# never enter sim state, hashes, or replays), the presentation alpha
+# conversion (a wall-clock fact by design, ARCH-009), the JSON number
+# policy (ADR 0003: config parsing stores numbers as doubles and must
+# round-trip them exactly), and the trait's own registration of
+# `float` as the fp32_pinned backend's SimMath-registered Scalar
+# (ADR 0002 — the declaration of the registration, not a raw-float
+# use).
+#
+# False-positive policy (documented, not bugs): the scan is textual and
+# STRIPS comments, string/char literals, and raw strings before
+# matching — a `float` in a comment or a string literal is NOT a
+# violation (documentation is not code). Macro expansions are scanned
+# where they are written: a `LAIGE_SYSTEM(Name, 0.5)` budget literal in
+# a sim translation unit IS a D1c finding (a raw double constant in the
+# sim source, even though the macro converts it to fpx16_16 once at
+# setup) — mark it if the conversion is the documented use. Token
+# matching is case-sensitive and word-bounded: `Float`, `fromFloat`,
+# `next_float01`, `toFloat` do not match (the identifier is not the
+# type token).
+#
+# Exit codes: 0 = pass · 1 = D1/D2/D3 violation · 2 = structural failure
+# (missing src/laige-sim, unreadable file).
+#
+# Python 3 stdlib only; no third-party imports (DEP policy: the lint
+# must run on every P0 runner image without setup — the
+# laige-include-lint precedent).
+# ============================================================================
+
+import re
+import sys
+from pathlib import Path
+
+SOURCE_EXTS = {".h", ".hpp", ".hh", ".hxx", ".inl", ".tpp",
+               ".c", ".cc", ".cpp", ".cxx"}
+
+# D1a: the banned type tokens (word-boundary, case-sensitive).
+TYPE_TOKEN = re.compile(r"\b(double|float)\b")
+# D1b: float-suffixed numeric literals (0.5f, 1e9F, 1.f, 0x1p-2f).
+# The numeric part matches the C++ decimal/hex literal shapes; the
+# trailing (?![\w.]) rejects a longer token (an `f`-suffixed literal
+# is the whole token).
+FLOAT_LITERAL = re.compile(
+    r"\b(?:"
+    r"0[xX][0-9a-fA-F]*\.?[0-9a-fA-F]*[pP][+-]?\d+"   # hex float
+    r"|\d+\.\d*(?:[eE][+-]?\d*)?"                      # dotted decimal
+    r"|\.\d+(?:[eE][+-]?\d*)?"                         # leading-dot decimal
+    r"|\d+[eE][+-]?\d+"                                 # exponent decimal
+    r")[fF](?![\w.])")
+# D1c: double literals — the same numeric shapes without a
+# float/integer suffix (0.5, 1e9, 65536.0, 1e-3, 0x1p-3). The trailing
+# (?![\w.]) keeps 1.0f / 1e9l / 1.0 from matching (those belong to
+# D1b or are integer-adjacent tokens).
+DOUBLE_LITERAL = re.compile(
+    r"\b(?:"
+    r"0[xX][0-9a-fA-F]*\.?[0-9a-fA-F]*[pP][+-]?\d+"
+    r"|\d+\.\d*(?:[eE][+-]?\d*)?"
+    r"|\.\d+(?:[eE][+-]?\d*)?"
+    r"|\d+[eE][+-]?\d+"
+    r")(?![\w.])")
+# D2: the unordered containers (word-boundary).
+UNORDERED = re.compile(r"\bunordered_(map|set|multimap|multiset)\b")
+
+# The exception marker (docs/concepts/determinism.md): the marker id,
+# the rule id, and a non-empty reason on the same line.
+MARKER = re.compile(r"LAIGE-DETERM-EXCEPTION\s*:\s*G-R8\s+(.*)$")
+MARKER_ID = "LAIGE-DETERM-EXCEPTION"
+
+# Raw string: R"delim( ... )delim" (delimiter ≤ 16 chars — [lex.string]).
+RAW_DELIM_MAX = 16
+
+
+class Failure(Exception):
+    """Structural failure: process exits with code 2."""
+
+
+def fail(message):
+    raise Failure(message)
+
+
+def find_root(explicit):
+    root = Path(explicit if explicit else ".").resolve()
+    if not (root / "src" / "laige-sim").is_dir():
+        fail(f"repository root not found: need src/laige-sim/ under "
+             f"'{root}' (pass --root REPO_ROOT)")
+    return root
+
+
+class CodeScanner:
+    """A whole-file character scanner that masks comments and literals.
+
+    Produces per-line "code" text (same column positions; masked chars
+    become spaces). State (block comments, raw strings) carries across
+    lines. Handles: // line comments, /* */ block comments, string and
+    char literals (escape-aware), and raw strings R"delim(...)delim"
+    (delimiter ≤ 16 chars — [lex.string]).
+    """
+
+    def __init__(self, text):
+        self.text = text
+        self.n = len(text)
+        self.i = 0
+        self.in_block = False
+        self.in_raw = False
+        self.raw_term = ""
+        self.line = 1
+        self.out_lines = []
+        self.out = []
+
+    def mask(self, count):
+        for _ in range(count):
+            if self.i < self.n and self.text[self.i] != "\n":
+                self.out.append(" ")
+            else:
+                self._nl()
+            self.i += 1
+
+    def _nl(self):
+        self.out_lines.append("".join(self.out))
+        self.out = []
+        self.line += 1
+
+    def scan(self):
+        while self.i < self.n:
+            c = self.text[self.i]
+            if self.in_raw:
+                if self.text.startswith(self.raw_term, self.i):
+                    self.mask(len(self.raw_term))
+                    self.in_raw = False
+                else:
+                    self.mask(1)
+                continue
+            if self.in_block:
+                if c == "*" and self.i + 1 < self.n and self.text[self.i + 1] == "/":
+                    self.mask(2)
+                    self.in_block = False
+                else:
+                    self.mask(1)
+                continue
+            if c == "\n":
+                self._nl()
+                self.i += 1
+                continue
+            if c == "/" and self.i + 1 < self.n:
+                if self.text[self.i + 1] == "/":
+                    # Line comment: mask to end of line (the newline
+                    # itself is handled by the loop).
+                    while self.i < self.n and self.text[self.i] != "\n":
+                        self.out.append(" ")
+                        self.i += 1
+                    continue
+                if self.text[self.i + 1] == "*":
+                    self.mask(2)
+                    self.in_block = True
+                    continue
+            if c == '"':
+                # Raw string? R"delim( — the preceding char must not be
+                # a name char (the R is a keyword, not part of an
+                # identifier).
+                is_kw = (self.i > 0 and self.text[self.i - 1] == "R" and
+                         not (self.i >= 2 and
+                              (self.text[self.i - 2].isalnum() or
+                               self.text[self.i - 2] == "_")))
+                if is_kw:
+                    j = self.i + 1
+                    while j < self.n and self.text[j] != "(" and \
+                            j - self.i - 1 <= RAW_DELIM_MAX:
+                        j += 1
+                    if j < self.n and self.text[j] == "(":
+                        delim = self.text[self.i + 1:j]
+                        self.raw_term = ")" + delim + '"'
+                        self.mask(j - self.i + 1)
+                        self.in_raw = True
+                        continue
+                # Plain string literal (escape-aware).
+                j = self.i + 1
+                while j < self.n and self.text[j] != "\n":
+                    if self.text[j] == "\\":
+                        j += 2
+                        continue
+                    if self.text[j] == '"':
+                        break
+                    j += 1
+                self.mask(min(j, self.n - 1) - self.i + 1)
+                continue
+            if c == "'":
+                j = self.i + 1
+                while j < self.n and self.text[j] != "\n":
+                    if self.text[j] == "\\":
+                        j += 2
+                        continue
+                    if self.text[j] == "'":
+                        break
+                    j += 1
+                self.mask(min(j, self.n - 1) - self.i + 1)
+                continue
+            self.out.append(c)
+            self.i += 1
+        self.out_lines.append("".join(self.out))
+        return self.out_lines
+
+
+def check_line(path, lineno, original, code):
+    """One line → (findings, suppressed).
+
+    `original` is the raw line (the marker is detected in it — the
+    marker is a line comment); `code` is the masked line (comments and
+    literals replaced by spaces — the banned tokens are matched in it).
+    A valid same-line marker suppresses the line's findings; it counts
+    as a suppression only when it actually suppresses at least one
+    banned token (a marker on a clean line suppresses nothing).
+    """
+    findings = []
+    # D3 first: a half-written marker is a violation even when the
+    # line also carries a banned token.
+    marker_valid = False
+    if MARKER_ID in original:
+        m = MARKER.search(original)
+        if m and m.group(1).strip() != "":
+            marker_valid = True
+        else:
+            findings.append(
+                f"{path}:{lineno}: D3 malformed exception marker — "
+                f"the format is `// LAIGE-DETERM-EXCEPTION: G-R8 <reason>` "
+                f"(rule id G-R8, non-empty reason, same line)")
+            return findings, False
+    has_banned = (TYPE_TOKEN.search(code) is not None or
+                  FLOAT_LITERAL.search(code) is not None or
+                  DOUBLE_LITERAL.search(code) is not None or
+                  UNORDERED.search(code) is not None)
+    if marker_valid:
+        if has_banned:
+            # The documented off-path use: suppress the findings.
+            return findings, True
+        # A marker on a clean line suppresses nothing: not counted.
+        return findings, False
+    for m in TYPE_TOKEN.finditer(code):
+        findings.append(f"{path}:{lineno}: D1a raw `{m.group(1)}` type token "
+                        f"(G-R8: sim translation units use SimMath only — "
+                        f"ADR 0002; add a // LAIGE-DETERM-EXCEPTION: G-R8 "
+                        f"<reason> marker only for a documented off-path "
+                        f"use, docs/concepts/determinism.md)")
+    for m in FLOAT_LITERAL.finditer(code):
+        findings.append(f"{path}:{lineno}: D1b raw float literal "
+                        f"`{m.group(0)}` (G-R8 — ADR 0002)")
+    for m in DOUBLE_LITERAL.finditer(code):
+        findings.append(f"{path}:{lineno}: D1c raw double literal "
+                        f"`{m.group(0)}` (G-R8 — ADR 0003/0002)")
+    for m in UNORDERED.finditer(code):
+        findings.append(f"{path}:{lineno}: D2 unordered container "
+                        f"`unordered_{m.group(1)}` (PRD §10.3: no unordered "
+                        f"containers in sim hot paths)")
+    return findings, False
+
+
+def scan(root):
+    findings = []
+    files = 0
+    suppressed = []
+    sim_dir = root / "src" / "laige-sim"
+    for path in sorted(sim_dir.rglob("*")):
+        if not path.is_file() or path.suffix not in SOURCE_EXTS:
+            continue
+        files += 1
+        rel = path.relative_to(root)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            fail(f"cannot read {rel}: {e}")
+        code_lines = CodeScanner(text).scan()
+        original_lines = text.splitlines()
+        for lineno, (original, code) in enumerate(
+                zip(original_lines, code_lines), 1):
+            f, sup = check_line(rel, lineno, original, code)
+            findings.extend(f)
+            if sup:
+                suppressed.append(f"{rel}:{lineno}")
+    return findings, files, suppressed
+
+
+def main(argv):
+    root_arg = None
+    args = argv[1:]
+    if "--root" in args:
+        i = args.index("--root")
+        if i + 1 >= len(args):
+            print("usage: laige-determinism-lint [--root REPO_ROOT]",
+                  file=sys.stderr)
+            return 2
+        root_arg = args[i + 1]
+    try:
+        root = find_root(root_arg)
+        findings, files, suppressed = scan(root)
+    except Failure as e:
+        print(f"laige-determinism-lint: FAIL (structural): {e}",
+              file=sys.stderr)
+        return 2
+
+    if suppressed:
+        print(f"laige-determinism-lint: {len(suppressed)} suppressed line(s) "
+              f"carry a LAIGE-DETERM-EXCEPTION marker (EXC-006: review "
+              f"these in every change):")
+        for s in suppressed:
+            print(f"  {s}")
+    if findings:
+        for v in findings:
+            print(f"laige-determinism-lint: FAIL\n  {v}", file=sys.stderr)
+        print(f"laige-determinism-lint: {len(findings)} violation(s) "
+              f"across {files} scanned file(s)", file=sys.stderr)
+        return 1
+    print(f"laige-determinism-lint: OK — {files} sim source file(s) "
+          f"scanned, 0 violations, {len(suppressed)} marked exception "
+          f"line(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

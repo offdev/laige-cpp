@@ -62,6 +62,18 @@ a moved world keeps its component data); a moved-from world is a
 valid empty world (capacity 0: every `create()` fails, every handle
 invalid). Not copyable.
 
+`World::Options` (M1-DET-01) carries the determinism settings:
+
+| Field | Default | Contract |
+|---|---|---|
+| `capacity` | 0 | The scene budget (G-R3); `> Entity::kMaxEntities` → `InvalidArgument`. |
+| `churnPerFrameBudget` | `kDefaultChurnPerFrameBudget` | The G-R4 per-frame component-churn budget. |
+| `seed` | 0 | The master PRNG seed; part of replay identity (ADR 0002). Each system registered in deterministic mode gets a substream derived from it (`Prng::deriveSubstream(seed, systemId)`). |
+| `deterministic` | true | When true, `registerSystem` creates each system's PRNG substream (`SystemContext.rng` is non-null) and the G-R8 static_assert applies. When false, no substreams are created (`SystemContext.rng == nullptr`) — the documented escape hatch for non-deterministic prototypes. |
+
+The engine (`engine.md`) forwards `EngineConfig.seed` and
+`EngineConfig.determinism.enabled` to these fields.
+
 M1-ECS-03 adds the component layer on the same slot tables:
 `world.has<T>(e)`, `world.get<T>(e)`, `world.addComponent<T>(e, v)`,
 `world.removeComponent<T>(e)`, `world.archetypeCount()`,

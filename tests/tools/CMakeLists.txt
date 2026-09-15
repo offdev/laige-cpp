@@ -196,3 +196,86 @@ laige_add_lint_test(include-lint-unknown-module 2 "${FX}/unknown-module"
   "src/laige-audio: not a PRD")
 laige_add_lint_test(include-lint-real-tree 0 "${CMAKE_SOURCE_DIR}"
   "laige-include-lint: OK")
+
+# ===========================================================================
+# determinism-source-scan tests (M1-DET-01)
+#
+# tools/laige-determinism-lint is a plain-Python (stdlib-only) CI script
+# that scans the sim module for raw float/double (D1) and unordered
+# containers (D2), with per-line LAIGE-DETERM-EXCEPTION markers as the
+# documented false-positive policy. Same fixture + generated-`cmake -P`
+# pattern as the include-lint tests above.
+# ===========================================================================
+
+set(DFX "${CMAKE_BINARY_DIR}/det-lint-fixtures")
+file(REMOVE_RECURSE "${DFX}")
+
+# --- fixture: clean sim tree, one marked exception (expect exit 0) ------
+file(MAKE_DIRECTORY "${DFX}/clean/src/laige-sim")
+file(WRITE "${DFX}/clean/src/laige-sim/sim.cpp"
+  "#include <cstdint>
+// a comment that mentions float and double is NOT code (stripped).
+int step(int x, int v) { return x + v; }
+double diagnosticMs = 0.0; // LAIGE-DETERM-EXCEPTION: G-R8 documented off-path use (fixture)
+")
+
+# --- fixture: one violation per rule D1a/D1b/D1c/D2/D3 (expect exit 1) ---
+file(MAKE_DIRECTORY "${DFX}/violations/src/laige-sim")
+file(WRITE "${DFX}/violations/src/laige-sim/d1a.cpp"
+  "float a; // raw float type token (D1a)
+")
+file(WRITE "${DFX}/violations/src/laige-sim/d1b.cpp"
+  "int b = 0.5f; // raw float literal (D1b)
+")
+file(WRITE "${DFX}/violations/src/laige-sim/d1c.cpp"
+  "int c = 65536.0; // raw double literal (D1c)
+")
+file(WRITE "${DFX}/violations/src/laige-sim/d2.cpp"
+  "#include <unordered_map>
+// unordered_map<int,int> m; // raw unordered container (D2)
+")
+# D3: a half-written marker (missing the G-R8 rule id).
+file(WRITE "${DFX}/violations/src/laige-sim/d3.cpp"
+  "float d; // LAIGE-DETERM-EXCEPTION: not-G-R8 malformed
+")
+# These must NOT be flagged (the false-positive policy):
+#   - float/double in a comment or string literal (stripped),
+#   - identifier prefixes (fromFloat, next_float01) are not type tokens,
+#   - a valid same-line marker suppresses the line.
+file(WRITE "${DFX}/violations/src/laige-sim/ok.cpp"
+  "// float double unordered_map in a comment: not code.
+const char* note = \"float double unordered_map in a string\";
+int fromFloat(int x) { return x; }
+int next_float01(int x) { return x; }
+double marked = 0.0; // LAIGE-DETERM-EXCEPTION: G-R8 documented off-path use
+")
+
+# --- a shared generated-check template for the determinism lint ----------
+function(laige_add_det_lint_test name expect_exit root)
+  set(_checks "")
+  foreach(_needle IN LISTS ARGN)
+    string(REPLACE "\\" "\\\\" _esc "${_needle}")
+    string(REPLACE "\"" "\\\"" _esc "${_esc}")
+    string(APPEND _checks
+      "if(NOT _text MATCHES \"${_esc}\")\n"
+      "  string(APPEND _problems \"output missing '<${_esc}'>; \")\n"
+      "endif()\n")
+  endforeach()
+  set(PYTHON "${LAIGE_LINT_PYTHON}")
+  set(LINT "${CMAKE_SOURCE_DIR}/tools/laige-determinism-lint")
+  set(ROOT "${root}")
+  set(EXPECT_EXIT "${expect_exit}")
+  set(CHECKS "${_checks}")
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/expect-det-lint-result.cmake.in"
+                 "${CMAKE_CURRENT_BINARY_DIR}/${name}.cmake" @ONLY)
+  add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -P
+           "${CMAKE_CURRENT_BINARY_DIR}/${name}.cmake")
+endfunction()
+
+# (name, expected exit, tree, required output fragments...)
+laige_add_det_lint_test(determinism-lint-clean 0 "${DFX}/clean"
+  "laige-determinism-lint: OK" "1 suppressed line")
+laige_add_det_lint_test(determinism-lint-violations 1 "${DFX}/violations"
+  "D1a" "D1b" "D1c" "D2" "D3 malformed")
+laige_add_det_lint_test(determinism-lint-real-tree 0 "${CMAKE_SOURCE_DIR}"
+  "laige-determinism-lint: OK")

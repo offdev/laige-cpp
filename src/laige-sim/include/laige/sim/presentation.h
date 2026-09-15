@@ -189,6 +189,7 @@
 #include "laige/logging.h"
 #include "laige/result.h"
 #include "laige/sim_math.h"
+#include "laige/sim/determinism.h" // M1-DET-01: the G-R8 marks on both Position2D instantiations
 #include "laige/sim/entity.h"
 #include "laige/sim/game_loop.h"
 
@@ -213,8 +214,8 @@ struct AlphaConversion {
 
 template <>
 struct AlphaConversion<sim::Fp32Pinned> {
-  static float toScalar(std::uint32_t alphaNum) noexcept {
-    return static_cast<float>(alphaNum) / 1e9f;
+  static float toScalar(std::uint32_t alphaNum) noexcept {  // LAIGE-DETERM-EXCEPTION: G-R8 presentation alpha is a wall-clock fact: non-deterministic by design, never enters sim state or the state hash (ARCH-009)
+    return static_cast<float>(alphaNum) / 1e9f;  // LAIGE-DETERM-EXCEPTION: G-R8 presentation alpha is a wall-clock fact: non-deterministic by design, never enters sim state or the state hash (ARCH-009)
   }
 };
 
@@ -261,6 +262,17 @@ struct Position2D {
 
 LAIGE_COMPONENT(Position2D<sim::Fpx16_16>);
 LAIGE_COMPONENT(Position2D<sim::Fp32Pinned>);
+
+// M1-DET-01 (G-R8): the built-in is determinism-safe STORAGE — one
+// member, the SimMath-registered Vec2 of its backend (determinism.h
+// trait). The marks let the built-in appear in a system's declared
+// I/O (registerSystem's G-R8 check); without them, every game system
+// touching the engine's own position component would fail to
+// compile.
+LAIGE_DETERMINISM_SAFE(
+    Position2D<sim::Fpx16_16>, sim::SimMath<sim::Fpx16_16>::Vec2);
+LAIGE_DETERMINISM_SAFE(
+    Position2D<sim::Fp32Pinned>, sim::SimMath<sim::Fp32Pinned>::Vec2);
 
 // The two backend instantiations: a game registers the one matching
 // its init-time backend selection (ADR 0002, `determinism.math`).

@@ -106,16 +106,22 @@ struct SchPos {
   std::int32_t y;
 };
 LAIGE_COMPONENT(SchPos);
+// M1-DET-01 (G-R8): integer-only storage (determinism.h trait).
+LAIGE_DETERMINISM_SAFE(SchPos, std::int32_t, std::int32_t);
 
 struct SchVel {
   std::int64_t vx;
 };
 LAIGE_COMPONENT(SchVel);
+// M1-DET-01 (G-R8): integer-only storage (determinism.h trait).
+LAIGE_DETERMINISM_SAFE(SchVel, std::int64_t);
 
 struct SchTag {
   std::int32_t v;
 };
 LAIGE_COMPONENT(SchTag);
+// M1-DET-01 (G-R8): integer-only storage (determinism.h trait).
+LAIGE_DETERMINISM_SAFE(SchTag, std::int32_t);
 
 // ---------------------------------------------------------------------------
 // The plain systems (FR-1.3: plain functions, no class, no

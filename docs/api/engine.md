@@ -37,11 +37,13 @@ const laige::Status status = engine.run_headless(10'000);
 
 1. **`Engine::create(config)`** — validates the config, creates the
    `World` (capacity = `entityCapacity`, churn budget =
-   `churnPerFrameBudget`), and registers the built-in
-   `sim::Position2DFpx16` component **first** (ARCH-010: stable
-   component-type ordering; the ADR 0002 default SimMath backend,
-   `fpx16_16`). No frame is run and no loop exists yet; the engine is
-   in the *not started* state.
+   `churnPerFrameBudget`, seed = `seed`, deterministic mode =
+   `determinism.enabled`), and registers the built-in component
+   matching the configured SimMath backend **first** (ARCH-010:
+   stable component-type ordering): `sim::Position2DFpx16` for
+   `fpx16_16` (the ADR 0002 default) or `sim::Position2DFp32` for
+   `fp32_pinned`. No frame is run and no loop exists yet; the engine
+   is in the *not started* state.
 2. **Game registration** — the game registers its components and
    systems on `engine.world()` before the run (see Misuse warnings).
 3. **`run_headless(maxTicks)`** — computes the system schedule,
@@ -68,18 +70,42 @@ engine in the process).
 
 ## The config surface (provisional)
 
-`EngineConfig{tickRateHz, entityCapacity, churnPerFrameBudget}` and
-`parseEngineConfig(const JsonValue&)` are the **provisional** config
-surface for M1-HEAD-01. M1-CFG-01 owns the final versioned config
-schema (PRD §10, ARCH-007: persistent data MUST be versioned); when
-M1-CFG-01 lands, the JSON parse moves behind its versioned reader and
-this surface is folded into it. The provisional keys:
+`EngineConfig{tickRateHz, entityCapacity, churnPerFrameBudget, seed,
+determinism}` and `parseEngineConfig(const JsonValue&)` are the
+**provisional** config surface for M1-HEAD-01. M1-CFG-01 owns the final
+versioned config schema (PRD §10, ARCH-007: persistent data MUST be
+versioned); when M1-CFG-01 lands, the JSON parse moves behind its
+versioned reader and this surface is folded into it. The provisional
+keys:
 
 | key | type | range | default |
 |---|---|---|---|
 | `tick_rate_hz` | exact integer | 20–120 | `kDefaultTickRateHz` (60) |
 | `entity_budget` | exact integer | 0–65536 | `0` (an empty scene — a valid world that creates no entities; entity creation on it fails `BudgetExhausted`) |
 | `churn_per_frame_budget` | exact integer | 0–4294967295 | `kDefaultChurnPerFrameBudget` (256) |
+| `seed` | exact integer | 0–2^53 (JSON) / 0–2^64−1 (struct) | `kDefaultSimulationSeed` (0) |
+| `determinism` | object (below) | — | `{enabled: true, math: "fixed_point_16_16"}` |
+
+The `determinism` object (M1-DET-01; see
+[concepts/determinism.md](../concepts/determinism.md) for the scope
+and [api/determinism.md](determinism.md) for the types):
+
+| nested key | type | range | default |
+|---|---|---|---|
+| `determinism.enabled` | bool | — | `true` |
+| `determinism.math` | string | `"fixed_point_16_16"` \| `"float_pinned_32"` | `"fixed_point_16_16"` |
+
+- The **seed is part of replay identity** (ADR 0002) and is logged on
+  `engine/run_started`. In JSON it is bounded to `2^53` because ADR
+  0003 stores numbers as doubles (exact to 2^53); the programmatic
+  `EngineConfig.seed` is the full `uint64_t`. A seed above the JSON
+  bound, a non-integer, or a negative is rejected
+  (`config/seed_invalid`).
+- `enabled` selects deterministic mode (per-system PRNG substreams,
+  the replay promise); `false` is the documented escape hatch
+  (no substreams, `SystemContext.rng == nullptr`). `math` selects the
+  SimMath backend the engine registers (the built-in component and the
+  presentation snapshot).
 
 - **Unknown keys** are ignored with one rate-limited
   `config/unknown_key` warn per key (forward-compatible with
@@ -87,9 +113,16 @@ this surface is folded into it. The provisional keys:
 - **Rejections** (first failure wins, one rate-limited warn each):
   `config/not_an_object` (document is not a JSON object),
   `config/tick_rate_invalid` (absent/out of range/non-integer),
-  `config/entity_budget_invalid`, `config/churn_budget_invalid` —
+  `config/entity_budget_invalid`, `config/churn_budget_invalid`,
+  `config/seed_invalid` (non-integer / out of range / above the 2^53
+  JSON bound / wrong type), `config/determinism_invalid` (not an
+  object), `config/determinism_enabled_invalid` (not a bool),
+  `config/determinism_math_invalid` (not one of the two backend ids) —
   each maps to `ErrorCode::InvalidArgument` (NFR-13.3 grammar:
-  `{codeId}|{what}|{why}|{fix}|{docAnchor}`, see `errors.md`).
+  `{codeId}|{what}|{why}|{fix}|{docAnchor}`, see `errors.md`). An
+  **unknown key inside `determinism`** is not a rejection: it warns
+  (`config/unknown_key`) and is ignored, like the top-level unknown-key
+  rule (forward-compat with M1-CFG-01).
 - `Engine::create` re-validates the `EngineConfig` struct itself (the
   struct is public; the JSON path is not the only constructor), so a
   hand-built out-of-range config is rejected identically.
@@ -120,11 +153,13 @@ value the engine consumes.
   clock — the `laige_run_smoke` ctest budget (TIMEOUT 300) and its
   `status=ok` assertion (CI asserts the run completed, not the tick
   count; drops are the documented overload behavior).
-- **Lifecycle logs** — one `engine/run_started` (Info) before setup,
-  one `engine/run_finished` (Info) after the last frame with the
-  final accounting (`ticks`, `dropped_ticks`, `dropped_frames`,
-  `status`); both are structured, stable, and machine-greppable
-  (AGENTS §14).
+- **Lifecycle logs** — one `engine/run_started` (Info) before setup
+  (fields `tick_rate_hz`, `tick_target`, `frame_budget_ticks`,
+  `seed`, `determinism`, `math` — the math field is the backend id
+  string `fpx16_16` or `fp32_pinned`), one `engine/run_finished`
+  (Info) after the last frame with the final accounting (`ticks`,
+  `dropped_ticks`, `dropped_frames`, `status`); both are structured,
+  stable, and machine-greppable (AGENTS §14).
 
 **Failure behavior** (the run always ends in shutdown):
 
@@ -138,10 +173,14 @@ value the engine consumes.
 
 ## Presentation wiring (ARCH-009)
 
-The engine owns a
-`PresentationSnapshot<sim::Fpx16_16>` — the **default** SimMath
-backend per ADR 0002 (determinism math selection is M1-DET-01's
-decision; the engine does not expose a backend knob in M1). Wiring:
+The engine owns a `PresentationSnapshot<B>` for the **configured**
+SimMath backend `B` (ADR 0002, M1-DET-01): `sim::Fpx16_16` for the
+default `fpx16_16`, `sim::Fp32Pinned` for `fp32_pinned` — the same
+backend the engine registered as the built-in component at init, so
+the snapshot and the sim agree. The handle is type-erased on the
+engine (`detail::PresentationHandle`); the backend is fixed at
+`create` and is part of replay identity (a replay must use the same
+backend — ADR 0002). Wiring:
 
 - The loop is created with the engine's per-tick hook from the first
   `frame()`, so the snapshot exists before the hook can fire (the
@@ -158,13 +197,23 @@ decision; the engine does not expose a backend knob in M1). Wiring:
 
 ## Determinism scope (ARCH-010)
 
-Headless runs are deterministic **within the same build, platform,
-architecture, and compiler**: the tick cadence is integer arithmetic,
-the system order is the validated schedule, and the SimMath backend
-is pinned (`fpx16_16`). Wall-clock pacing (the sleep) does **not**
-enter the simulation — it only decides when frames run; dropped ticks
-are the documented, logged overload behavior, not nondeterminism.
-Cross-build/platform determinism, replay, and state hashing are
+Headless runs in deterministic mode (the default) are
+**bit-identical within the same build, platform, architecture, and
+compiler**: the tick cadence is integer arithmetic, the system order
+is the validated schedule, the SimMath backend is the configured one
+(`fpx16_16` by default — bit-exact by the language standard, ADR
+0002), and any randomness is a named input (the per-system PRNG
+substreams derived from `seed`, a fixed call order). Wall-clock
+pacing (the sleep) does **not** enter the simulation — it only
+decides when frames run; dropped ticks are the documented, logged
+overload behavior, not nondeterminism. The same-build guarantee is
+verified by `ctest -R determinism_mode` (the
+`DeterminismMode.*` suites: identical 256-tick state-hash streams in
+two consecutive runs; seed divergence). The full scope statement —
+what is deterministic, the per-backend scopes, what is not yet — is
+[concepts/determinism.md](../concepts/determinism.md).
+Cross-build/platform determinism is **M1-DET-04** (the detcheck
+matrix); replay execution and state hashing of full input streams is
 **M1-DET-02** (the `--replay` flag is its stub today).
 
 ## `laige-run` (the CLI)

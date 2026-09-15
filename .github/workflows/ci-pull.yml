@@ -243,6 +243,25 @@ jobs:
       - name: Lint include graph + report dependency count
         run: python3 tools/laige-include-lint
 
+  determinism-lint:
+    # M1-DET-01: runs on every PR (no ci:* condition). The sim-source
+    # determinism scan (the second half of the G-R8 guarantee; the
+    # first is the compile-time trait checked by the
+    # trait_compile_* CTest fixtures): forbids raw float/double and
+    # unordered containers in src/laige-sim/**, with per-line
+    # LAIGE-DETERM-EXCEPTION markers as the documented false-positive
+    # policy (docs/concepts/determinism.md). Platform-independent:
+    # Python 3 stdlib only, no setup step. The CTest suite runs it
+    # against fixture trees and the real tree in every P0 job as well
+    # (tests/tools, tests `determinism-lint-*`).
+    name: Determinism source scan (sim module)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan sim sources for raw FP / unordered containers
+        run: python3 tools/laige-determinism-lint
+
   api-manifest:
     # M0-TOOL-01: runs on every PR (no ci:* condition). The checked-in
     # public API manifest (laige-api.json, PRD §9.4, NFR-13.1) must stay

@@ -73,6 +73,8 @@ World::World(World&& other) noexcept
       iterationActive_(other.iterationActive_),
       iterationArchetypes_(other.iterationArchetypes_),
       iterationReadComponents_(other.iterationReadComponents_),
+      seed_(other.seed_),
+      deterministic_(other.deterministic_),
       systems_(std::move(other.systems_)),
       systemCount_(other.systemCount_),
       systemTiming_(std::move(other.systemTiming_)) {
@@ -112,6 +114,11 @@ World::World(World&& other) noexcept
   // moved-from world is a valid empty world in every field (no
   // registry: registerSystem returns InvalidArgument on it).
   other.systemCount_ = 0;
+  // M1-DET-01: the determinism state travels with the registry (the
+  // moved-from world is back at the defaults — seed 0, mode on — and
+  // registerSystem fails on it anyway: no registry).
+  other.seed_ = 0;
+  other.deterministic_ = true;
   // M1-SYS-03: the per-system timing table travels with the registry
   // (the move leaves the moved-from world's table null — no timing
   // state survives the move, like the registry itself).
@@ -160,6 +167,9 @@ World& World::operator=(World&& other) noexcept {
   iterationActive_ = other.iterationActive_;
   iterationArchetypes_ = other.iterationArchetypes_;
   iterationReadComponents_ = other.iterationReadComponents_;
+  // M1-DET-01: the determinism state travels with the registry.
+  seed_ = other.seed_;
+  deterministic_ = other.deterministic_;
   // M1-SYS-01: the system registry travels with the storage.
   systems_ = std::move(other.systems_);
   systemCount_ = other.systemCount_;
@@ -196,6 +206,10 @@ World& World::operator=(World&& other) noexcept {
   // M1-SYS-01: the moved-from world is a valid empty world in every
   // field (no registry: registerSystem returns InvalidArgument on it).
   other.systemCount_ = 0;
+  // M1-DET-01: the determinism state is re-taken from `other` above;
+  // the moved-from world is back at the defaults (seed 0, mode on).
+  other.seed_ = 0;
+  other.deterministic_ = true;
   return *this;
 }
 
@@ -209,6 +223,11 @@ Result<World, ErrorCode> World::create(Options options) noexcept {
   w.capacity_ = options.capacity;
   // M1-ECS-06 (G-R3/G-R4): the guardrail configuration (setup path).
   w.churnPerFrameBudget_ = options.churnPerFrameBudget;
+  // M1-DET-01 (determinism mode): the master seed and the mode flag
+  // (setup path — fixed for the world's lifetime; the per-system
+  // PRNG substreams derive from them at registration, registerSystem).
+  w.seed_ = options.seed;
+  w.deterministic_ = options.deterministic;
   w.initEntityBudgetThresholds();
   // Component registry table (M1-ECS-02): the fixed engine-level
   // budget (kMaxComponentTypes), a setup-path allocation like the

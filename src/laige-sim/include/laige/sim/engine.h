@@ -31,11 +31,13 @@
 //
 //   1. Engine::create(config)
 //        Validates the typed config, creates the World (the scene
-//        budget and churn budget from the config), and registers the
-//        built-in component Position2DFpx16 FIRST (the engine's
-//        built-ins always precede the game's components: a stable
-//        registration order for the deterministic ComponentTypeIds,
-//        ARCH-010).
+//        budget, churn budget, seed, and determinism mode from the
+//        config), and registers the built-in component matching the
+//        configured SimMath backend (Position2DFpx16 by default,
+//        Position2DFp32 for float_pinned_32 — M1-DET-01) FIRST (the
+//        engine's built-ins always precede the game's components: a
+//        stable registration order for the deterministic
+//        ComponentTypeIds, ARCH-010).
 //   2. Game setup (the game's setup phase, on the engine's world):
 //        world->registerComponent<T>(), world->registerSystem(def,
 //        Io<...>...) — the M1 systems are plain C++ functions
@@ -115,9 +117,11 @@
 //
 // M1-CFG-01 (unchecked at this step's start) will land the full
 // declarative config.json: versioned schema, unknown-key handling,
-// budgets, camera defaults, asset roots, and the determinism block.
-// Until then, parseEngineConfig reads the SUBSET the headless run
-// consumes, from an unversioned top-level JSON object:
+// budgets, camera defaults, asset roots, and the determinism block's
+// final placement (M1-DET-01 lands the seed and determinism keys on
+// this PROVISIONAL surface; M1-CFG-01 owns the final schema). Until
+// then, parseEngineConfig reads the SUBSET the headless run consumes,
+// from an unversioned top-level JSON object:
 //
 //   "tick_rate_hz"            integer, 20..120   (default 60)
 //   "entity_budget"           integer, 0..65536  (default 0: no
@@ -126,6 +130,19 @@
 //                              scene's declared budget, G-R3)
 //   "churn_per_frame_budget"  integer, >= 0      (default 256; 0
 //                              disables the G-R4 guardrail)
+//   "seed"                    integer, 0..2^53   (default 0 — the
+//                              ADR 0003 JSON bound: exact doubles to
+//                              2^53; the programmatic
+//                              EngineConfig.seed accepts the full
+//                              64 bits. M1-DET-01: the master
+//                              simulation seed, part of the replay
+//                              identity)
+//   "determinism"             object (default {})
+//     "enabled"               bool             (default true —
+//                              deterministic by default, S-7)
+//     "math"                  "fixed_point_16_16" | "float_pinned_32"
+//                              (default "fixed_point_16_16" — the
+//                              ADR 0002 backend ids)
 //
 // Missing keys take the defaults; unknown keys are WARNED (one
 // config/unknown_key per key, forward-compat) and ignored; a wrong
@@ -138,20 +155,34 @@
 // Built-in components and the determinism scope (ARCH-009/010)
 // ---------------------------------------------------------------------------
 //
-// The engine runs the default SimMath backend (fpx16_16, ADR 0002):
-// it registers Position2DFpx16 (presentation.h) and owns a
-// PresentationSnapshot<sim::Fpx16_16>. The config's determinism math
-// selection (ADR 0002: fpx16_16 default, fp32_pinned opt-in) is
-// consumed by M1-DET-01 — until then the backend is the documented
-// default, not a config knob.
+// M1-DET-01: the engine runs the SimMath backend selected by
+// config.determinism.math (ADR 0002, factory-selected at init):
+// FixedPoint16_16 (default) registers Position2DFpx16 and owns a
+// PresentationSnapshot<sim::Fpx16_16>; FloatPinned32 registers
+// Position2DFp32 and owns a PresentationSnapshot<sim::Fp32Pinned>
+// (presentation.h). The engine holds the snapshot through a
+// type-erased handle (detail::PresentationHandle) — one code path,
+// no virtual dispatch (PERF-006). The game registers the Position2D
+// alias matching its backend for its own systems; registering the
+// other alias in the same world is a duplicate-component rejection
+// (one alias per world, the component.h contract).
 //
-// The completed tick count of a bounded run is a bounded wall-clock
-// fact (the pacing is platform-sensitive — ARCH-009, the game_loop.h
-// determinism scope); the simulation STATE after N completed ticks is
-// a pure function of (the config, the registration order, the tick
-// count): no wall-clock values enter authoritative state. The
-// presentation alpha is a wall-clock fact by design (presentation.h:
-// never part of replay state or the state hash).
+// Determinism mode (S-7, PRD §10.3): with determinism.enabled (the
+// default), every registered system receives its PRNG substream
+// (SystemContext::rng; derived from (config.seed, system id) —
+// determinism.h), and the simulation STATE after N completed ticks
+// is a pure function of (the config, the seed, the registration
+// order, the tick count, the inputs). With determinism.enabled =
+// false, the substreams are not created (SystemContext::rng is
+// nullptr) and the run is not replayable — see determinism.h
+// "Determinism mode semantics" and docs/concepts/determinism.md.
+//
+// What is NOT deterministic: the completed tick count of a bounded
+// run (the pacing is platform-sensitive — ARCH-009, the game_loop.h
+// determinism scope), the presentation alpha (a wall-clock fact by
+// design, presentation.h: never part of replay state or the state
+// hash), and the timing diagnostics (system.h). No wall-clock values
+// enter authoritative state.
 //
 // ---------------------------------------------------------------------------
 // Ownership, threading
@@ -213,13 +244,20 @@
 #include "laige/errors.h"
 #include "laige/fpx16_16.h"
 #include "laige/result.h"
+#include "laige/sim/determinism.h"  // SimMathBackend, DeterminismConfig (M1-DET-01)
 #include "laige/sim/entity.h"       // World, kDefaultChurnPerFrameBudget
 #include "laige/sim/game_loop.h"    // GameLoop, GameLoopStats, tick-rate constants
-#include "laige/sim/presentation.h" // Position2DFpx16, PresentationSnapshot
+#include "laige/sim/presentation.h" // Position2D, PresentationSnapshot
 
 namespace laige {
 
 class JsonValue;  // declared in laige/json.h; only a const reference is used
+
+// The default master simulation seed (M1-DET-01; CORE-005). 0 is a
+// valid master seed: the Prng's state is nonzero for every 64-bit
+// seed (the xorshift128+ state transform — laige/prng.h), so no
+// special invalid seed is needed.
+inline constexpr std::uint64_t kDefaultSimulationSeed = 0;
 
 // The typed headless-engine configuration (M1-HEAD-01; the provisional
 // config surface — see the header preamble "The config surface").
@@ -237,6 +275,22 @@ struct EngineConfig {
   // The G-R4 per-frame component-churn budget (0 disables the
   // guardrail; default kDefaultChurnPerFrameBudget).
   std::uint32_t churnPerFrameBudget{kDefaultChurnPerFrameBudget};
+  // The master simulation seed (M1-DET-01; PRD §10.3: the seed is
+  // part of the replay identity). Every system's PRNG substream is
+  // derived from (seed, system id) — the Prng::deriveSubstream
+  // contract (laige/prng.h). Default kDefaultSimulationSeed (0 — a
+  // valid master seed: the Prng's state is nonzero for every 64-bit
+  // seed, prng.h). The programmatic path accepts the full 64 bits;
+  // the JSON config path is bounded to exact integers in 0..2^53
+  // (the ADR 0003 number policy — parseEngineConfig's documented
+  // limit).
+  std::uint64_t seed{kDefaultSimulationSeed};
+  // The determinism block (M1-DET-01; ADR 0002): the mode flag and
+  // the selected SimMath backend. See the header preamble "The
+  // config surface" for the JSON keys and "Built-in components and
+  // the determinism scope" for the semantics; the full promised
+  // scope is docs/concepts/determinism.md.
+  DeterminismConfig determinism{};
 };
 
 // Load the headless-engine configuration from a parsed JSON document
@@ -256,15 +310,126 @@ struct EngineConfig {
 //   "churn_per_frame_budget" not a number, not an exact
 //                               integer, or < 0        -> InvalidArgument + warn
 //                                     (config/churn_budget_invalid)
-//   unknown key                   -> Warn only (config/unknown_key,
-//                                     forward-compat — M1-CFG-01's
-//                                     rule); the key is ignored
+//   "seed" not a number, not an exact integer, or
+//                               outside 0..2^53        -> InvalidArgument + warn
+//                                     (config/seed_invalid)
+//   "determinism" not an object   -> InvalidArgument + warn
+//                                     (config/determinism_invalid)
+//   "determinism.enabled" not a   -> InvalidArgument + warn
+//       boolean                   (config/determinism_enabled_invalid)
+//   "determinism.math" not a      -> InvalidArgument + warn
+//       string, or not one of     (config/determinism_math_invalid)
+//       the two ADR 0002 ids
+//   unknown key (top-level or    -> Warn only (config/unknown_key,
+//       inside "determinism")     forward-compat — M1-CFG-01's
+//                                 rule); the key is ignored
 //
 // Cold path (config load); O(keys), allocates only for the warn
 // fields. First failure wins; on failure the config is not returned.
 // @budget O(document keys); cold path, warn fields allocate only when a key is rejected.
 [[nodiscard]] Result<EngineConfig, ErrorCode>
 parseEngineConfig(const JsonValue& doc) noexcept;
+
+namespace detail {
+
+// The engine's presentation snapshot, type-erased (M1-DET-01): one
+// owned snapshot of the configured SimMath backend
+// (PresentationSnapshot<sim::Fpx16_16> or
+// PresentationSnapshot<sim::Fp32Pinned>) behind plain function
+// pointers — no virtual dispatch (PERF-006), no std::function, no RTTI
+// (the engine-policy laige_apply_engine_policy). The engine holds
+// exactly one (a setup-path object — the third of the run's three
+// setup allocations, engine.h "Performance"); the dispatch is a
+// direct function-pointer call per completed tick / per frame.
+//
+// Empty (no snapshot) is the pre-run state; the engine's sequence
+// guarantees the snapshot exists before onTickHookDispatch can fire
+// and before runFrames runs — the checks below are the
+// never-crash guards for the unreachable states (CORE-008: a null
+// context is a no-op, never a crash).
+// The dispatch function-pointer types (the game_loop.h TickFn
+// pattern: an alias keeps the member declarations parseable and the
+// handle's dispatch a plain function-pointer call).
+using PresentationTickFn = void (*)(void* context, std::uint64_t tick);
+using PresentationRenderFn = void (*)(void* context, std::int64_t nowNs);
+
+// The deleter signature of PresentationHandle::storage: a function
+// pointer capturing the concrete snapshot type (the factory template
+// below provides it per backend; the logging.h stream_ precedent —
+// unique_ptr<void, fnptr> is the engine's type-erasure idiom).
+using SnapshotDeleteFn = void (*)(void*);
+
+struct PresentationHandle {
+  // The owned snapshot storage (one-shot setup allocation); the
+  // deleter knows the concrete backend type (the factory template
+  // below captures it).
+  std::unique_ptr<void, SnapshotDeleteFn> storage;
+  // The snapshot as a void pointer for the dispatch (== storage's
+  // pointer, kept for the direct calls).
+  void* context{};
+  // The snapshot's onTick (world-independent: the snapshot owns its
+  // non-owning world view, presentation.h).
+  PresentationTickFn onTick{};
+  // The snapshot's onRenderFrame (the frame clock, ns).
+  PresentationRenderFn onRenderFrame{};
+
+  // The empty state (no snapshot yet / after reset). User-provided:
+  // the unique_ptr's own default constructor is deleted for a
+  // function-pointer deleter ([unique.ptr.singlector]), so the
+  // empty state is constructed here (the handle is therefore not an
+  // aggregate — constructed only as Engine::snapshot_ and by the
+  // factory below; moved, never copied).
+  PresentationHandle() : storage(nullptr, nullptr) {}
+
+  // True when a snapshot is owned. O(1).
+  [[nodiscard]] bool hasSnapshot() const noexcept {
+    return context != nullptr;
+  }
+
+  // Release the owned snapshot (no-op when empty); used by the
+  // engine's ordered shutdown (the "pools" step).
+  void reset() noexcept {
+    storage.reset();
+    context = nullptr;
+    onTick = nullptr;
+    onRenderFrame = nullptr;
+  }
+};
+
+// Builds the PresentationHandle for one concrete backend
+// (PresentationSnapshot<Backend>): creates the snapshot and wraps it.
+// One allocation (the snapshot object — its slot table is the run's
+// third setup allocation). The error path is a plain Result error
+// (the snapshot's create contract, presentation.h).
+template <typename Backend>
+[[nodiscard]] Result<PresentationHandle, ErrorCode>
+createPresentationHandle(World& world, std::int64_t startReferenceNs,
+                         std::uint32_t tickRateHz) noexcept {
+  using Snapshot = PresentationSnapshot<Backend>;
+  const typename Snapshot::Options options{tickRateHz};
+  Result<Snapshot, ErrorCode> created =
+      Snapshot::create(world, startReferenceNs, options);
+  if (created.isError()) return created.error();
+  std::unique_ptr<Snapshot> snapshot =
+      std::make_unique<Snapshot>(std::move(created).takeValue());
+  PresentationHandle handle;
+  // The deleter captures the concrete type (the one-shot setup
+  // allocation's release); context is the same pointer for the
+  // direct dispatch calls.
+  handle.storage = std::unique_ptr<void, SnapshotDeleteFn>(
+      snapshot.release(),
+      [](void* p) { delete static_cast<Snapshot*>(p); });
+  handle.context = handle.storage.get();
+  handle.onTick = [](void* context, std::uint64_t tick) {
+    static_cast<Snapshot*>(context)->onTick(tick);
+  };
+  handle.onRenderFrame = [](void* context, std::int64_t nowNs) {
+    static_cast<Snapshot*>(context)->onRenderFrame(nowNs);
+  };
+  return handle;
+}
+
+}  // namespace detail
 
 // The headless engine (M1-HEAD-01): config -> world -> systems ->
 // loop, then the ordered CONC-006 shutdown. See the header preamble
@@ -275,9 +440,11 @@ class Engine {
   // Setup phase (the engine's only backing allocations happen in the
   // World's create — the registry tables and, when capacity > 0, the
   // per-slot tables): validate the typed config, create the World
-  // (entityCapacity, churnPerFrameBudget), and register the built-in
-  // Position2DFpx16 (the engine's built-ins always come first —
-  // ARCH-010). O(1) beyond the World's setup allocations.
+  // (entityCapacity, churnPerFrameBudget, seed, determinism mode),
+  // and register the built-in component matching the configured
+  // SimMath backend (Position2DFpx16 default, Position2DFp32 for
+  // float_pinned_32 — M1-DET-01; the engine's built-ins always come
+  // first — ARCH-010). O(1) beyond the World's setup allocations.
   //
   //   tickRateHz outside 20..120    -> InvalidArgument + warn
   //                                      (config/tick_rate_invalid)
@@ -377,7 +544,10 @@ class Engine {
   // order).
   std::unique_ptr<World> world_;
   std::unique_ptr<GameLoop> loop_;
-  std::unique_ptr<PresentationSnapshot<sim::Fpx16_16>> snapshot_;
+  // The presentation snapshot, type-erased over the configured
+  // SimMath backend (M1-DET-01; detail::PresentationHandle — no
+  // virtual dispatch, PERF-006).
+  detail::PresentationHandle snapshot_{};
   // The run's execution order (computed at the start of the run; a
   // plain value — the SystemSchedule ownership contract, system.h).
   SystemSchedule schedule_{};
