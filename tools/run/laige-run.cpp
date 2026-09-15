@@ -54,6 +54,10 @@
 #include <string_view>
 #include <utility>
 
+#if defined(_MSC_VER)
+#include <share.h>  // _SH_DENYNO: plain-fopen sharing for the _fsopen below
+#endif
+
 #include "laige/errors.h"
 #include "laige/json.h"
 #include "laige/logging.h"
@@ -112,11 +116,30 @@ bool parseTicks(std::string_view text, std::uint64_t* out) {
   return true;
 }
 
+// Portable config-file open (CPP-009 compile-time platform boundary —
+// the logging.cpp precedent). MSVC's CRT deprecates plain `fopen`
+// (C4996, fatal under the engine's /WX policy); `fopen_s` cannot be
+// used here: it opens with the `_SH_SECURE` sharing mode, which denies
+// re-opening of the file (the windows-msvc CI runs of M0-CORE-02 read
+// back an empty file for exactly that reason). `_fsopen(path, mode,
+// _SH_DENYNO)` is the CRT's documented way to open with plain-`fopen`
+// sharing semantics, which every other supported compiler's `fopen`
+// provides.
+#if defined(_MSC_VER)
+inline std::FILE* openConfigFile(const char* path, const char* mode) {
+  return ::_fsopen(path, mode, _SH_DENYNO);
+}
+#else
+inline std::FILE* openConfigFile(const char* path, const char* mode) {
+  return std::fopen(path, mode);
+}
+#endif
+
 // Reads the config file into a bounded buffer (the 1 MiB ADR 0003
 // bound). Returns the error Status; on success the document is in
 // `out`.
 laige::Status readConfigFile(const std::string& path, std::string* out) {
-  std::FILE* file = std::fopen(path.c_str(), "rb");
+  std::FILE* file = openConfigFile(path.c_str(), "rb");
   if (file == nullptr) {
     return laige::ErrorCode::IoError;
   }
