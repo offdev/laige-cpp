@@ -423,13 +423,6 @@ class Logger {
   // log calls after shutdown are discarded (no sink calls).
   void shutdown();
 
-  // TEMPORARY CI DIAGNOSTIC (delete before merge): allocation-probe
-  // hook used to bisect the Windows-only allocation inside shutdown().
-  // The probe is called between each statement of shutdown(); the
-  // test side prints the running allocation counter at each call.
-  using AllocProbeFn = void (*)(void);
-  static void setAllocProbe(AllocProbeFn fn);
-
   // Install crash handlers (LOG-007): SIGSEGV/SIGABRT/SIGBUS/SIGFPE/
   // SIGILL on POSIX (sigaction, one-shot SA_RESETHAND), a vectored SEH
   // filter on Windows. The handler writes a raw notice to stderr
