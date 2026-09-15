@@ -92,17 +92,23 @@ struct SysTestPos {
   std::int32_t y;
 };
 LAIGE_COMPONENT(SysTestPos);
+// M1-DET-01 (G-R8): integer-only storage (determinism.h trait).
+LAIGE_DETERMINISM_SAFE(SysTestPos, std::int32_t, std::int32_t);
 
 struct SysTestVel {
   std::int64_t vx;
 };
 LAIGE_COMPONENT(SysTestVel);
+// M1-DET-01 (G-R8): integer-only storage (determinism.h trait).
+LAIGE_DETERMINISM_SAFE(SysTestVel, std::int64_t);
 
 struct SysTestHealth {
   std::int32_t current;
   std::int32_t max;
 };
 LAIGE_COMPONENT(SysTestHealth);
+// M1-DET-01 (G-R8): integer-only storage (determinism.h trait).
+LAIGE_DETERMINISM_SAFE(SysTestHealth, std::int32_t, std::int32_t);
 
 // ---------------------------------------------------------------------------
 // The plain systems (FR-1.3: plain functions, no class, no

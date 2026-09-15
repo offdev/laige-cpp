@@ -21,16 +21,17 @@
 # gtest_main. The unfiltered entry runs the whole module; the `entity`,
 # `component_registry`, `archetype`, `query`, `iter_order`,
 # `ecs_guardrails`, `ecs_stress`, `system_registry`, `scheduler`,
-# `system_timing`, `game_loop`, `presentation`, and `engine` entries
-# are the M1-ECS-01, M1-ECS-02, M1-ECS-03, M1-ECS-04, M1-ECS-05,
-# M1-ECS-06, M1-ECS-07, M1-SYS-01, M1-SYS-02, M1-SYS-03, M1-LOOP-01,
-# M1-LOOP-02, and M1-HEAD-01 Verify commands (`ctest -R entity`,
-# `ctest -R component_registry`, `ctest -R archetype`, `ctest -R
-# query`, `ctest -R iter_order`, `ctest -R ecs_guardrails`,
-# `ctest -R ecs_stress`, `ctest -R system_registry`, `ctest -R
-# scheduler`, `ctest -R system_timing`, `ctest -R game_loop`,
-# `ctest -R presentation`, and `ctest -R engine`), selecting exactly
-# the suites below from the shared executable.
+# `system_timing`, `game_loop`, `presentation`, `engine`, and
+# `determinism_mode` entries are the M1-ECS-01, M1-ECS-02, M1-ECS-03,
+# M1-ECS-04, M1-ECS-05, M1-ECS-06, M1-ECS-07, M1-SYS-01, M1-SYS-02,
+# M1-SYS-03, M1-LOOP-01, M1-LOOP-02, M1-HEAD-01, and M1-DET-01 Verify
+# commands (`ctest -R entity`, `ctest -R component_registry`,
+# `ctest -R archetype`, `ctest -R query`, `ctest -R iter_order`,
+# `ctest -R ecs_guardrails`, `ctest -R ecs_stress`, `ctest -R
+# system_registry`, `ctest -R scheduler`, `ctest -R system_timing`,
+# `ctest -R game_loop`, `ctest -R presentation`, `ctest -R engine`,
+# and `ctest -R determinism_mode`), selecting exactly the suites
+# below from the shared executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            archetype_tests.cpp query_tests.cpp
@@ -41,7 +42,8 @@ set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            system_timing_tests.cpp
                            game_loop_tests.cpp
                            presentation_tests.cpp
-                           engine_tests.cpp)
+                           engine_tests.cpp
+                           determinism_tests.cpp)
 # M1-ECS-03: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own
 # new/delete (strong symbols in the Clang/GCC TSan runtime archives,
@@ -193,11 +195,65 @@ add_test(NAME engine
          COMMAND laige-sim_tests
          --gtest_filter=EngineCreate.*:EngineConfigParse.*:EngineRun.*:EngineShutdown.*)
 
+# M1-DET-01: deterministic mode + SimMath rules (ARCH-010, G-R8,
+# ADR 0002). The step's Verify command is `ctest -R determinism_mode`;
+# this entry selects exactly the DeterminismMode / DeterminismEngine /
+# DeterminismConfigParse suites from the shared laige-sim_tests
+# executable (the machine-greppable determinism-tick-stream line lands
+# in the ctest output).
+add_test(NAME determinism_mode
+         COMMAND laige-sim_tests
+         --gtest_filter=DeterminismMode.*:DeterminismEngine.*:DeterminismConfigParse.*)
+
+# M1-DET-01: the G-R8 trait compile-checks (the compile-time half of
+# the determinism guarantee). Each fixture is compiled (not linked,
+# not run) with the engine policy flags; the positive fixture must
+# compile (exit 0), the negative fixtures must FAIL to compile with
+# the actionable G-R8 message (the static_assert in
+# World::registerSystem / the LAIGE_DETERMINISM_SAFE mark site). The
+# generated check scripts assert exit code + stderr fragment — see
+# expect-compile-result.cmake.in for the rationale.
+function(laige_add_compile_check name source expect_ok fragment)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    set(_flags "-std=c++20 -Wall -Werror -fno-exceptions -fno-rtti"
+               " -ffp-contract=off -fno-associative-math")
+    set(_includes "-I${CMAKE_SOURCE_DIR}/src/laige-sim/include"
+                  "-I${CMAKE_SOURCE_DIR}/src/laige-core/include")
+  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    set(_flags "/std:c++20 /W4 /WX /EHs- /EHc- /GR-"
+               " /fp:precise /D _HAS_EXCEPTIONS=0")
+    set(_includes "/I${CMAKE_SOURCE_DIR}/src/laige-sim/include"
+                  "/I${CMAKE_SOURCE_DIR}/src/laige-core/include")
+  else()
+    message(FATAL_ERROR
+      "no compile-check flags for '${CMAKE_CXX_COMPILER_ID}'")
+  endif()
+  set(CXX "${CMAKE_CXX_COMPILER}")
+  set(CXXFLAGS "${_flags} ${_includes}")
+  set(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/compile_fail/${source}")
+  set(OBJ "${CMAKE_CURRENT_BINARY_DIR}/compile_check_${name}.o")
+  set(EXPECT_OK "${expect_ok}")
+  set(FRAGMENT "${fragment}")
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/expect-compile-result.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/${name}.cmake" @ONLY)
+  add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -P
+           "${CMAKE_CURRENT_BINARY_DIR}/${name}.cmake")
+endfunction()
+
+laige_add_compile_check(trait_compile_ok trait_ok.cpp 1 "")
+laige_add_compile_check(trait_compile_reject_double trait_reject_double.cpp
+                        0 "determinism-safe")
+laige_add_compile_check(trait_compile_reject_unmarked trait_reject_unmarked.cpp
+                        0 "determinism-safe")
+laige_add_compile_check(trait_compile_reject_bad_mark trait_reject_bad_mark.cpp
+                        0 "LAIGE_DETERMINISM_SAFE")
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
   set_tests_properties(laige-sim_tests entity component_registry archetype
     query iter_order ecs_guardrails ecs_stress system_registry scheduler
-    system_timing game_loop presentation engine PROPERTIES
+    system_timing game_loop presentation engine determinism_mode PROPERTIES
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

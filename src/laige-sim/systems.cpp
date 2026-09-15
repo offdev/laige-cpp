@@ -418,8 +418,20 @@ Status World::runSystems(const SystemSchedule& schedule) noexcept {
   }
   for (std::uint32_t k = 0; k < count; ++k) {
     const std::uint32_t id = schedule.order[k];
-    const detail::SystemRecord& rec = systems_[id - 1];
-    SystemContext ctx{*this};  // per-tick, per-system, non-owning
+    // The record is a NON-const reference on purpose (M1-DET-01):
+    // the system's PRNG substream is replay state — drawing from it
+    // advances its stream position in place (the call order IS the
+    // replay, PRD §10.3). Everything else on the record is read-only
+    // during the loop (the registry contract).
+    detail::SystemRecord& rec = systems_[id - 1];
+    // M1-DET-01 (PRD §10.3: per-substream PRNG): the context names the
+    // system's substream — set at registration (registerSystem) when
+    // the world runs in deterministic mode; nullptr when disabled
+    // (the system must handle nullptr: no random source). The pointer
+    // is a per-tick read of the registry record: no allocation.
+    Prng* rng =
+        (deterministic_ && rec.rng.has_value()) ? &(*rec.rng) : nullptr;
+    SystemContext ctx{*this, rng};  // per-tick, per-system, non-owning
     // M1-SYS-03: the system's own run time (the context is built
     // outside the window — the measurement is the run function
     // itself, not the dispatch bookkeeping).

@@ -88,11 +88,31 @@ M1-HEAD-01 landed the headless engine run — `Engine`
 (config → world → systems → loop: `EngineConfig` + the provisional
 `parseEngineConfig` JSON surface, `run_headless(maxTicks)` the
 bounded + server run forms, the ordered idempotent CONC-006
-shutdown, the presentation snapshot wiring on the default `fpx16_16`
+shutdown, the presentation snapshot wiring on the configured SimMath
 backend) plus the `laige-run` binary (`--headless`/`--ticks`/
 `--replay` stub) and the `laige_run_smoke` CI entry
 (`include/laige/sim/engine.h`, `engine.cpp`, `tools/run`; API
 contract in [docs/api/engine.md](../docs/api/engine.md), tests under
 [tests/laige-sim](../tests/laige-sim), CTest entry `engine`).
-The profiler, determinism/replay, and the remaining M1 steps land
-next; physics, input, and animation in M3.
+M1-DET-01 landed deterministic mode — the SimMath-only sim
+guarantee (the G-R8 compile-time trait
+`include/laige/sim/determinism.h`: `SimMathBackend`,
+`DeterminismConfig`, `detail::IsDeterminismSafe<T>`,
+`LAIGE_DETERMINISM_SAFE`, enforced by a `static_assert` in
+`World::registerSystem`), the per-system PRNG substreams
+(`World::Options.seed`/`deterministic`, `SystemContext.rng`), the
+`seed`/`determinism` keys on the provisional config surface + the
+backend selection at engine init (built-in component + snapshot), and
+the sim-source determinism scan (`tools/laige-determinism-lint`, the
+`determinism-lint` CI job) with same-line
+`LAIGE-DETERM-EXCEPTION` markers as the documented false-positive
+policy; the scope statement is
+[docs/concepts/determinism.md](../docs/concepts/determinism.md), the
+trait API in
+[docs/api/determinism.md](../docs/api/determinism.md); tests under
+[tests/laige-sim](../tests/laige-sim) (CTest entries
+`determinism_mode` + `trait_compile_*`; lint fixtures in
+[tests/tools](../tests/tools)).
+The profiler, replay (M1-DET-02), PRNG state introspection
+(M1-DET-03), the detcheck matrix (M1-DET-04), and the remaining M1
+steps land next; physics, input, and animation in M3.

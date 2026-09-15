@@ -203,6 +203,15 @@ loudly if the flags are ever missing — verified by a negative build with
   per-platform support list; any desyncing pair is declared unsupported
   for this backend.
 
+**Enforcement (G-R8, M1-DET-01):** SimMath ops are the *only* math
+allowed in deterministic sim systems. Raw `float`/`double` and
+platform intrinsics outside SimMath are forbidden, enforced at two
+layers: the compile-time trait in `World::registerSystem` (component
+storage must be determinism-safe —
+[api/determinism.md](determinism.md)) and the CI source scan
+`tools/laige-determinism-lint` (sim translation units). The full scope
+statement is [concepts/determinism.md](../concepts/determinism.md).
+
 ## Performance (DOC-004)
 
 - **Complexity:** every op is O(1); no loops, no recursion (`fpx16_16`

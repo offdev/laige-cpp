@@ -176,6 +176,7 @@
 
 #include "laige/sim/archetype.h"
 #include "laige/sim/component.h"
+#include "laige/sim/determinism.h"  // M1-DET-01: the G-R8 trait check in registerSystem
 #include "laige/sim/query.h"
 #include "laige/sim/system.h"
 
@@ -343,6 +344,20 @@ class World {
     // (ecs/churn_per_frame). Strictly-greater semantics; 0 disables
     // the guardrail. Default: kDefaultChurnPerFrameBudget.
     std::uint32_t churnPerFrameBudget{kDefaultChurnPerFrameBudget};
+    // The master simulation seed (M1-DET-01; PRD §10.3: the seed is
+    // part of the replay identity). Every system's PRNG substream is
+    // derived from (seed, system id) — the Prng::deriveSubstream
+    // contract (laige/prng.h). Default 0 — a valid master seed (the
+    // Prng's state is nonzero for every 64-bit seed, prng.h).
+    std::uint64_t seed{0};
+    // Deterministic mode on/off (M1-DET-01; S-7: deterministic by
+    // default). When true, registerSystem derives each system's PRNG
+    // substream and SystemContext::rng names it; when false, the
+    // streams are not created and SystemContext::rng is nullptr (a
+    // system that draws must handle nullptr as "no random source").
+    // See determinism.h "Determinism mode semantics" for the full
+    // M1 scope.
+    bool deterministic{true};
   };
 
   // Construction (setup path: the storage's only backing allocations).
@@ -820,7 +835,7 @@ class World {
   // budget) and the system/budget_critical error event (measured at
   // kBudgetCriticalMultiplier × the budget or more). Called from
   // runSystems per system per tick (defined in system_timing.cpp).
-  void checkSystemBudget(std::uint32_t id, double measuredMs) noexcept;
+  void checkSystemBudget(std::uint32_t id, double measuredMs) noexcept;  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured run time never enters sim state, hashes, or replays (M1-SYS-03, ARCH-009)
 
   // M1-ECS-04 query helpers: compile-time recursion over the listed
   // components (N ≤ 32 — the M1 bound). Recursion, not a fold: the
@@ -972,6 +987,13 @@ class World {
   bool iterationActive_{false};
   detail::IdSet256 iterationArchetypes_{};
   detail::IdSet256 iterationReadComponents_{};
+  // Determinism mode state (M1-DET-01; determinism.h): the master
+  // seed and the mode flag, fixed at create() (setup path). The
+  // per-system PRNG substreams live in the system records' inline
+  // optional storage (system.h SystemRecord) — no separate table.
+  // clear() does not touch them (the registry precedent).
+  std::uint64_t seed_{0};
+  bool deterministic_{true};
   // System registry (M1-SYS-01; system.h): the fixed engine budget
   // (kMaxSystems records), indexed by (system id - 1); a dense id is
   // assigned at registration (registration order, component.h
@@ -1079,14 +1101,30 @@ detail::IoResolution World::resolveIoEntry(detail::IdSet256& read,
 template <typename... Ios>
 Result<SystemId, ErrorCode> World::registerSystem(const SystemDef& def, Ios...) noexcept {
   // I/O pack validation (compile time, not runtime surprises):
-  // every entry must be an Io<T, Access> tag and its component type
-  // must be a Laige component (FR-1.2, S-8).
+  // every entry must be an Io<T, Access> tag, its component type
+  // must be a Laige component (FR-1.2, S-8), and — deterministic mode
+  // being the default (S-7, M1-DET-01) — every component the system
+  // declares must be determinism-safe: raw float/double inside
+  // deterministic systems is a compile-time error (G-R8; the
+  // double half is the trait, the use half is the CI source scan —
+  // determinism.h, docs/concepts/determinism.md).
   static_assert((detail::IsIoTag<Ios>::value && ...),
                 "registerSystem: every I/O entry must be an "
                 "Io<T, Access> tag value (laige/sim/system.h)");
   static_assert((detail::IsIoComponent<Ios>::value && ...),
                 "registerSystem: every Io<T, ...> component type must "
                 "be marked with LAIGE_COMPONENT(T) (FR-1.2, S-8)");
+  static_assert((detail::IoComponentSafety<Ios>::value && ...),
+                "registerSystem (M1-DET-01, G-R8/S-7): every "
+                "component a system declares I/O for must be "
+                "determinism-safe — its members (recursively) must "
+                "be integers, enums, SimMath-registered scalars "
+                "(fpx16_16, float) or vectors (SimMath<B>::Vec2/Vec3), "
+                "or a user struct marked LAIGE_DETERMINISM_SAFE(Type, "
+                "MemberTypes...). A `double` member is never legal in "
+                "deterministic mode (no SimMath backend uses it). See "
+                "docs/concepts/determinism.md for the trait "
+                "mechanism and the CI source scan");
   if (systems_ == nullptr) {
     // Moved-from world: no registry (the same "valid empty world"
     // contract as the component registry, component.h).
@@ -1196,6 +1234,17 @@ Result<SystemId, ErrorCode> World::registerSystem(const SystemDef& def, Ios...) 
   rec.readComponents = read;
   rec.writeComponents = write;
   const std::uint32_t id = systemCount_ + 1;
+  // M1-DET-01 (PRD §10.3: seeded, per-substream PRNG): derive the
+  // system's substream from (the world's seed, the system's id).
+  // The derivation is a pure function of (seed, id) (prng.h), so it
+  // is bit-identical across runs, and substreams never interleave:
+  // each system draws only from its own stream, in call order — the
+  // replay state. Determinism disabled: no stream (the context's
+  // rng is nullptr — determinism.h "Determinism mode semantics").
+  // Inline optional storage: no allocation (setup path).
+  if (deterministic_) {
+    rec.rng = Prng::deriveSubstream(seed_, id);
+  }
   ++systemCount_;
   return SystemId{id};  // ids are dense, from 1
 }

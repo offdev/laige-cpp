@@ -12,7 +12,10 @@ system scheduler; M1-SYS-03: the per-system timing + budget
 enforcement; M1-LOOP-01: the fixed-timestep game loop core;
 M1-LOOP-02: the per-tick presentation snapshot + interpolation
 state; M1-HEAD-01: the headless engine run — `Engine`
-(config → world → systems → loop) and the `laige-run` binary).
+(config → world → systems → loop) and the `laige-run` binary;
+M1-DET-01: deterministic mode — the SimMath-only sim guarantee
+(the G-R8 compile-time trait + the CI source scan), the per-system
+PRNG substreams, and the `seed`/`determinism` config keys).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -29,11 +32,11 @@ still to land.
 ## Concepts
 
 - [Concepts index](concepts/README.md) — architecture, coordinates
-  (ARCH-008), lifecycle, threading, and determinism scope. **Not yet
-  written** (M0 is foundations only); the index names each planned
-  document and its interim home today (the `Vec2`/`Vec3` comments in
-  `src/laige-core/include/laige/sim_math.h`, ADR 0002, the per-API
-  contracts).
+  (ARCH-008), lifecycle, threading, and determinism scope.
+  [Determinism](concepts/determinism.md) is written (M1-DET-01: the
+  same-build scope, the two-layer G-R8 enforcement, the exception
+  policy, the PRNG substreams); the other topics name their planned
+  document and interim home.
 
 ## API contracts (per public header)
 
@@ -89,8 +92,14 @@ still to land.
  - [Headless engine run](api/engine.md) — `laige::Engine`
   (config → world → systems → loop): `run_headless(maxTicks)` the
   bounded + server run forms, the ordered idempotent CONC-006
-  shutdown, the provisional config surface, and the `laige-run`
-  CLI (M1-HEAD-01; `laige-sim` + `tools/run`).
+  shutdown, the provisional config surface (now including the
+  `seed`/`determinism` keys, M1-DET-01), the backend selection at
+  init, and the `laige-run` CLI (M1-HEAD-01; `laige-sim` + `tools/run`).
+- [Determinism-safe storage](api/determinism.md) — the G-R8
+  compile-time trait: `SimMathBackend`, `DeterminismConfig`,
+  `detail::IsDeterminismSafe<T>`, and
+  `LAIGE_DETERMINISM_SAFE(Type, MemberTypes...)` (M1-DET-01;
+  `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,
@@ -160,9 +169,10 @@ still to land.
 
 ## Not yet written (honest status)
 
-- `concepts/` — the architecture, coordinates, lifecycle, threading, and
-  determinism concept documents (the [index](concepts/README.md) names
-  each and its interim home).
+- `concepts/` — the architecture, coordinates, lifecycle, and
+  threading concept documents (the [index](concepts/README.md) names
+  each and its interim home). [Determinism](concepts/determinism.md)
+  is written (M1-DET-01).
 - `guides/` — task-oriented usage (first game, profiling, determinism)
   — see the [index](guides/README.md).
 - `debugging/` — the in-engine debug mode (AGENTS §15; profiling
@@ -185,7 +195,8 @@ still to land.
   [system_timing.md](api/system_timing.md),
   [game_loop.md](api/game_loop.md),
   [presentation.md](api/presentation.md),
-  [engine.md](api/engine.md).)
+  [engine.md](api/engine.md),
+  [determinism.md](api/determinism.md).)
 
 ## Related
 

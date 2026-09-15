@@ -89,7 +89,7 @@ const Histogram* World::systemTimingWindow(SystemId id) const noexcept {
   return systemTiming_[id.value - 1].window.get();
 }
 
-void World::checkSystemBudget(std::uint32_t id, double measuredMs) noexcept {
+void World::checkSystemBudget(std::uint32_t id, double measuredMs) noexcept {  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured run time never enters sim state, hashes, or replays (M1-SYS-03, ARCH-009)
   // The timing table exists whenever a system is registered
   // (allocated in create() alongside the registry, moved with it),
   // and runSystems reaches here only with a non-empty registry —
@@ -108,10 +108,10 @@ void World::checkSystemBudget(std::uint32_t id, double measuredMs) noexcept {
   // The declared budget in ms, converted EXACTLY: fpx16_16 raw / 2^16
   // is a power-of-two scale, and the raw range (±2^31) fits the
   // double mantissa, so the comparison operands are exact.
-  const double budgetMs =
-      static_cast<double>(recDef.def.budgetMs.raw) / 65536.0;
-  const double criticalMs =
-      static_cast<double>(kBudgetCriticalMultiplier) * budgetMs;
+  const double budgetMs =  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic (M1-SYS-03, ARCH-009): fpx16_16 raw / 2^16 is a power-of-two scale, exact in the double mantissa
+      static_cast<double>(recDef.def.budgetMs.raw) / 65536.0;  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic (M1-SYS-03, ARCH-009)
+  const double criticalMs =  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic (M1-SYS-03, ARCH-009)
+      static_cast<double>(kBudgetCriticalMultiplier) * budgetMs;  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic (M1-SYS-03, ARCH-009)
 
   if (measuredMs > budgetMs || measuredMs >= criticalMs) {
     // Cold path — only while the system is over budget. One window

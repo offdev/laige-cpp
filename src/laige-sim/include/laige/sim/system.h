@@ -14,8 +14,10 @@
 //                   plain run function, and the declared time budget
 //                   in milliseconds (fpx16_16, exact — ADR 0002).
 //   SystemContext   The per-tick context handed to a system: the world
-//                   view plus the delegated World::each (the PRD
-//                   Appendix B sketch's `ctx.each<...>()`).
+//                   view, the delegated World::each (the PRD
+//                   Appendix B sketch's `ctx.each<...>()`), and the
+//                   system's PRNG substream (M1-DET-01; nullptr when
+//                   the world's determinism is disabled).
 //   Io<T, Access>   One declared component I/O entry of a system:
 //                   component type T and its declared access.
 //   SystemInfo      A registered system's snapshot (def + the declared
@@ -129,6 +131,12 @@
 //   duplicate name in this world       -> InvalidArgument + warn
 //                                          (system/duplicate)
 //   Io<T> T not a Laige component      -> compile error (static_assert)
+//   Io<T> T not determinism-safe       -> compile error (static_assert;
+//       (G-R8, S-7, M1-DET-01)              determinism.h: members must
+//                                          be integers/enums, SimMath-
+//                                          registered scalars/vectors, or
+//                                          LAIGE_DETERMINISM_SAFE-marked
+//                                          user structs)
 //   Io<T> T not registered in this
 //       world                          -> InvalidArgument + warn
 //                                          (system/io_unregistered)
@@ -141,9 +149,14 @@
 //
 // On success the def is COPIED by value into the world's fixed record
 // table (kMaxSystems records, a setup-path allocation like the
-// component registry — the user's def may be a stack variable), and
-// the I/O sets are written in place: no allocation at registration
-// and none per tick (the registry is read-only during the loop).
+// component registry — the user's def may be a stack variable), the
+// I/O sets are written in place, and — when the world runs in
+// deterministic mode (World::Options::deterministic) — the system's
+// PRNG substream is derived into the record:
+// Prng::deriveSubstream(the world's seed, the system's id) (M1-DET-01;
+// PRD §10.3). No heap allocation at registration and none per tick
+// (the substream is inline optional storage; the registry is
+// read-only during the loop).
 //
 // ---------------------------------------------------------------------------
 // Scheduler (M1-SYS-02): execution order, depends_on, validation
@@ -359,11 +372,14 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include "laige/budget_harness.h"  // M1-SYS-03: the rolling window (Histogram)
 #include "laige/fpx16_16.h"
+#include "laige/prng.h"            // M1-DET-01: the per-system PRNG substreams
 #include "laige/result.h"
 #include "laige/sim/component.h"
+#include "laige/sim/determinism.h" // M1-DET-01: the G-R8 determinism-safety trait
 #include "laige/sim/query.h"
 
 namespace laige {
@@ -455,15 +471,31 @@ struct SystemSchedule {
 };
 
 // The per-tick context handed to a system's run() (FR-1.3; the PRD
-// Appendix B sketch's `ctx`). It names the world the system runs on
-// and delegates iteration to World::each (query.h) — the sketch's
-// `ctx.each<...>()`. The context is built per system per tick by the
-// scheduler (M1-SYS-02); until then games and tests build it
-// directly. It is a non-owning view (the world owns the storage):
-// never store it across ticks.
+// Appendix B sketch's `ctx`). It names the world the system runs on,
+// delegates iteration to World::each (query.h) — the sketch's
+// `ctx.each<...>()` — and hands the system its PRNG substream
+// (M1-DET-01; PRD §10.3: "seeded engine PRNG, per-substream"). The
+// context is built per system per tick by the scheduler (M1-SYS-02);
+// until then games and tests build it directly. It is a non-owning
+// view (the world owns the storage): never store it across ticks.
 struct SystemContext {
   // The world the system runs on (one world, one owner thread).
   World& world;
+
+  // The system's PRNG substream (M1-DET-01; PRD §10.3): derived at
+  // registration from (the world's seed, this system's SystemId) —
+  // the Prng::deriveSubstream contract (laige/prng.h: a pure function
+  // of (seed, id), bit-identical across runs; substreams never
+  // interleave — a system draws only from its own stream, and the
+  // draw order is the call order, the replay state). NON-OWNING: the
+  // world owns the stream (its system-registry record); valid only
+  // during this system's run (the context's lifetime). nullptr when
+  // the world was created with determinism DISABLED
+  // (World::Options::deterministic): a system that draws must treat
+  // nullptr as "no random source" (deterministic mode is the default
+  // — S-7 — and every M1 system that wants randomness runs with it
+  // on).
+  Prng* rng{};
 
   // Delegate to World::each<T1..TN>(fn, Read/Write tags...) on the
   // same world: identical semantics, visit order, iteration-legality
@@ -542,7 +574,7 @@ struct SystemTimingStats {
   // measures as exactly 0.0 ms — a legitimate sub-resolution reading
   // (wall-clock resolution is platform-sensitive; ARCH-009), not a
   // failure state.
-  double lastMs{};
+  double lastMs{};  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured run time never enters sim state, hashes, or replays (M1-SYS-03, ARCH-009)
   // The system/budget_overrun warns issued since construction.
   std::uint32_t warns{};
   // The system/budget_critical error events issued since
@@ -585,6 +617,14 @@ struct SystemRecord {
   SystemDef def{};
   IdSet256 readComponents;    // declared Read component ids (1..256)
   IdSet256 writeComponents;   // declared Write component ids (1..256)
+  // The system's PRNG substream (M1-DET-01): set at registration when
+  // the world runs in deterministic mode (Prng::deriveSubstream(the
+  // world's seed, the system's id)); empty when determinism is
+  // disabled (SystemContext::rng is then nullptr). Setup-path state:
+  // survives clear() (a system is not per-entity data, the registry
+  // precedent), moves with the world. The optional is inline storage
+  // (no heap) — the Prng is a 3-word value.
+  std::optional<Prng> rng;
 };
 
 // One per-system timing record (M1-SYS-03): the rolling window of
@@ -601,8 +641,9 @@ struct SystemTimingRecord {
   // constructor, so the record holds it as a unique_ptr — the one
   // level of indirection is bounded by kMaxSystems).
   std::unique_ptr<Histogram> window;
-  double lastMs{};  // most recent measured run (0 before first; a run
-                   // shorter than the steady_clock tick reads 0.0)
+  // Most recent measured run (0 before the first; a run shorter than
+  // the steady_clock tick reads 0.0).
+  double lastMs{};  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured run time never enters sim state, hashes, or replays (M1-SYS-03, ARCH-009)
   std::uint64_t runs{};  // measured runs since construction
   std::uint32_t warns{};  // budget_overrun warns issued
   std::uint32_t errors{}; // budget_critical errors issued
@@ -647,6 +688,22 @@ template <typename T, Access A>
 struct IoComponent<Io<T, A>> {
   using type = T;
   static constexpr Access access = A;
+};
+
+// The G-R8 determinism-safety of one declared I/O entry (M1-DET-01):
+// true when the tag is an Io<T, A> whose component type T is
+// determinism-safe (IsDeterminismSafe<T>, determinism.h). A NON-Io
+// tag reads true here on purpose: the IsIoTag static_assert in
+// registerSystem fires first with its own message (the validation
+// order is normative — the first failure wins), so this assert never
+// needs to name a malformed tag.
+template <typename Tag>
+struct IoComponentSafety {
+  static constexpr bool value = true;
+};
+template <typename T, Access A>
+struct IoComponentSafety<Io<T, A>> {
+  static constexpr bool value = IsDeterminismSafe<T>::value;
 };
 
 // The parsed form of a depends_on spec (M1-SYS-02). `names[i]`

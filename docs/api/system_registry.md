@@ -51,6 +51,18 @@ inheritance, no state object. The function plus its `SystemDef`
   [query.md](query.md)). The context is built per system per tick by
   the scheduler (M1-SYS-02, [scheduler.md](scheduler.md)); never
   store it across ticks.
+- `ctx.rng` — the system's own PRNG substream (M1-DET-01): a
+  `laige::Prng*` derived from the world's seed and this system's
+  registration id (`Prng::deriveSubstream(seed, id)`; id 0 is the
+  master, never assigned to a system). Non-null when the world was
+  created in deterministic mode (the default), null when it was not
+  (the documented escape hatch). The stream is advanced in place as
+  the system draws — its state is part of the replay state, so a
+  draw belongs at a fixed position in the system's run (e.g. before
+  its iteration). Drawing is optional: a system that never touches
+  `ctx.rng` costs nothing. See
+  [concepts/determinism.md](../concepts/determinism.md) for the
+  substream contract and [api/prng.md](prng.md) for the taps.
 - Systems are deterministic when the engine runs in deterministic
   mode (M1-DET-01) and must stay within their declared budget
   (M1-SYS-03 measures per-system time and enforces the budget —
@@ -143,6 +155,7 @@ rate-limited structured warn (subsystem `system`, LOG-004) plus a
 | malformed `depends_on` spec (empty token, duplicate name, more than `kMaxSystemDependencies`) | `InvalidArgument` + warn | `system/dep_spec_invalid` |
 | duplicate name in this world | `InvalidArgument` + warn | `system/duplicate` |
 | `Io<T>`: `T` not a Laige component | compile error | — |
+| `Io<T>`: `T` not determinism-safe (G-R8, M1-DET-01) | compile error (a `static_assert` in `registerSystem`) | — |
 | `Io<T>`: `T` not registered (this world) | `InvalidArgument` + warn | `system/io_unregistered` |
 | same component declared twice (any access) | `InvalidArgument` + warn | `system/io_duplicate` |
 | more than `kMaxSystems` systems | `BudgetExhausted` + warn | `system/budget_exhausted` |
@@ -150,6 +163,19 @@ rate-limited structured warn (subsystem `system`, LOG-004) plus a
 The `budget_raw` log field is the rejected budget in Q16.16 raw
 units (value = raw / 2^16 ms, ADR 0002); `existing_system_id` /
 `component_id` identify the conflicting registrations.
+
+The G-R8 `static_assert` (M1-DET-01) is a compile-time check over the
+system's declared I/O: every `Io<T, Access>` component must be
+determinism-safe storage — integers, enums, `fpx16_16`, `float`, a
+`SimMath<B>::Vec2/Vec3`, or a user struct marked
+`LAIGE_DETERMINISM_SAFE(T, Members...)` (a `double` member is never
+legal; no SimMath backend uses it). The check fails with an actionable
+message naming the fix and pointing at
+[api/determinism.md](determinism.md); it runs at the call site, before
+any runtime validation. See
+[concepts/determinism.md](../concepts/determinism.md) for the
+two-layer enforcement (this trait is the compile-time half; the
+`determinism-lint` CI job is the source half).
 
 ## Performance (DOC-004)
 

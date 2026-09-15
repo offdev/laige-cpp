@@ -131,7 +131,45 @@ target may return any `Status`; the run fails only on process death
   stream that produced the failure (the committed KATs pin the
   default-seed values, so the override never hides a KAT regression).
 
-## 5. Running this step's checks
+## 5. Determinism test entries (M1-DET-01)
+
+The M1-DET-01 step adds three kinds of determinism checks, all part of
+the standard ctest suite in every P0 job (and both sanitizer trees):
+
+- **`ctest -R determinism_mode`** — the runtime determinism suites
+  (`DeterminismMode.*`, `DeterminismEngine.*`, `DeterminismConfigParse.*`
+  in `tests/laige-sim/determinism_tests.cpp`, part of the
+  `laige-sim_tests` executable): a trivial moving-entity sim produces
+  bit-identical per-tick FNV-1a state hashes in two consecutive runs
+  (same build, same seed) over 256 ticks; a different seed diverges; the
+  per-system PRNG substreams match `Prng::deriveSubstream` exactly and
+  are independent; `deterministic == false` yields `SystemContext.rng ==
+  nullptr`; the engine selects the configured SimMath backend (built-in
+  component + presentation snapshot); and the provisional `seed` /
+  `determinism` config keys (defaults, valid values, the rejection
+  table). The machine-greppable `determinism-tick-stream` line lands in
+  the ctest output.
+- **`ctest -R trait_compile`** — the G-R8 trait compile-checks
+  (`tests/laige-sim/compile_fail/`, generated `cmake -P` check scripts):
+  one positive fixture (a marked determinism-safe component compiles)
+  and three negative fixtures (a `double` member, an unmarked user
+  struct, and a `double` in the mark's member list each fail to compile
+  with the actionable G-R8 message). Each check asserts the exit code
+  **and** a required stderr fragment, so an incidental compiler error
+  cannot masquerade as the trait firing.
+- **`ctest -R determinism-lint`** — the sim-source determinism scan
+  (`tools/laige-determinism-lint`, `tests/tools`): fixture trees
+  (clean tree with one marked exception → exit 0; one violation per rule
+  D1a/D1b/D1c/D2/D3 → exit 1) and the real repository tree (→ exit 0).
+  The same lint runs as the `determinism-lint` CI job in both
+  `ci-pull.yml` and `ci.yml`.
+
+These entries, together with the `prng` suite (M0-CORE-06) and the
+`detcheck` matrix (M1-DET-04), implement TEST-004 (determinism tests
+compare state hashes or replay outcomes wherever determinism is
+promised) at the scope ARCH-010 requires.
+
+## 6. Running this step's checks
 
 | Purpose | Command |
 |---|---|

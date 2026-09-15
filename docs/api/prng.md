@@ -166,6 +166,18 @@ draw count)`. For bit-exact restoration of an in-flight stream, save
 `Prng(seed)` advanced to the saved state) — `stepState` is public exactly
 for this and for the period proof's reconstruction of the state map.
 
+**Sim systems' substreams (M1-DET-01):** in deterministic mode (the
+default), `World::registerSystem` derives each system's stream from
+`(World::Options::seed, the system's dense registration id)` — id 0 is
+the master seed and is never assigned to a system — and hands it to the
+system as `SystemContext::rng` (non-null in deterministic mode,
+`nullptr` when disabled; see
+[api/system_registry.md](system_registry.md)). The stream is advanced
+in place during the system's draws, so the registry's stream state is
+the replay state (its inclusion in the state hash lands with
+M1-DET-03). Scope and guarantees:
+[concepts/determinism.md](../concepts/determinism.md).
+
 ## Misuse warnings
 
 - **Copying to "share" a substream interleaves the copies' draws.** One

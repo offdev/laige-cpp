@@ -161,7 +161,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 ## Determinism & replay
 
-- [ ] **M1-DET-01 · Deterministic mode + sim math rules**
+- [x] **M1-DET-01 · Deterministic mode + sim math rules**
   - **Refs:** FR-1.4, S-7, PRD §10.3; AGENTS ARCH-010
   - **Depends:** M0-DEC-02, M0-CORE-03, M0-CORE-04, M0-CORE-06, M1-SYS-01, M1-ECS-05
   - **Scope:**

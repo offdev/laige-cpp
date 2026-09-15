@@ -81,20 +81,73 @@ inline constexpr const char* kUnknownKeyMessage =
     "(M1-CFG-01 lands the full declarative schema) | remove the key, "
     "or wait for M1-CFG-01 | docs/api/engine.md";
 
+// M1-DET-01: the determinism config keys (seed, determinism.*).
+inline constexpr const char* kSeedInvalidMessage =
+    "seed_invalid | the configured seed is invalid | the value must be "
+    "an exact integer in 0-2^53 (the ADR 0003 JSON number bound: "
+    "doubles are exact to 2^53; the programmatic EngineConfig.seed "
+    "accepts the full 64 bits) | set seed to an integer in 0-2^53 "
+    "(the default is 0) | docs/api/engine.md";
+
+inline constexpr const char* kDeterminismInvalidMessage =
+    "determinism_invalid | the configured determinism block is invalid "
+    "| the block must be a JSON object ({} for all defaults); the "
+    "nested keys enabled (bool) and math (string) have their own "
+    "checks below | wrap the determinism block in an object | "
+    "docs/api/engine.md";
+
+inline constexpr const char* kDeterminismEnabledInvalidMessage =
+    "determinism_enabled_invalid | the configured determinism.enabled "
+    "is invalid | the value must be a JSON boolean (default true — "
+    "deterministic by default, S-7) | set determinism.enabled to true "
+    "or false | docs/api/engine.md";
+
+inline constexpr const char* kDeterminismMathInvalidMessage =
+    "determinism_math_invalid | the configured determinism.math is "
+    "invalid | the value must be the string \"fixed_point_16_16\" "
+    "(default) or \"float_pinned_32\" (the ADR 0002 backend ids) | "
+    "set determinism.math to one of the two backend ids | "
+    "docs/api/engine.md";
+
+// The JSON seed bound: the largest value a JSON number can hold
+// exactly (doubles are exact integers to 2^53 — ADR 0003). The
+// programmatic EngineConfig.seed has no such bound (full uint64).
+inline constexpr std::uint64_t kMaxJsonSeed = 1ull << 53;
+
 // True when `value` is a JSON number holding an exact unsigned integer
 // in [lo, hi] (hi must be <= 2^53, where doubles are exact — ADR 0003
-// number policy); stores the value in `out` on success.
+// number policy); stores the value in `out` on success. The double
+// here is the JSON number policy's storage type (ADR 0003: numbers
+// are parsed to double and must round-trip exactly), not simulation
+// math — see the exception markers.
 bool parseIntInRange(const JsonValue& value, std::uint32_t lo,
                      std::uint32_t hi, std::uint32_t* out) noexcept {
   if (!value.isNumber()) return false;
-  const double d = value.asNumber();
-  if (!std::isfinite(d) || d < 0.0 || d > static_cast<double>(hi) ||
+  const double d = value.asNumber();  // LAIGE-DETERM-EXCEPTION: G-R8 JSON number policy: doubles store JSON numbers exactly only to 2^53 (ADR 0003); this is config parsing, not sim math
+  if (!std::isfinite(d) || d < 0.0 || d > static_cast<double>(hi) ||  // LAIGE-DETERM-EXCEPTION: G-R8 JSON number policy (ADR 0003); config parsing, not sim math
       d != std::floor(d)) {
     return false;
   }
   const std::uint64_t u = static_cast<std::uint64_t>(d);
   if (u < lo) return false;
   *out = static_cast<std::uint32_t>(u);
+  return true;
+}
+
+// The 64-bit twin for the seed key: an exact unsigned integer in
+// [lo, hi] (hi <= 2^53 — the ADR 0003 JSON bound, kMaxJsonSeed).
+// Same policy as parseIntInRange: config parsing, not sim math.
+bool parseUint64InRange(const JsonValue& value, std::uint64_t lo,
+                        std::uint64_t hi, std::uint64_t* out) noexcept {
+  if (!value.isNumber()) return false;
+  const double d = value.asNumber();  // LAIGE-DETERM-EXCEPTION: G-R8 JSON number policy (ADR 0003); config parsing, not sim math
+  if (!std::isfinite(d) || d < 0.0 || d > static_cast<double>(hi) ||  // LAIGE-DETERM-EXCEPTION: G-R8 JSON number policy (ADR 0003); config parsing, not sim math
+      d != std::floor(d)) {
+    return false;
+  }
+  const std::uint64_t u = static_cast<std::uint64_t>(d);
+  if (u < lo) return false;
+  *out = u;
   return true;
 }
 
@@ -175,6 +228,71 @@ Result<EngineConfig, ErrorCode> parseEngineConfig(const JsonValue& doc) noexcept
         }
         return ErrorCode::InvalidArgument;
       }
+    } else if (key == "seed") {
+      std::uint64_t seed = 0;
+      if (!parseUint64InRange(value, 0, kMaxJsonSeed, &seed)) {
+        if (value.isNumber()) {
+          LAIGE_LOG_WARN(kConfigSubsystem, "seed_invalid",
+                         kSeedInvalidMessage,
+                         laige::log::field("key", key),
+                         laige::log::field("value", value.asNumber()));
+        } else {
+          LAIGE_LOG_WARN(kConfigSubsystem, "seed_invalid",
+                         kSeedInvalidMessage,
+                         laige::log::field("key", key),
+                         laige::log::field("value_kind", jsonKindName(value)));
+        }
+        return ErrorCode::InvalidArgument;
+      }
+      config.seed = seed;
+    } else if (key == "determinism") {
+      if (!value.isObject()) {
+        LAIGE_LOG_WARN(kConfigSubsystem, "determinism_invalid",
+                       kDeterminismInvalidMessage,
+                       laige::log::field("key", key),
+                       laige::log::field("value_kind", jsonKindName(value)));
+        return ErrorCode::InvalidArgument;
+      }
+      for (const auto& [dkey, dvalue] : value.asObject()) {
+        if (dkey == "enabled") {
+          if (!dvalue.isBool()) {
+            LAIGE_LOG_WARN(kConfigSubsystem,
+                           "determinism_enabled_invalid",
+                           kDeterminismEnabledInvalidMessage,
+                           laige::log::field("key", dkey),
+                           laige::log::field("value_kind",
+                                             jsonKindName(dvalue)));
+            return ErrorCode::InvalidArgument;
+          }
+          config.determinism.enabled = dvalue.asBool();
+        } else if (dkey == "math") {
+          if (!dvalue.isString()) {
+            LAIGE_LOG_WARN(kConfigSubsystem, "determinism_math_invalid",
+                           kDeterminismMathInvalidMessage,
+                           laige::log::field("key", dkey),
+                           laige::log::field("value_kind",
+                                             jsonKindName(dvalue)));
+            return ErrorCode::InvalidArgument;
+          }
+          const std::string_view m = dvalue.asString();
+          if (m == "fixed_point_16_16") {
+            config.determinism.math = SimMathBackend::FixedPoint16_16;
+          } else if (m == "float_pinned_32") {
+            config.determinism.math = SimMathBackend::FloatPinned32;
+          } else {
+            LAIGE_LOG_WARN(kConfigSubsystem, "determinism_math_invalid",
+                           kDeterminismMathInvalidMessage,
+                           laige::log::field("key", dkey),
+                           laige::log::field("value", std::string{m}));
+            return ErrorCode::InvalidArgument;
+          }
+        } else {
+          // Unknown nested key: WARN (forward-compat) and ignore — the
+          // M1-CFG-01 rule, applied inside the determinism block too.
+          LAIGE_LOG_WARN(kConfigSubsystem, "unknown_key", kUnknownKeyMessage,
+                         laige::log::field("key", dkey));
+        }
+      }
     } else {
       // Unknown key: WARN (forward-compat) and ignore — the M1-CFG-01
       // rule, applied to the provisional surface (never silent).
@@ -205,6 +323,12 @@ Result<Engine, ErrorCode> Engine::create(const EngineConfig& config) noexcept {
   World::Options worldOptions;
   worldOptions.capacity = config.entityCapacity;
   worldOptions.churnPerFrameBudget = config.churnPerFrameBudget;
+  // M1-DET-01 (determinism mode): the master seed and the mode flag
+  // (the per-system PRNG substreams derive from them at registration
+  // — registerSystem; the seed is part of the replay identity,
+  // ADR 0002).
+  worldOptions.seed = config.seed;
+  worldOptions.deterministic = config.determinism.enabled;
   Result<World, ErrorCode> worldResult = World::create(worldOptions);
   if (worldResult.isError()) {
     // The World's validation (capacity > 65536 -> InvalidArgument, no
@@ -215,9 +339,16 @@ Result<Engine, ErrorCode> Engine::create(const EngineConfig& config) noexcept {
   engine.world_ = std::make_unique<World>(std::move(worldResult).takeValue());
   // The engine's built-ins always register FIRST (stable
   // registration order for the deterministic ComponentTypeIds,
-  // ARCH-010; the game's components follow through world()).
+  // ARCH-010; the game's components follow through world()). M1-DET-01:
+  // the ONE built-in matching the configured SimMath backend is
+  // registered (ADR 0002, factory-selected at init); the game registers
+  // the matching Position2D alias for its own systems — registering
+  // the other alias is a duplicate-component rejection (one alias per
+  // world, the component.h contract).
   const Result<ComponentTypeId, ErrorCode> builtin =
-      engine.world_->registerComponent<Position2DFpx16>();
+      config.determinism.math == SimMathBackend::FloatPinned32
+          ? engine.world_->registerComponent<Position2DFp32>()
+          : engine.world_->registerComponent<Position2DFpx16>();
   if (builtin.isError()) {
     // Unreachable on a fresh world (the type is registered once per
     // world); propagated anyway — never silent (CORE-008).
@@ -239,9 +370,10 @@ void Engine::onTickHook(void* context, World& world,
 
 void Engine::onTickHookDispatch(std::uint64_t tick) noexcept {
   // The first loop frame runs zero ticks (game_loop.h), so the
-  // snapshot exists by the time this hook can fire; a null snapshot
-  // is still a no-op, never a crash.
-  if (snapshot_ != nullptr) snapshot_->onTick(tick);
+  // snapshot exists by the time this hook can fire; a missing
+  // snapshot is still a no-op, never a crash (the handle's
+  // hasSnapshot() guard — the never-crash contract, CORE-008).
+  if (snapshot_.hasSnapshot()) snapshot_.onTick(snapshot_.context, tick);
 }
 
 // ---------------------------------------------------------------------------
@@ -256,11 +388,22 @@ Status Engine::run_headless(std::uint64_t maxTicks,
   if (shutDown_ || world_ == nullptr) {
     return ErrorCode::InvalidArgument;
   }
+  // M1-DET-01: the replay-identity fields (the seed and the math
+  // backend — ADR 0002: both are part of the replay identity). The
+  // math field carries the ADR 0002 backend id string.
   LAIGE_LOG_INFO(kEngineSubsystem, "run_started",
                  "Headless run started",
                  laige::log::field("tick_rate_hz", config_.tickRateHz),
                  laige::log::field("tick_target", maxTicks),
-                 laige::log::field("frame_budget_ticks", frameBudgetTicks));
+                 laige::log::field("frame_budget_ticks", frameBudgetTicks),
+                 laige::log::field("seed", config_.seed),
+                 laige::log::field("determinism",
+                                   config_.determinism.enabled),
+                 laige::log::field("math",
+                                   config_.determinism.math ==
+                                           SimMathBackend::FloatPinned32
+                                       ? "fp32_pinned"
+                                       : "fpx16_16"));
   // The schedule is computed ONCE, at the start of the run (the
   // game's registrations must precede run_headless — the header's
   // misuse warning; a stale schedule is the loop's documented
@@ -284,13 +427,21 @@ Status Engine::run_headless(std::uint64_t maxTicks,
       // exists before it can fire).
       const Status firstFrame = loop_->frame();
       if (firstFrame.ok()) {
-        using Snapshot = PresentationSnapshot<sim::Fpx16_16>;
-        Result<Snapshot, ErrorCode> snapshotResult = Snapshot::create(
-            *world_, loop_->startReferenceNs(),
-            Snapshot::Options{config_.tickRateHz});
+        // M1-DET-01: the snapshot of the CONFIGURED SimMath backend
+        // (ADR 0002, factory-selected at init) — one allocation
+        // (the snapshot object; its slot table is the run's third
+        // setup allocation), wrapped in the type-erased handle
+        // (detail::PresentationHandle — no virtual dispatch, PERF-006).
+        Result<detail::PresentationHandle, ErrorCode> snapshotResult =
+            config_.determinism.math == SimMathBackend::FloatPinned32
+                ? detail::createPresentationHandle<sim::Fp32Pinned>(
+                      *world_, loop_->startReferenceNs(),
+                      config_.tickRateHz)
+                : detail::createPresentationHandle<sim::Fpx16_16>(
+                      *world_, loop_->startReferenceNs(),
+                      config_.tickRateHz);
         if (snapshotResult.ok()) {
-          snapshot_ = std::make_unique<Snapshot>(
-              std::move(snapshotResult).takeValue());
+          snapshot_ = std::move(snapshotResult).takeValue();
           runStatus = runFrames(maxTicks);
         } else {
           runStatus = snapshotResult.error();
@@ -334,8 +485,12 @@ Status Engine::runFrames(std::uint64_t maxTicks) noexcept {
     if (frameStatus.isError()) return frameStatus;
     // The frame's clock reading goes to the presentation state
     // (presentation.h wiring: the engine reads the frame clock once
-    // per frame and passes it to the snapshot).
-    snapshot_->onRenderFrame(now);
+    // per frame and passes it to the snapshot). The snapshot exists
+    // before runFrames runs (created in run_headless) — the guard is
+    // the never-crash contract (CORE-008).
+    if (snapshot_.hasSnapshot()) {
+      snapshot_.onRenderFrame(snapshot_.context, now);
+    }
     if (maxTicks != 0 && loop_->currentTick() >= maxTicks) {
       break;  // no sleep after the final tick (a bounded run ends)
     }

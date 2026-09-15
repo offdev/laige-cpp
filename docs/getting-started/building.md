@@ -39,6 +39,7 @@ The canonical-commands table in [roadmap/README.md](../../roadmap/README.md)
 | Determinism check | `./build/bin/laige-detcheck --scenario=<name>` |
 | API manifest | `cmake --build build --target laige-api` |
 | Include-graph lint + dependency count | `python3 tools/laige-include-lint` |
+| Determinism source scan (sim module) | `python3 tools/laige-determinism-lint` |
 
 Notes:
 
@@ -65,6 +66,19 @@ Notes:
   `include-lint` in `ci-pull.yml`/`ci.yml`), and the CTest suite runs it
   against the real tree in every build job (`tests/tools`). On Windows use
   `python tools\laige-include-lint`.
+- Determinism source scan (M1-DET-01): platform-independent (Python 3
+  stdlib only, no setup). It scans `src/laige-sim/**` for raw
+  `float`/`double` (type tokens and float/double literals) and
+  `unordered_*` containers — the textual half of the G-R8 guarantee
+  (the other half is the compile-time trait in `World::registerSystem`,
+  checked by the `trait_compile_*` CTest fixtures). Same-line
+  `// LAIGE-DETERM-EXCEPTION: G-R8 <reason>` markers are the documented
+  false-positive policy (every suppressed line is counted and printed).
+  CI runs it on every PR and merge (job `determinism-lint` in
+  `ci-pull.yml`/`ci.yml`), and the CTest suite runs it against fixture
+  trees and the real tree in every build job (`tests/tools`,
+  `determinism-lint-*`). Scope, rules, and the exception policy:
+  [docs/concepts/determinism.md](../concepts/determinism.md).
 - Test (TSan tree): registered tests automatically run with
   `TSAN_OPTIONS=halt_on_error=1` (wired in `tests/<module>/CMakeLists.txt`
   when `LAIGE_TSAN=ON`), so a data race makes `ctest` fail with a non-zero

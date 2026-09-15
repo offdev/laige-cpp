@@ -86,6 +86,8 @@ struct STTag {
   std::int32_t v{};
 };
 LAIGE_COMPONENT(STTag)
+// M1-DET-01 (G-R8): integer-only storage (determinism.h trait).
+LAIGE_DETERMINISM_SAFE(STTag, std::int32_t)
 
 namespace {
 
