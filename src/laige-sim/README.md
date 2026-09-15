@@ -84,5 +84,15 @@ class-template pattern, ADR 0002) (`include/laige/sim/presentation.h`
 + the `game_loop.h`/`game_loop.cpp` hook; API contract in
 [docs/api/presentation.md](../docs/api/presentation.md), tests under
 [tests/laige-sim](../tests/laige-sim), CTest entry `presentation`).
-The profiler, determinism/replay, headless engine, and the remaining
-M1 steps land next; physics, input, and animation in M3.
+M1-HEAD-01 landed the headless engine run — `Engine`
+(config → world → systems → loop: `EngineConfig` + the provisional
+`parseEngineConfig` JSON surface, `run_headless(maxTicks)` the
+bounded + server run forms, the ordered idempotent CONC-006
+shutdown, the presentation snapshot wiring on the default `fpx16_16`
+backend) plus the `laige-run` binary (`--headless`/`--ticks`/
+`--replay` stub) and the `laige_run_smoke` CI entry
+(`include/laige/sim/engine.h`, `engine.cpp`, `tools/run`; API
+contract in [docs/api/engine.md](../docs/api/engine.md), tests under
+[tests/laige-sim](../tests/laige-sim), CTest entry `engine`).
+The profiler, determinism/replay, and the remaining M1 steps land
+next; physics, input, and animation in M3.

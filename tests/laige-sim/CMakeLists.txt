@@ -1,5 +1,5 @@
 # laige-sim tests (M1-ECS-01/02/03/04/05/06/07 + M1-SYS-01/02/03
-# + M1-LOOP-01/02):
+# + M1-LOOP-01/02 + M1-HEAD-01):
 # entity handle + World entity storage, component type registry,
 # archetype SoA storage, query API + iteration legality,
 # deterministic iteration order, the ECS guardrails (G-R3/G-R4), the
@@ -11,23 +11,26 @@
 # fixed-timestep game loop core (the accumulator, the tick-rate
 # validation, the bounded catch-up + tick_dropped overload behavior),
 # and the presentation snapshot + interpolation state (the per-tick
-# prev/curr refresh, the anchored clamped alpha, sample_position).
+# prev/curr refresh, the anchored clamped alpha, sample_position),
+# and the headless engine run (config -> world -> systems -> loop,
+# the run_headless bounded run + loop accounting, the ordered
+# idempotent CONC-006 shutdown, the provisional config surface).
 #
 # One executable per module (tests/README.md; docs/testing.md is the
 # source of truth): laige-sim_tests links the module under test plus
 # gtest_main. The unfiltered entry runs the whole module; the `entity`,
 # `component_registry`, `archetype`, `query`, `iter_order`,
 # `ecs_guardrails`, `ecs_stress`, `system_registry`, `scheduler`,
-# `system_timing`, `game_loop`, and `presentation` entries are the
-# M1-ECS-01, M1-ECS-02, M1-ECS-03, M1-ECS-04, M1-ECS-05, M1-ECS-06,
-# M1-ECS-07, M1-SYS-01, M1-SYS-02, M1-SYS-03, M1-LOOP-01, and
-# M1-LOOP-02 Verify commands (`ctest -R entity`, `ctest -R
-# component_registry`, `ctest -R archetype`, `ctest -R query`,
-# `ctest -R iter_order`, `ctest -R ecs_guardrails`, `ctest -R
-# ecs_stress`, `ctest -R system_registry`, `ctest -R scheduler`,
-# `ctest -R system_timing`, `ctest -R game_loop`, `ctest -R
-# presentation`), selecting exactly the suites below from the shared
-# executable.
+# `system_timing`, `game_loop`, `presentation`, and `engine` entries
+# are the M1-ECS-01, M1-ECS-02, M1-ECS-03, M1-ECS-04, M1-ECS-05,
+# M1-ECS-06, M1-ECS-07, M1-SYS-01, M1-SYS-02, M1-SYS-03, M1-LOOP-01,
+# M1-LOOP-02, and M1-HEAD-01 Verify commands (`ctest -R entity`,
+# `ctest -R component_registry`, `ctest -R archetype`, `ctest -R
+# query`, `ctest -R iter_order`, `ctest -R ecs_guardrails`,
+# `ctest -R ecs_stress`, `ctest -R system_registry`, `ctest -R
+# scheduler`, `ctest -R system_timing`, `ctest -R game_loop`,
+# `ctest -R presentation`, and `ctest -R engine`), selecting exactly
+# the suites below from the shared executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            archetype_tests.cpp query_tests.cpp
@@ -37,15 +40,17 @@ set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            scheduler_tests.cpp
                            system_timing_tests.cpp
                            game_loop_tests.cpp
-                           presentation_tests.cpp)
+                           presentation_tests.cpp
+                           engine_tests.cpp)
 # M1-ECS-03: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own
 # new/delete (strong symbols in the Clang/GCC TSan runtime archives,
 # interposed by ASan), so the counter is excluded from the sanitizer
-# trees. There, the step's zero-allocation property is covered by the
-# leak-free sanitizer run of the same churn loop plus the
-# ArchetypeStats reservation-delta assertion (the same fallback
-# pattern as tests/laige-core, M0-CORE-02/05).
+# trees. There, the zero-allocation properties (the M1-ECS-03 churn
+# and the M1-HEAD-01 headless run) are covered by the leak-free
+# sanitizer run of the same loops plus the ArchetypeStats
+# reservation-delta assertion (the same fallback pattern as
+# tests/laige-core, M0-CORE-02/05).
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN)
   list(APPEND LAIGE_SIM_TEST_SOURCES logging_alloc_counter.cpp)
 endif()
@@ -178,11 +183,21 @@ add_test(NAME presentation
          COMMAND laige-sim_tests
          --gtest_filter=Presentation.*)
 
+# M1-HEAD-01: headless engine run (FR-1.6, ARCH-003, CONC-006). The
+# step's Verify scope is the double-shutdown test + the laige-run
+# smoke (`laige_run_smoke` in tools/run, every P0 OS job); this entry
+# selects exactly the Engine suites from the shared laige-sim_tests
+# executable (the machine-greppable engine-zeroalloc line lands in
+# the ctest output).
+add_test(NAME engine
+         COMMAND laige-sim_tests
+         --gtest_filter=EngineCreate.*:EngineConfigParse.*:EngineRun.*:EngineShutdown.*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2),
   # so ctest fails loudly on any TSan report.
   set_tests_properties(laige-sim_tests entity component_registry archetype
     query iter_order ecs_guardrails ecs_stress system_registry scheduler
-    system_timing game_loop presentation PROPERTIES
+    system_timing game_loop presentation engine PROPERTIES
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()
