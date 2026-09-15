@@ -156,7 +156,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 | Milestone | Steps | Done | Status |
 |---|---|---|---|
 | M0 | 22 | 22 | ✅ complete (2026-09-13, M0-EXIT-01) |
-| M1 | 25 | 11 | 🚧 in progress (M1-LOOP-01) |
+| M1 | 25 | 12 | 🚧 in progress (M1-LOOP-02) |
 | M2 | 32 | 0 | ⬜ not started |
 | M3 | 36 | 0 | ⬜ not started |
 | M4 | 12 | 0 | ⬜ not started |
@@ -165,7 +165,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 | M7 | 15 | 0 | ⬜ not started |
 | M8 | 8 | 0 | ⬜ not started |
 | M9 | 6 | 0 | ⬜ proposals only |
-| **Total** | **193** | **31** | |
+| **Total** | **193** | **32** | |
 
 ---
 

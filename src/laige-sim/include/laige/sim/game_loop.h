@@ -122,6 +122,28 @@
 // tick).
 //
 // ---------------------------------------------------------------------------
+// Per-tick presentation hook (M1-LOOP-02)
+// ---------------------------------------------------------------------------
+//
+// Options::onTick (a plain function pointer — no std::function,
+// PERF-006) fires ONCE per COMPLETED tick, after the tick's system
+// phase, as onTick(context, world, tick) with the completed tick
+// number (1-based, == currentTick() after the call). A failed tick
+// is not counted and does NOT fire the hook (the state it would
+// have observed never completed — the preamble "Failure behavior").
+// The hook is the M1-LOOP-02 PresentationSnapshot's per-tick refresh
+// driver (presentation.h: the engine wires the snapshot's onTick
+// through this callback); M1-HEAD-01 owns the wiring. nullptr
+// (the default) is the M1-LOOP-01 behavior — no hook.
+//
+// The callback runs inside frame(), on the loop's owner thread, in
+// the system phase (API-004), strictly between two ticks of the
+// frame (world mutations there are legal — no iteration is active):
+// it must be bounded and allocation-free on the success path (the
+// snapshot's onTick is the reference contract — one bounded
+// archetype scan, no allocation, no logging, PERF-002/003).
+//
+// ---------------------------------------------------------------------------
 // Failure behavior (CORE-008)
 // ---------------------------------------------------------------------------
 //
@@ -211,6 +233,11 @@
 //     degradation, FR-12.3): it is logged and counted, but the game
 //     continues without it — the fix is the tick rate, the per-tick
 //     work, or the catch-up bound (the event's {fix} field).
+//   - The onTick callback is loop-owned for the loop's lifetime:
+//     its context must outlive the loop (the non-owning-view
+//     precedent). A callback that blocks or allocates breaks the
+//     frame budget (PERF-002/003) — the snapshot's onTick is the
+//     reference contract.
 
 #pragma once
 
@@ -279,6 +306,19 @@ class GameLoop {
     // LoggerOptions::ClockFn precedent).
     using ClockFn = std::int64_t (*)();
     ClockFn nowNs{nullptr};
+    // Optional per-completed-tick callback (M1-LOOP-02; see the
+    // preamble "Per-tick presentation hook"): fires after every
+    // completed tick as onTick(context, world, tick). nullptr
+    // (default): no hook (the M1-LOOP-01 behavior). Plain function
+    // pointer — no std::function (PERF-006); the callback must be
+    // bounded and allocation-free (the snapshot's onTick is the
+    // reference contract).
+    using TickFn = void (*)(void* context, World& world,
+                             std::uint64_t tick) noexcept;
+    TickFn onTick{nullptr};
+    // The onTick callback's user context (opaque; must outlive the
+    // loop — the engine passes the PresentationSnapshot, M1-HEAD-01).
+    void* onTickContext{nullptr};
   };
 
   // Construct the loop on `world` running `schedule` (setup phase,
@@ -314,6 +354,15 @@ class GameLoop {
   // tick to complete is tick 1). O(1), no side effects.
   [[nodiscard]] std::uint64_t currentTick() const noexcept;
 
+  // The clock reading that established the start reference (0
+  // before the first frame) — the time-base origin of the due
+  // computation (the preamble "The exact due computation"). The
+  // M1-LOOP-02 PresentationSnapshot takes this as its start
+  // reference (presentation.h: the tick anchors A(T) = startNs +
+  // T × 10⁹ / rate must use the loop's own time base). O(1), no
+  // side effects.
+  [[nodiscard]] std::int64_t startReferenceNs() const noexcept;
+
   // The configured tick rate (Hz). O(1), no side effects.
   [[nodiscard]] std::uint32_t tickRateHz() const noexcept;
 
@@ -343,7 +392,10 @@ class GameLoop {
 
   // One simulation tick: the frame's beginFrame() (once per frame —
   // see the preamble "beginFrame wiring") plus one runSystems
-  // dispatch. A successful tick is counted; a failed tick is not.
+  // dispatch. A successful tick is counted and (if configured,
+  // M1-LOOP-02) fires the Options::onTick hook after the system
+  // phase; a failed tick is neither — the hook observes only
+  // completed ticks.
   [[nodiscard]] Status runOneTick() noexcept;
 
   // Non-owning views (the world and the schedule outlive the loop).

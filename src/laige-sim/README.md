@@ -73,5 +73,16 @@ the `loop/tick_dropped` overload warn, the `GameLoopStats` profiler
 feed; `include/laige/sim/game_loop.h`, `game_loop.cpp`; API contract
 in [docs/api/game_loop.md](../docs/api/game_loop.md), tests under
 [tests/laige-sim](../tests/laige-sim), CTest entry `game_loop`).
+M1-LOOP-02 landed the per-tick presentation snapshot +
+interpolation state — `Position2D` (the first built-in component,
+both SimMath backends), `PresentationSnapshot` (the per-completed-
+tick `prev`/`curr` capture, the exact-integer anchored alpha clamped
+to [0, 1] — never extrapolates — and `sample_position`, new
+entities snap to `curr`), the `GameLoop`'s `onTick` hook +
+`startReferenceNs` (the M1-HEAD-01 wiring shape), header-only (the
+class-template pattern, ADR 0002) (`include/laige/sim/presentation.h`
++ the `game_loop.h`/`game_loop.cpp` hook; API contract in
+[docs/api/presentation.md](../docs/api/presentation.md), tests under
+[tests/laige-sim](../tests/laige-sim), CTest entry `presentation`).
 The profiler, determinism/replay, headless engine, and the remaining
 M1 steps land next; physics, input, and animation in M3.

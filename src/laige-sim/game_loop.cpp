@@ -210,14 +210,25 @@ Status GameLoop::runOneTick() noexcept {
   // One tick: the frame's beginFrame() (once per frame — the preamble
   // "beginFrame wiring") plus one system-phase dispatch. The tick
   // counts only when the system phase completed (preamble "Failure
-  // behavior").
+  // behavior"); the onTick hook (M1-LOOP-02, preamble "Per-tick
+  // presentation hook") fires only for completed ticks — a failed
+  // tick's state never completed, so nothing observes it.
   world_->beginFrame();
   const Status s = world_->runSystems(*schedule_);
-  if (s.ok()) ++ticks_;
+  if (s.ok()) {
+    ++ticks_;
+    if (options_.onTick != nullptr) {
+      options_.onTick(options_.onTickContext, *world_, ticks_);
+    }
+  }
   return s;
 }
 
 std::uint64_t GameLoop::currentTick() const noexcept { return ticks_; }
+
+std::int64_t GameLoop::startReferenceNs() const noexcept {
+  return startNs_;  // 0 before the first frame established the base
+}
 
 std::uint32_t GameLoop::tickRateHz() const noexcept {
   return options_.tickRateHz;

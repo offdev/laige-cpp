@@ -38,7 +38,14 @@
 # fixed-timestep accumulator loop (GameLoop::create/frame/runOneTick
 # — the exact-ticks due computation, the bounded catch-up run loop,
 # the tick_dropped overload warn; the public types and contract live
-# in include/laige/sim/game_loop.h).
+# in include/laige/sim/game_loop.h). M1-LOOP-02 adds
+# include/laige/sim/presentation.h (header-only — a class template,
+# the M1-ECS-02 pattern): the first built-in component (Position2D,
+# one template instantiation per SimMath backend, ADR 0002) and the
+# PresentationSnapshot (per-tick prev/curr presentation state, the
+# exact-integer clamped alpha, sample_position — no new .cpp; the
+# GameLoop gains the Options::onTick per-completed-tick hook and
+# startReferenceNs() in game_loop.h/.cpp to drive it).
 set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
                      systems.cpp system_timing.cpp game_loop.cpp)
 
