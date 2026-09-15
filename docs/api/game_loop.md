@@ -65,6 +65,7 @@ sequence).
 |---|---|---|---|
 | `tickRateHz` | 20–120 Hz (`kMinTickRateHz`–`kMaxTickRateHz`) | `kDefaultTickRateHz` (60) | `loop/tick_rate_invalid` (field `tick_rate_hz`) |
 | `maxCatchUpTicks` | ≥ 1 | `kDefaultMaxCatchUpTicks` (5) | `loop/catchup_invalid` (field `max_catch_up`) |
+| `onTick` / `onTickContext` | a `noexcept` tick callback + context (see below) | `nullptr` / `nullptr` | — (no validation: the callback's contract is the caller's) |
 
 The clock source is `Options::nowNs` — a function returning
 nanoseconds on a monotonic epoch time base; `nullptr` uses the
@@ -118,6 +119,29 @@ ticks of churn against one per-frame budget (the guardrail flags the
 heavier work — the documented overload signal). Before this loop
 existed, the per-tick `beginFrame()` pattern in the scheduler docs was
 the manual form; it remains the test form (one frame per tick).
+
+## The per-tick presentation hook (M1-LOOP-02)
+
+`Options::onTick` is a `void (*)(void* context, World&,
+std::uint64_t tick) noexcept` callback fired **after every completed
+tick** — after `runSystems` for that tick succeeded, with the new
+tick number (`currentTick()` already incremented). A failed tick does
+**not** fire it (the tick is not counted and the state it would have
+observed never happened — a stale schedule's tick, for example).
+
+This is the M1 presentation-state wiring seam (M1-LOOP-02): the
+`PresentationSnapshot` (presentation.md) refreshes its `prev`/`curr`
+pair per completed tick by wrapping its `onTick` in a static thunk
+behind `onTickContext` — the headless engine (M1-HEAD-01) does exactly
+this. The callback must not allocate or block (it runs inside the
+tick's budget, PERF-002/003), and its ownership of the context is
+the caller's (the context must outlive the loop). `nullptr` (the
+default) fires nothing — the loop is unchanged.
+
+`GameLoop::startReferenceNs()` exposes the loop's clock reading at
+its first frame — the anchor base the presentation snapshot's alpha
+is computed against (presentation.md, "The alpha contract"). Read it
+after the loop's first frame.
 
 ## Failure behavior (CORE-008)
 
@@ -178,7 +202,9 @@ per-system windows (M1-SYS-03).
   computation, the cap compare, the counter bump) — no allocation, no
   lock, no I/O — negligible against the 3 ms `sim_tick_avg` budget
   (PRD §8.1; `budgets.json`) next to the `runSystems` dispatch cost,
-  which M1-SYS-03 measures.
+  which M1-SYS-03 measures. The `onTick` hook, when set, adds one
+  indirect call per completed tick (the snapshot's own cost is
+  presentation.md's — bounded, allocation-free).
 - **Cold path (overload):** one rate-limited `tick_dropped` warn with
   field construction — only while a frame exceeds the catch-up bound.
 - **Complexity:** `frame()` is O(maxCatchUpTicks × per-tick system

@@ -137,7 +137,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R game_loop` green.
   - **Size:** ~200 lines + tests
 
-- [ ] **M1-LOOP-02 · Presentation snapshot + interpolation state**
+- [x] **M1-LOOP-02 · Presentation snapshot + interpolation state**
   - **Refs:** FR-1.1 (render interpolation, 2D-aware); PRD §4 (depth is presentation-only)
   - **Depends:** M1-LOOP-01, M1-ECS-04
   - **Scope:**

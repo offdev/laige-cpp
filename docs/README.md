@@ -9,7 +9,9 @@ M1-ECS-05: the deterministic iteration contract; M1-ECS-06: the
 ECS guardrails G-R3/G-R4; M1-ECS-07: the ECS stress + memory
 accounting suite; M1-SYS-01: the system registry; M1-SYS-02: the
 system scheduler; M1-SYS-03: the per-system timing + budget
-enforcement; M1-LOOP-01: the fixed-timestep game loop core).
+enforcement; M1-LOOP-01: the fixed-timestep game loop core;
+M1-LOOP-02: the per-tick presentation snapshot + interpolation
+state).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -77,6 +79,11 @@ still to land.
   (default 60), the exact due computation, the bounded catch-up with
   the `loop/tick_dropped` overload warn (drop, never silent), and the
   `GameLoopStats` profiler feed (M1-LOOP-01; `laige-sim`).
+- [Presentation snapshot and interpolation state](api/presentation.md)
+  — `Position2D` (the first built-in component) and
+  `PresentationSnapshot`: the per-tick `prev`/`curr` capture, the
+  exact-integer anchored alpha (clamped to [0, 1], never
+  extrapolates), and `sample_position` (M1-LOOP-02; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,
@@ -169,7 +176,8 @@ still to land.
   [system_registry.md](api/system_registry.md),
   [scheduler.md](api/scheduler.md),
   [system_timing.md](api/system_timing.md),
-   [game_loop.md](api/game_loop.md).)
+  [game_loop.md](api/game_loop.md),
+  [presentation.md](api/presentation.md).)
 
 ## Related
 
