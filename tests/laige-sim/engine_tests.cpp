@@ -564,8 +564,12 @@ TEST(EngineRun, DiagAllocBisectTemp) {
   gDiagShutStep = 0;
   laige::log::Logger::setAllocProbe(&diagShutProbe);
   laige::log::Logger::instance().shutdown();
+  stage(24);  // after the first logger shutdown
+  // The second (idempotent) call: localizes whether the Windows-only
+  // allocation is per-call or one-shot (TEMPORARY round 3).
+  laige::log::Logger::instance().shutdown();
+  stage(25);  // after the second (idempotent) logger shutdown
   laige::log::Logger::setAllocProbe(nullptr);
-  stage(24);  // after the logger shutdown (the engine shutdown tail)
   EXPECT_EQ(sink->entries.size(), 0u);
   restoreLogger();
   SUCCEED();

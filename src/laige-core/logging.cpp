@@ -461,25 +461,38 @@ void Logger::shutdown() {
   probeAlloc();  // SHUT-1: entry
   std::vector<RateEntry> pending;
   probeAlloc();  // SHUT-2: after the pending vector declaration
+  // TEMPORARY round-3 discriminators (delete before merge): empty
+  // vectors of other element types, and a second vector<RateEntry>,
+  // to localize the Windows-only allocation (vector-specific?
+  // element-type-specific? first-of-kind in the process?).
+  std::vector<int> probeIntVec;
+  probeAlloc();  // SHUT-3: after the empty vector<int>
+  std::vector<std::string> probeStrVec;
+  probeAlloc();  // SHUT-4: after the empty vector<string>
+  std::vector<RateEntry> probeRateVec2;
+  probeAlloc();  // SHUT-5: after the second vector<RateEntry>
+  (void)probeIntVec;  // TEMPORARY round-3 discriminators (not used)
+  (void)probeStrVec;
+  (void)probeRateVec2;
   {
     std::lock_guard lk(stateMutex_);
-    probeAlloc();  // SHUT-3: after the lock acquire
+    probeAlloc();  // SHUT-6: after the lock acquire
     retired_.store(true, std::memory_order_relaxed);
-    probeAlloc();  // SHUT-4: after the retired store
+    probeAlloc();  // SHUT-7: after the retired store
     for (const RateEntry& e : rates_) {
       if (e.suppressed > 0) pending.push_back(e);  // copy: state is cleared
     }
-    probeAlloc();  // SHUT-5: after the rate-state drain
+    probeAlloc();  // SHUT-8: after the rate-state drain
     rates_.clear();
-    probeAlloc();  // SHUT-6: after the clear
+    probeAlloc();  // SHUT-9: after the clear
   }
-  probeAlloc();  // SHUT-7: after the lock release
+  probeAlloc();  // SHUT-10: after the lock release
   for (const RateEntry& e : pending) {
     emitRateSummary(e);
   }
-  probeAlloc();  // SHUT-8: after the pending summaries
+  probeAlloc();  // SHUT-11: after the pending summaries
   if (sink_ != nullptr) sink_->flush();
-  probeAlloc();  // SHUT-9: after the sink flush
+  probeAlloc();  // SHUT-12: after the sink flush
 }
 
 // ---------------------------------------------------------------------------
