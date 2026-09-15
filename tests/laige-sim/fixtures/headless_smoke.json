@@ -1,0 +1,5 @@
+{
+  "tick_rate_hz": 60,
+  "entity_budget": 10000,
+  "churn_per_frame_budget": 256
+}

@@ -2,6 +2,16 @@
 
 Engine tools and CI scripts, each landing with its roadmap step:
 
+- `laige-run` — the headless run binary (M1-HEAD-01, in `tools/run`):
+  `laige-run --headless CONFIG.json [--ticks N] [--replay LOG]` —
+  config → world → systems → loop, the bounded run (default 0 = the
+  server form), and the ordered idempotent shutdown. Exit codes:
+  `0` ok · `1` engine run failure · `2` usage/IO/config error; one
+  machine-greppable summary line on stdout (`laige-run headless
+  ticks=… status=…`). `--replay` is the M1-DET-02 stub (accepted,
+  warned, ignored). Full contract in
+  [docs/api/engine.md](../docs/api/engine.md); the `laige_run_smoke`
+  CTest entry (1000 ticks @ 60 Hz, every P0 OS job) is its CI form.
 - `laige-fuzz` — deterministic bounded fuzz runner (minimal form from
   M0-CORE-07, in `tools/fuzz`: the `json_parse` target, `--runs`/`--seed`,
   built with `LAIGE_BUILD_TESTS=ON`, registered as the `fuzz_json_parse`

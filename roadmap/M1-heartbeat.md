@@ -148,7 +148,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R presentation` green.
   - **Size:** ~200 lines + tests
 
-- [ ] **M1-HEAD-01 · Headless engine run**
+- [x] **M1-HEAD-01 · Headless engine run**
   - **Refs:** FR-1.6, ARCH-003, AC-6.2
   - **Depends:** M1-LOOP-02, M1-CFG-01, M0-CORE-07
   - **Scope:**

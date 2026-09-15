@@ -32,6 +32,7 @@ The canonical-commands table in [roadmap/README.md](../../roadmap/README.md)
 | Test (ASan/UBSan tree) | `ctest --test-dir build-asan --output-on-failure` |
 | TSan build | `cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DLAIGE_TSAN=ON` |
 | Test (TSan tree) | `ctest --test-dir build-tsan --output-on-failure` |
+| Headless run | `./build/bin/laige-run --headless CONFIG.json [--ticks N]` |
 | Fuzz (bounded) | `./build/bin/laige-fuzz <target> --runs=1000` |
 | Fuzz (long, nightly form) | `./build/bin/laige-fuzz <target> --runs=1000000` |
 | Benchmarks | `./build/bin/laige-bench --suite=<name>` |
@@ -42,7 +43,10 @@ The canonical-commands table in [roadmap/README.md](../../roadmap/README.md)
 Notes:
 
 - `Debug` is the canonical `CMAKE_BUILD_TYPE`; `Release` is supported.
-- The tool rows above the lint row are live targets now: `laige-fuzz`
+- The tool rows above the lint row are live targets now: `laige-run`
+  (M1-HEAD-01: `--headless CONFIG.json [--ticks N] [--replay LOG]`,
+  exit codes 0/1/2, the `laige_run_smoke` CTest entry is its CI form —
+  contract in [docs/api/engine.md](../api/engine.md)), `laige-fuzz`
   (M0-CORE-07: the `json_parse` target and deterministic bounded runs;
   M0-TEST-01 documents the CI lane semantics — bounded `--runs=1000` in
   every P0 job's `ctest`, the nightly long-run form above — and the

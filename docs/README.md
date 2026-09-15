@@ -11,7 +11,8 @@ accounting suite; M1-SYS-01: the system registry; M1-SYS-02: the
 system scheduler; M1-SYS-03: the per-system timing + budget
 enforcement; M1-LOOP-01: the fixed-timestep game loop core;
 M1-LOOP-02: the per-tick presentation snapshot + interpolation
-state).
+state; M1-HEAD-01: the headless engine run — `Engine`
+(config → world → systems → loop) and the `laige-run` binary).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -21,8 +22,9 @@ still to land.
 - [Building Laige](getting-started/building.md) — the source of truth
   for the canonical build commands, build trees, options, compiler
   policy (NFR-8.10), sanitizer builds (NFR-8.2), and the current M0
-  status. Tool commands: `laige-fuzz`, `laige-bench`, `laige-detcheck`,
-  the `laige-api` manifest target, and the include-graph lint.
+  status. Tool commands: `laige-run`, `laige-fuzz`, `laige-bench`,
+  `laige-detcheck`, the `laige-api` manifest target, and the
+  include-graph lint.
 
 ## Concepts
 
@@ -84,6 +86,11 @@ still to land.
   `PresentationSnapshot`: the per-tick `prev`/`curr` capture, the
   exact-integer anchored alpha (clamped to [0, 1], never
   extrapolates), and `sample_position` (M1-LOOP-02; `laige-sim`).
+ - [Headless engine run](api/engine.md) — `laige::Engine`
+  (config → world → systems → loop): `run_headless(maxTicks)` the
+  bounded + server run forms, the ordered idempotent CONC-006
+  shutdown, the provisional config surface, and the `laige-run`
+  CLI (M1-HEAD-01; `laige-sim` + `tools/run`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,
@@ -177,7 +184,8 @@ still to land.
   [scheduler.md](api/scheduler.md),
   [system_timing.md](api/system_timing.md),
   [game_loop.md](api/game_loop.md),
-  [presentation.md](api/presentation.md).)
+  [presentation.md](api/presentation.md),
+  [engine.md](api/engine.md).)
 
 ## Related
 

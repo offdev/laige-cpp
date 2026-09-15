@@ -230,4 +230,5 @@ if(LAIGE_BUILD_TESTS)
   add_subdirectory(tools/bench)    # M0-CORE-08: laige-bench
   add_subdirectory(tools/api)      # M0-TOOL-01: laige-api-scanner
   add_subdirectory(tools/detcheck) # M0-TOOL-02: laige-detcheck
+  add_subdirectory(tools/run)      # M1-HEAD-01: laige-run (+ smoke test)
 endif()

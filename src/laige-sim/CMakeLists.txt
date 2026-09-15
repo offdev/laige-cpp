@@ -46,8 +46,16 @@
 # exact-integer clamped alpha, sample_position — no new .cpp; the
 # GameLoop gains the Options::onTick per-completed-tick hook and
 # startReferenceNs() in game_loop.h/.cpp to drive it).
+# startReferenceNs() in game_loop.h/.cpp to drive it). M1-HEAD-01
+# adds engine.cpp: the headless engine run (Engine::create/
+# run_headless/shutdown — config -> world -> systems -> loop, the
+# presentation onTick wiring this step owns, and the ordered CONC-006
+# shutdown; the public types and contract live in
+# include/laige/sim/engine.h) plus the provisional JSON config surface
+# (parseEngineConfig — M1-CFG-01 owns the full declarative schema).
 set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
-                     systems.cpp system_timing.cpp game_loop.cpp)
+                     systems.cpp system_timing.cpp game_loop.cpp
+                     engine.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})
