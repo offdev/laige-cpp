@@ -37,6 +37,26 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
   string(REGEX REPLACE "([/-])EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 endif()
 
+# MSVC: force the MS STL off its checked-iterator debug mode in every
+# target of this build (engine, tests, vendored dependencies). CMake's
+# default MSVC Debug flags define _DEBUG, which makes the STL default to
+# _ITERATOR_DEBUG_LEVEL=2: in that mode every STL container instance
+# gets a heap-allocated iterator-proxy object in its constructor, so the
+# engine's zero-allocation invariants (the M1-ECS-03 churn test, the
+# M1-HEAD-01 headless run test) would measure a windows-msvc-only
+# baseline that the other P0 platforms never enable — GCC/Clang/AppleClang
+# compile without checked iterators by default. The define is build-wide
+# (not per-target) because the MS STL enforces one _ITERATOR_DEBUG_LEVEL
+# per linked binary: mixing engine targets compiled with 0 against
+# GTest objects compiled with 2 fails the link (LNK2038). Disabling it
+# build-wide makes the Windows Debug build measure the same allocation
+# behavior as the rest of the P0 matrix. The proxies are an STL debug
+# aid, not engine behavior — they are allocated in container setup,
+# never on hot paths.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+  add_compile_definitions(_ITERATOR_DEBUG_LEVEL=0)
+endif()
+
 # Both the static (default) and shared (LAIGE_BUILD_SHARED) library variants
 # are position-independent so they link identically into games and tools
 # (NFR-8.9).
@@ -141,10 +161,9 @@ laige_deps_verify_lock()
 # yvals.h _TRY_BEGIN/_CATCH) on the _HAS_EXCEPTIONS macro, not on the /EH
 # flags — with /EHs- alone it would still emit catch blocks that the
 # compiler cannot unwind (cl C4530, fatal under /WX).
-# _ITERATOR_DEBUG_LEVEL=0 keeps the Windows Debug build's STL container
-# allocation behavior aligned with the other P0 platforms (their
-# checked-iterator proxies would break the zero-allocation invariants;
-# see the MSVC branch below).
+# _ITERATOR_DEBUG_LEVEL=0 (see the MSVC block above) keeps the Windows
+# Debug build's STL container allocation behavior aligned with the other
+# P0 platforms.
 #
 # The warning/language flags are PRIVATE: they govern this target's own
 # translation units and must not leak into consumers (CPP-010) — a game
@@ -165,20 +184,6 @@ function(laige_apply_engine_policy target)
     # its no-exception code paths (same define GTest's own no-exception
     # targets use; deps/googletest/cmake/internal_utils.cmake).
     target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
-    # _ITERATOR_DEBUG_LEVEL=0: the MS STL defaults to its checked-iterator
-    # debug mode (_ITERATOR_DEBUG_LEVEL=2) whenever _DEBUG is defined —
-    # which CMake's default MSVC Debug flags define (/D_DEBUG). In that
-    # mode every STL container instance gets a heap-allocated
-    # iterator-proxy object in its constructor, so the engine's
-    # zero-allocation invariants (the M1-ECS-03 churn test, the
-    # M1-HEAD-01 headless run test) would measure a platform-dependent
-    # baseline on windows-msvc that the other P0 platforms never enable
-    # (GCC/Clang/AppleClang compile without checked iterators by
-    # default). Disabling it makes the Windows Debug build measure the
-    # same allocation behavior as the rest of the P0 matrix. The
-    # proxies are an STL debug aid, not engine behavior — they are
-    # allocated in container setup, never on hot paths.
-    target_compile_definitions(${target} PRIVATE _ITERATOR_DEBUG_LEVEL=0)
   else()
     message(FATAL_ERROR
       "laige: no engine compiler policy for '${CMAKE_CXX_COMPILER_ID}'; "
