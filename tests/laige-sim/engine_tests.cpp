@@ -402,13 +402,21 @@ TEST(EngineRun, SecondRunFailsWithoutLogging) {
   laige::Engine engine =
       makeEngine(laige::EngineConfig{60, 64, 256});
   ASSERT_TRUE(engine.run_headless(1, 1).ok());
+  // The first run is wall-clock paced: on a loaded runner a frame can
+  // run longer than one tick of simulation time, and the loop then
+  // warns (loop/tick_dropped) — the documented M1-LOOP-01 overload
+  // behavior (the BoundedRun tests above deliberately do not assert
+  // the drop count for this reason). Those entries belong to the
+  // first run's accounting, not the stopped-state failure: the
+  // assertion below is scoped to the SECOND run.
+  const std::size_t entriesAfterFirstRun = sink->entries.size();
   const laige::Status second = engine.run_headless(1, 1);
   ASSERT_TRUE(second.isError());
   EXPECT_EQ(second.error(), laige::ErrorCode::InvalidArgument);
   // The stopped-state failure is a pure failure: no log (the
   // GameLoop's moved-out precedent); the Info lifecycle events of
-  // the first run are below the capture sink's Warn floor anyway.
-  EXPECT_EQ(sink->entries.size(), 0u);
+  // both runs are below the capture sink's Warn floor anyway.
+  EXPECT_EQ(sink->entries.size(), entriesAfterFirstRun);
   restoreLogger();
 }
 
