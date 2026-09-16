@@ -15,9 +15,18 @@
 #
 # The script exits non-zero (failing the CTest test) on any mismatch
 # and prints the full compiler output for diagnosis.
+#
+# _cmd is a quoted CMake list — one element per process argument.
+# Quoting is load-bearing: configure_file substitutes plain text, and
+# unquoted text in an execute_process call is re-split on whitespace,
+# which would break any argument containing spaces (the MSVC compiler
+# path "C:/Program Files/Microsoft Visual Studio/.../cl.exe" on
+# Windows). The list expansion below passes each element as exactly
+# one argument regardless of its content.
 
+set(_cmd @CMD_TEXT@)
 execute_process(
-  COMMAND @CXX@ @CXXFLAGS@ -c "@SOURCE@" -o "@OBJ@"
+  COMMAND ${_cmd}
   RESULT_VARIABLE _rc
   OUTPUT_VARIABLE _out
   ERROR_VARIABLE _err
