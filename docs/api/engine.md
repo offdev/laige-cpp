@@ -216,7 +216,10 @@ Cross-build/platform determinism is **M1-DET-04** (the detcheck
 matrix); replay **recording** landed with **M1-DET-02**
 ([api/replay.md](replay.md) — `Engine::startReplayRecording`, the
 versioned log format, and `laige-run --replay`); replay **execution**
-(the `laige-replay` runner and `world.state_hash`) is **M1-DET-03**.
+landed with **M1-DET-03** — `World::stateHash` (the deterministic
+state hash, [api/entity.md](entity.md)) and `runReplay` / the
+`laige-replay` runner ([api/replay.md](replay.md), "The execution
+half").
 
 ## Replay recording (M1-DET-02)
 

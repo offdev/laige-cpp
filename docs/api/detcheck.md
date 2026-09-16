@@ -11,9 +11,12 @@ in its header comment, which this page mirrors); CTest suite:
 (e.g. Debug+ASan vs Release, or two compiler builds) and asserts that the
 per-tick state hashes are identical — bit-identity of the deterministic
 state across configurations (NFR-8.3, FR-1.4). The engine state-hash API
-arrives with **M1-DET-03** (`world.state_hash`); this tool therefore works
-against the **hash-file output contract** defined below and compares two
-such streams.
+landed with **M1-DET-03** (`World::stateHash`,
+[api/entity.md](entity.md)); this tool works against the **hash-file
+output contract** defined below and compares two such streams. The
+current scenario fixture still prints its own ad-hoc hash stream; the
+scenario wiring that switches it to the `World::stateHash` stream lands
+with M1-SAMPLE-01 (the tool's line-by-line comparison is unchanged).
 
 ## Scenario contract
 
@@ -156,9 +159,10 @@ body index and a nudge in [-4, 3] applied to x. Per-tick hash: FNV-1a 64
 and compiler by the language standard; no float anywhere in the workload.
 **Hash scope (M0):** tick counter + seed + body words. The Prng position
 is a pure function of (seed, nudge history) in this workload; the
-definitive scope — including PRNG state and the exact hash function — is
-defined by M1-DET-03's `world.state_hash`, which replaces the ad-hoc FNV
-computation of scenarios (the tool's line-by-line comparison is unchanged).
+definitive scope — including PRNG state and the exact hash function —
+is M1-DET-03's `World::stateHash`
+([api/entity.md](entity.md)), which the scenario wiring switches to
+with M1-SAMPLE-01 (the tool's line-by-line comparison is unchanged).
 
 ## Performance and bounds
 

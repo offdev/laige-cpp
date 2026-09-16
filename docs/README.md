@@ -19,7 +19,10 @@ PRNG substreams, and the `seed`/`determinism` config keys;
 M1-DET-02: replay recording — the versioned replay log format
 (replay identity per ADR 0002), the `ReplayRecorder` (atomic
 temp+rename, size-bounded), `Engine::startReplayRecording`, and
-`laige-run --replay`).
+`laige-run --replay`; M1-DET-03: replay execution —
+`World::stateHash` (the deterministic state hash), `runReplay`
+(the identity-checked re-run and its per-tick hash stream), and the
+`laige-replay` runner).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -29,7 +32,7 @@ still to land.
 - [Building Laige](getting-started/building.md) — the source of truth
   for the canonical build commands, build trees, options, compiler
   policy (NFR-8.10), sanitizer builds (NFR-8.2), and the current M0
-  status. Tool commands: `laige-run`, `laige-fuzz`, `laige-bench`,
+  status. Tool commands: `laige-run`, `laige-replay`, `laige-fuzz`, `laige-bench`,
   `laige-detcheck`, the `laige-api` manifest target, and the
   include-graph lint.
 
@@ -104,12 +107,14 @@ still to land.
   `detail::IsDeterminismSafe<T>`, and
   `LAIGE_DETERMINISM_SAFE(Type, MemberTypes...)` (M1-DET-01;
   `laige-sim`).
-- [Replay recording](api/replay.md) — the versioned replay log
-  format (replay identity: seed, tick rate, component schema hash,
-  math backend id, config hash — ADR 0002), the `ReplayRecorder`
-  (atomic temp+rename, size-bounded), the `parseReplay`/`loadReplay`
-  readers, the identity hashes, and the engine/CLI wiring
-  (M1-DET-02; `laige-sim`).
+- [Replay recording and execution](api/replay.md) — the versioned
+  replay log format (replay identity: seed, tick rate, component
+  schema hash, math backend id, config hash — ADR 0002), the
+  `ReplayRecorder` (atomic temp+rename, size-bounded), the
+  `parseReplay`/`loadReplay` readers, the identity hashes, the
+  engine/CLI wiring (M1-DET-02), and the execution half:
+  `World::stateHash`, `replayIdentityDiff`/`runReplay`, and the
+  `laige-replay` runner (M1-DET-03; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,
