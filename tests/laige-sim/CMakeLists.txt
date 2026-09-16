@@ -1,5 +1,5 @@
 # laige-sim tests (M1-ECS-01/02/03/04/05/06/07 + M1-SYS-01/02/03
-# + M1-LOOP-01/02 + M1-HEAD-01):
+# + M1-LOOP-01/02 + M1-HEAD-01 + M1-DET-01/02):
 # entity handle + World entity storage, component type registry,
 # archetype SoA storage, query API + iteration legality,
 # deterministic iteration order, the ECS guardrails (G-R3/G-R4), the
@@ -14,24 +14,29 @@
 # prev/curr refresh, the anchored clamped alpha, sample_position),
 # and the headless engine run (config -> world -> systems -> loop,
 # the run_headless bounded run + loop accounting, the ordered
-# idempotent CONC-006 shutdown, the provisional config surface).
+# idempotent CONC-006 shutdown, the provisional config surface), and
+# the replay recording (M1-DET-02: the versioned log format's
+# round-trip + malformed-input behavior, the recorder's atomic
+# temp+rename + size limit, the replay-identity hashes, and the
+# engine's per-tick empty-frame recording + failure stop).
 #
 # One executable per module (tests/README.md; docs/testing.md is the
 # source of truth): laige-sim_tests links the module under test plus
 # gtest_main. The unfiltered entry runs the whole module; the `entity`,
 # `component_registry`, `archetype`, `query`, `iter_order`,
 # `ecs_guardrails`, `ecs_stress`, `system_registry`, `scheduler`,
-# `system_timing`, `game_loop`, `presentation`, `engine`, and
-# `determinism_mode` entries are the M1-ECS-01, M1-ECS-02, M1-ECS-03,
-# M1-ECS-04, M1-ECS-05, M1-ECS-06, M1-ECS-07, M1-SYS-01, M1-SYS-02,
-# M1-SYS-03, M1-LOOP-01, M1-LOOP-02, M1-HEAD-01, and M1-DET-01 Verify
-# commands (`ctest -R entity`, `ctest -R component_registry`,
-# `ctest -R archetype`, `ctest -R query`, `ctest -R iter_order`,
-# `ctest -R ecs_guardrails`, `ctest -R ecs_stress`, `ctest -R
-# system_registry`, `ctest -R scheduler`, `ctest -R system_timing`,
-# `ctest -R game_loop`, `ctest -R presentation`, `ctest -R engine`,
-# and `ctest -R determinism_mode`), selecting exactly the suites
-# below from the shared executable.
+# `system_timing`, `game_loop`, `presentation`, `engine`,
+# `determinism_mode`, and `replay_record` entries are the M1-ECS-01,
+# M1-ECS-02, M1-ECS-03, M1-ECS-04, M1-ECS-05, M1-ECS-06, M1-ECS-07,
+# M1-SYS-01, M1-SYS-02, M1-SYS-03, M1-LOOP-01, M1-LOOP-02, M1-HEAD-01,
+# M1-DET-01, and M1-DET-02 Verify commands (`ctest -R entity`,
+# `ctest -R component_registry`, `ctest -R archetype`, `ctest -R
+# query`, `ctest -R iter_order`, `ctest -R ecs_guardrails`,
+# `ctest -R ecs_stress`, `ctest -R system_registry`, `ctest -R
+# scheduler`, `ctest -R system_timing`, `ctest -R game_loop`,
+# `ctest -R presentation`, `ctest -R engine`, `ctest -R
+# determinism_mode`, and `ctest -R replay_record`), selecting exactly
+# the suites below from the shared executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            archetype_tests.cpp query_tests.cpp
@@ -43,7 +48,8 @@ set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            game_loop_tests.cpp
                            presentation_tests.cpp
                            engine_tests.cpp
-                           determinism_tests.cpp)
+                           determinism_tests.cpp
+                           replay_record_tests.cpp)
 # M1-ECS-03: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own
 # new/delete (strong symbols in the Clang/GCC TSan runtime archives,
@@ -205,6 +211,17 @@ add_test(NAME determinism_mode
          COMMAND laige-sim_tests
          --gtest_filter=DeterminismMode.*:DeterminismEngine.*:DeterminismConfigParse.*)
 
+# M1-DET-02: replay recording (FR-1.4, PRD Appendix A, ARCH-007,
+# SCALE-005). The step's Verify command is `ctest -R replay_record`;
+# this entry selects exactly the Replay* suites from the shared
+# laige-sim_tests executable (the log format's round-trip +
+# malformed-input table, the recorder's atomic write + size limit,
+# the identity hashes, and the engine's per-tick empty-frame
+# recording + mid-run failure stop).
+add_test(NAME replay_record
+         COMMAND laige-sim_tests
+         --gtest_filter=Replay*)
+
 # M1-DET-01: the G-R8 trait compile-checks (the compile-time half of
 # the determinism guarantee). Each fixture is compiled (not linked,
 # not run) with the engine policy flags; the positive fixture must
@@ -267,6 +284,7 @@ if(LAIGE_TSAN)
   # so ctest fails loudly on any TSan report.
   set_tests_properties(laige-sim_tests entity component_registry archetype
     query iter_order ecs_guardrails ecs_stress system_registry scheduler
-    system_timing game_loop presentation engine determinism_mode PROPERTIES
+    system_timing game_loop presentation engine determinism_mode
+    replay_record PROPERTIES
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

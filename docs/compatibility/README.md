@@ -25,15 +25,17 @@ Platforms, compilers, formats, and migration guides (AGENTS §13).
 
 ## Formats
 
-No persistent, networked, or replay data formats exist yet (M0 is
-foundations only; they arrive with M1 replay and M6/M7 networking). The
-machine-readable files that do exist, each with its schema documented:
+The first persistent engine format has landed with M1-DET-02 (the
+version 1 replay log); networked formats arrive with M6/M7
+networking. The machine-readable files that exist, each with its
+schema documented:
 
 | File | Schema | Document |
 |---|---|---|
 | `budgets.json` | version 1, strict validation (ARCH-007) | [api/budget_harness.md](../api/budget_harness.md) ("budgets.json schema") |
 | `laige-api.json` | manifest version 1, deterministic (byte-identical regeneration is the CI drift check) | the `tools/api/laige-api.cpp` header (M0-TOOL-01) |
 | `deps.lock` | one entry per vendored dependency, integrity-checked at configure time | [ADR 0004](../decisions/0004-google-test-vendoring.md) |
+| replay logs (`*.log`, written by the `ReplayRecorder`) | version 1 (magic `LGRP`, `formatVersion` u16), little-endian, strict validation: unsupported version / truncation / hash mismatch → `MalformedInput` (ARCH-007, SCALE-005) | [api/replay.md](../api/replay.md) ("The log format") |
 
 When a persistent format lands it MUST ship versioned, with a reader that
 rejects or migrates unsupported data explicitly (ARCH-007) and a format

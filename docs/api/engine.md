@@ -213,8 +213,44 @@ two consecutive runs; seed divergence). The full scope statement —
 what is deterministic, the per-backend scopes, what is not yet — is
 [concepts/determinism.md](../concepts/determinism.md).
 Cross-build/platform determinism is **M1-DET-04** (the detcheck
-matrix); replay execution and state hashing of full input streams is
-**M1-DET-02** (the `--replay` flag is its stub today).
+matrix); replay **recording** landed with **M1-DET-02**
+([api/replay.md](replay.md) — `Engine::startReplayRecording`, the
+versioned log format, and `laige-run --replay`); replay **execution**
+(the `laige-replay` runner and `world.state_hash`) is **M1-DET-03**.
+
+## Replay recording (M1-DET-02)
+
+The engine records replays **opt-in** (see
+[api/replay.md](replay.md) for the full format and recorder contract):
+
+```cpp
+Status Engine::startReplayRecording(std::string_view path,
+                                    std::uint64_t maxBytes) noexcept;
+bool   Engine::replayRecordingActive() const noexcept;
+std::uint64_t Engine::replayBytesWritten() const noexcept;
+```
+
+- **When** — once, **after all component/system registration, before
+  `run_headless`**: the replay identity (seed, tick rate, component
+  schema hash, math backend id, config hash — ADR 0002) is captured
+  from the live world + config at call time.
+- **What** — one zero-length frame per **completed** tick (M1: no
+  input system yet; the frame bytes are the future input blob,
+  M3-INPUT-03), written to `path + ".tmp"` and published at `path`
+  only on a successful bounded run (atomic temp+rename).
+- **Failures** — a recording failure mid-run **stops the run**:
+  `run_headless` returns the recorder's `Status` (no partial log at
+  the final path); the ordered shutdown still runs. A cap below
+  header+trailer (56) or a frame over 1 MiB is an `InvalidArgument` at
+  the call/write; a total-size breach is `BudgetExhausted`.
+- **Debug builds only** — `NDEBUG` makes the call an `InvalidArgument`
+  with a `replay/record_disabled` warn.
+- **Cost** — disabled: one null check per tick; enabled: one bounded
+  stdio write per completed tick (the explicit, opt-in cost —
+  PERF-002/003).
+- **Structured events** (subsystem `replay`): `record_started`,
+  `record_finished`, `record_failed`, `record_aborted`,
+  `record_already_started`, `record_start_failed`, `record_disabled`.
 
 ## `laige-run` (the CLI)
 
@@ -226,9 +262,13 @@ laige-run --headless CONFIG.json [--ticks N] [--replay LOG]
   1 MiB max; over-bound → `MalformedInput`; read error → `IoError`).
 - `--ticks N` — the bounded run target (decimal digits only;
   default 0 = the server form).
-- `--replay LOG` — **stubbed** for M1-DET-02: accepted, ignored, and
-  announced with one `replay/replay_deferred` warn (the flag is
-  reserved so game-tool scripts can be written now).
+- `--replay LOG` — **records the run** (M1-DET-02; it was the
+  M1-HEAD-01 stub): opt-in, **debug builds only** (release builds
+  reject it with `InvalidArgument` + a `replay/record_disabled`
+  warn), default size cap 128 MiB, atomic publish at `LOG` on a
+  clean run. A start or mid-run recording failure exits `2` (start)
+  or `1` (mid-run — the `status=` line carries the error name) with
+  no partial log at `LOG`.
 - `--help` / `-h` — usage, exit 0.
 
 **Exit codes:** `0` = the run completed; `1` = the engine run failed
@@ -285,6 +325,12 @@ double-shutdown idempotency the step verifies — and exits.
 - **The config is validated at `create`, not at run** — a
   hand-built `EngineConfig` bypassing the JSON path is still
   validated (same codes), so there is no unvalidated path.
+- **Start replay recording after all registration, before the
+  run, and only in debug builds** — the identity is captured at call
+  time (a later registration makes the recorded schema hash stale),
+  a second start fails `InvalidArgument`, and `NDEBUG` builds reject
+  the call by contract (see the Replay recording section above and
+  [api/replay.md](replay.md)).
 
 ## Testing and CI
 
@@ -298,6 +344,10 @@ double-shutdown idempotency the step verifies — and exits.
   10 000 slots): must exit 0 and print `status=ok` on every P0 OS
   job; TIMEOUT 300 s (≈16.7 s nominal); the TSan job sets
   `TSAN_OPTIONS=halt_on_error=1`.
+- `ctest -R replay_record` — the M1-DET-02 replay suite (the format
+  round trip, the malformed-input table, the recorder contract, the
+  identity hashes, the engine's per-tick recording + failure stop);
+  `ctest -R fuzz_replay_parse` covers the parser's fuzz surface.
 - The include-graph lint (`tools/laige-include-lint`) guarantees the
   headless path carries no GPU/window symbols (ARCH-003): `laige-run`
   links only `laige-sim` → `laige-core`.

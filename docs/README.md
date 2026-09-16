@@ -15,7 +15,11 @@ state; M1-HEAD-01: the headless engine run — `Engine`
 (config → world → systems → loop) and the `laige-run` binary;
 M1-DET-01: deterministic mode — the SimMath-only sim guarantee
 (the G-R8 compile-time trait + the CI source scan), the per-system
-PRNG substreams, and the `seed`/`determinism` config keys).
+PRNG substreams, and the `seed`/`determinism` config keys;
+M1-DET-02: replay recording — the versioned replay log format
+(replay identity per ADR 0002), the `ReplayRecorder` (atomic
+temp+rename, size-bounded), `Engine::startReplayRecording`, and
+`laige-run --replay`).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -100,6 +104,12 @@ still to land.
   `detail::IsDeterminismSafe<T>`, and
   `LAIGE_DETERMINISM_SAFE(Type, MemberTypes...)` (M1-DET-01;
   `laige-sim`).
+- [Replay recording](api/replay.md) — the versioned replay log
+  format (replay identity: seed, tick rate, component schema hash,
+  math backend id, config hash — ADR 0002), the `ReplayRecorder`
+  (atomic temp+rename, size-bounded), the `parseReplay`/`loadReplay`
+  readers, the identity hashes, and the engine/CLI wiring
+  (M1-DET-02; `laige-sim`).
 - [Result / Status / error codes](api/errors.md) — `laige::Result<T,E>`,
   `laige::Status`, the stable `ErrorCode` registry (M0-CORE-01).
 - [Structured logging](api/logging.md) — the `laige::log` facade, sinks,
@@ -156,8 +166,9 @@ still to land.
 
 - [Compatibility](compatibility/README.md) — P0 platforms and
   compilers (PRD §6; the CI matrix), the current machine-readable
-  formats (`budgets.json`, `laige-api.json`, `deps.lock`), and the
-  migration-guide status (none yet — pre-1.0, no breaking changes).
+  formats (`budgets.json`, `laige-api.json`, `deps.lock`, and the
+  version 1 replay log format, M1-DET-02), and the migration-guide
+  status (none yet — pre-1.0, no breaking changes).
 
 ## Testing
 
@@ -179,8 +190,9 @@ still to land.
   foundations land in M1, render observability in M2).
 - `benchmarks/baselines/` — no measured baselines yet; the first lands
   with M0-EXIT-01.
-- `compatibility/` — no persistent data formats or migration guides yet
-  (they land with M1 replay and M6/M7 networking).
+- `compatibility/` — no **migration guides** yet (they land with the
+  first breaking public-API change); the version 1 replay log format
+  has landed with M1-DET-02 (see [compatibility/README.md](compatibility/README.md)).
 - Per-module API docs for the remaining M1+ modules (`laige-render`,
   `laige-assets`, `laige-net`, `laige-server`, `laige-script`,
   `laige-editor`) — they land with their modules. (`laige-sim` has
@@ -196,7 +208,8 @@ still to land.
   [game_loop.md](api/game_loop.md),
   [presentation.md](api/presentation.md),
   [engine.md](api/engine.md),
-  [determinism.md](api/determinism.md).)
+  [determinism.md](api/determinism.md),
+  [replay.md](api/replay.md).)
 
 ## Related
 
