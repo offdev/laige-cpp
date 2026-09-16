@@ -23,6 +23,13 @@
 # path "C:/Program Files/Microsoft Visual Studio/.../cl.exe" on
 # Windows). The list expansion below passes each element as exactly
 # one argument regardless of its content.
+#
+# MSVC note: cl launched this way runs outside the VS generator's
+# toolchain setup, so the surrounding environment MUST already carry
+# the MSVC INCLUDE/LIB/PATH (or cl fails with C1083 on <cstdint> etc.).
+# The CI Windows Test step loads the VS development environment before
+# ctest (vswhere + LaunchVsDevEnv.ps1 — see .github/workflows/ci.yml);
+# a local Windows run needs the same (Developer PowerShell).
 
 set(_cmd @CMD_TEXT@)
 execute_process(

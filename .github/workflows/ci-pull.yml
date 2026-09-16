@@ -198,7 +198,19 @@ jobs:
       - name: Build
         run: cmake --build build --config Debug -j
       - name: Test (unit)
-        run: ctest --test-dir build -C Debug --output-on-failure
+        # The trait_compile_* fixtures invoke cl.exe DIRECTLY from a
+        # generated cmake -P script (execute_process), outside the VS
+        # generator's toolchain setup, so — unlike every other test in
+        # this job — they need the MSVC environment (INCLUDE/LIB/PATH)
+        # to find the CRT/STL headers; the plain runner shell lacks it
+        # and cl fails with C1083 on <cstdint> etc. LaunchVsDevEnv.ps1
+        # (VS 2022, located through vswhere) sets that environment in
+        # the current PowerShell process; ctest, cmake -P, and cl all
+        # inherit it. Everything else in this step is unchanged.
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          & (Join-Path $vs "Common7\Tools\LaunchVsDevEnv.ps1") -Arch amd64
+          ctest --test-dir build -C Debug --output-on-failure
 
   macos-arm64:
     name: macOS arm64 (AppleClang)
