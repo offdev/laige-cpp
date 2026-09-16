@@ -27,9 +27,10 @@
 # MSVC note: cl launched this way runs outside the VS generator's
 # toolchain setup, so the surrounding environment MUST already carry
 # the MSVC INCLUDE/LIB/PATH (or cl fails with C1083 on <cstdint> etc.).
-# The CI Windows Test step loads the VS development environment before
-# ctest (vswhere + LaunchVsDevEnv.ps1 — see .github/workflows/ci.yml);
-# a local Windows run needs the same (Developer PowerShell).
+# The CI Windows Test step imports the VS development environment into
+# the step before ctest (vswhere + VsDevCmd.bat — see
+# .github/workflows/ci.yml); a local Windows run needs the same
+# (e.g. a VS Developer PowerShell).
 
 set(_cmd @CMD_TEXT@)
 execute_process(

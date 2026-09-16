@@ -203,13 +203,24 @@ jobs:
         # generator's toolchain setup, so — unlike every other test in
         # this job — they need the MSVC environment (INCLUDE/LIB/PATH)
         # to find the CRT/STL headers; the plain runner shell lacks it
-        # and cl fails with C1083 on <cstdint> etc. LaunchVsDevEnv.ps1
-        # (VS 2022, located through vswhere) sets that environment in
-        # the current PowerShell process; ctest, cmake -P, and cl all
+        # and cl fails with C1083 on <cstdint> etc. This step imports
+        # the VS development environment into the current PowerShell
+        # process: vswhere locates the installation, VsDevCmd.bat (the
+        # canonical vcvars, present in every VS 2017+ install under
+        # Common7\Tools — called by relative name from that directory,
+        # so no path quoting is involved) sets it, and its `set` dump
+        # is imported variable by variable. ctest, cmake -P, and cl all
         # inherit it. Everything else in this step is unchanged.
         run: |
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
-          & (Join-Path $vs "Common7\Tools\LaunchVsDevEnv.ps1") -Arch amd64
+          Push-Location (Join-Path $vs "Common7\Tools")
+          $envDump = cmd /c "call VsDevCmd.bat -arch=amd64 -host_arch=amd64 >nul && set"
+          Pop-Location
+          foreach ($line in $envDump) {
+            if ($line -match '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+              Set-Item -Path "env:$($matches[1])" -Value $matches[2]
+            }
+          }
           ctest --test-dir build -C Debug --output-on-failure
 
   macos-arm64:
