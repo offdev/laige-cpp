@@ -86,7 +86,13 @@
 # would build every configuration from the canonical `cmake --build build
 # -j`. The Windows job therefore pins the canonical Debug configuration
 # explicitly on the build and test steps (--config Debug / -C Debug); the
-# single-config platforms run the canonical commands verbatim.
+# single-config platforms run the canonical commands verbatim. The
+# Windows Test step additionally imports the VS 2022 development
+# environment (vswhere + VsDevCmd.bat, same step, before ctest) because
+# the trait_compile_* fixtures invoke cl.exe directly from a generated
+# cmake -P script — outside the VS generator's toolchain setup — and
+# need the MSVC environment (INCLUDE/LIB/PATH) to find the CRT/STL
+# headers.
 #
 # AC-6.1 (same source tree, same feature set, no per-OS feature flags): no
 # build job passes feature flags; every build job builds the identical
@@ -221,7 +227,30 @@ jobs:
       - name: Build
         run: cmake --build build --config Debug -j
       - name: Test (unit)
-        run: ctest --test-dir build -C Debug --output-on-failure
+        # The trait_compile_* fixtures invoke cl.exe DIRECTLY from a
+        # generated cmake -P script (execute_process), outside the VS
+        # generator's toolchain setup, so — unlike every other test in
+        # this job — they need the MSVC environment (INCLUDE/LIB/PATH)
+        # to find the CRT/STL headers; the plain runner shell lacks it
+        # and cl fails with C1083 on <cstdint> etc. This step imports
+        # the VS development environment into the current PowerShell
+        # process: vswhere locates the installation, VsDevCmd.bat (the
+        # canonical vcvars, present in every VS 2017+ install under
+        # Common7\Tools — called by relative name from that directory,
+        # so no path quoting is involved) sets it, and its `set` dump
+        # is imported variable by variable. ctest, cmake -P, and cl all
+        # inherit it. Everything else in this step is unchanged.
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          Push-Location (Join-Path $vs "Common7\Tools")
+          $envDump = cmd /c "call VsDevCmd.bat -arch=amd64 -host_arch=amd64 >nul && set"
+          Pop-Location
+          foreach ($line in $envDump) {
+            if ($line -match '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+              Set-Item -Path "env:$($matches[1])" -Value $matches[2]
+            }
+          }
+          ctest --test-dir build -C Debug --output-on-failure
 
   macos-arm64:
     name: macOS arm64 (AppleClang)

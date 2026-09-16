@@ -83,6 +83,15 @@ Notes:
   `TSAN_OPTIONS=halt_on_error=1` (wired in `tests/<module>/CMakeLists.txt`
   when `LAIGE_TSAN=ON`), so a data race makes `ctest` fail with a non-zero
   exit — no extra environment setup needed.
+- G-R8 trait compile checks (`trait_compile_*`, `tests/laige-sim`): four
+  CTest fixtures that compile (not link, not run) one translation unit
+  each with the engine policy flags and assert both the exit code and —
+  for the negative fixtures — the actionable G-R8 message in the compiler
+  output. On Windows they invoke `cl.exe` directly from a generated
+  `cmake -P` script, outside the VS generator's toolchain setup, so run
+  them from a VS Developer shell (or any shell with the MSVC environment
+  loaded: `INCLUDE`/`LIB`/`PATH` set); CI's Windows Test step imports it
+  via `VsDevCmd.bat` (see `.github/workflows/ci.yml`).
 
 ## Build trees and artifacts
 

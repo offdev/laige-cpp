@@ -215,23 +215,36 @@ add_test(NAME determinism_mode
 # expect-compile-result.cmake.in for the rationale.
 function(laige_add_compile_check name source expect_ok fragment)
   if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    set(_flags "-std=c++20 -Wall -Werror -fno-exceptions -fno-rtti"
-               " -ffp-contract=off -fno-associative-math")
-    set(_includes "-I${CMAKE_SOURCE_DIR}/src/laige-sim/include"
-                  "-I${CMAKE_SOURCE_DIR}/src/laige-core/include")
+    set(_flags -std=c++20 -Wall -Werror -fno-exceptions -fno-rtti
+               -ffp-contract=off -fno-associative-math)
   elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-    set(_flags "/std:c++20 /W4 /WX /EHs- /EHc- /GR-"
-               " /fp:precise /D _HAS_EXCEPTIONS=0")
-    set(_includes "/I${CMAKE_SOURCE_DIR}/src/laige-sim/include"
-                  "/I${CMAKE_SOURCE_DIR}/src/laige-core/include")
+    set(_flags /std:c++20 /W4 /WX /EHs- /EHc- /GR-
+               /fp:precise /D _HAS_EXCEPTIONS=0)
   else()
     message(FATAL_ERROR
       "no compile-check flags for '${CMAKE_CXX_COMPILER_ID}'")
   endif()
-  set(CXX "${CMAKE_CXX_COMPILER}")
-  set(CXXFLAGS "${_flags} ${_includes}")
+  set(_includes "-I${CMAKE_SOURCE_DIR}/src/laige-sim/include"
+                "-I${CMAKE_SOURCE_DIR}/src/laige-core/include")
+  # The compiler invocation is a CMake list: exactly one process
+  # argument per element. The generated script quotes each element
+  # (CMD_TEXT below) because configure_file substitutes plain text and
+  # unquoted text in the generated execute_process call would be
+  # re-split on whitespace — which breaks any argument containing
+  # spaces. The MSVC compiler path on Windows
+  # ("C:/Program Files/Microsoft Visual Studio/.../cl.exe") is the
+  # canonical case: split at the first space it becomes the argument
+  # "C:/Program", a failed process launch that CMake reports as the
+  # result "no such file or directory" with no compiler output.
+  set(_cmd "${CMAKE_CXX_COMPILER}" ${_flags} ${_includes}
+          "-c" "${CMAKE_CURRENT_SOURCE_DIR}/compile_fail/${source}"
+          "-o" "${CMAKE_CURRENT_BINARY_DIR}/compile_check_${name}.o")
+  set(CMD_TEXT "")
+  foreach(_arg IN LISTS _cmd)
+    string(REPLACE "\"" "\\\"" _arg_quoted "${_arg}")
+    string(APPEND CMD_TEXT "\"${_arg_quoted}\" ")
+  endforeach()
   set(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/compile_fail/${source}")
-  set(OBJ "${CMAKE_CURRENT_BINARY_DIR}/compile_check_${name}.o")
   set(EXPECT_OK "${expect_ok}")
   set(FRAGMENT "${fragment}")
   configure_file(

@@ -15,9 +15,26 @@
 #
 # The script exits non-zero (failing the CTest test) on any mismatch
 # and prints the full compiler output for diagnosis.
+#
+# _cmd is a quoted CMake list — one element per process argument.
+# Quoting is load-bearing: configure_file substitutes plain text, and
+# unquoted text in an execute_process call is re-split on whitespace,
+# which would break any argument containing spaces (the MSVC compiler
+# path "C:/Program Files/Microsoft Visual Studio/.../cl.exe" on
+# Windows). The list expansion below passes each element as exactly
+# one argument regardless of its content.
+#
+# MSVC note: cl launched this way runs outside the VS generator's
+# toolchain setup, so the surrounding environment MUST already carry
+# the MSVC INCLUDE/LIB/PATH (or cl fails with C1083 on <cstdint> etc.).
+# The CI Windows Test step imports the VS development environment into
+# the step before ctest (vswhere + VsDevCmd.bat — see
+# .github/workflows/ci.yml); a local Windows run needs the same
+# (e.g. a VS Developer PowerShell).
 
+set(_cmd @CMD_TEXT@)
 execute_process(
-  COMMAND @CXX@ @CXXFLAGS@ -c "@SOURCE@" -o "@OBJ@"
+  COMMAND ${_cmd}
   RESULT_VARIABLE _rc
   OUTPUT_VARIABLE _out
   ERROR_VARIABLE _err

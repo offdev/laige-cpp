@@ -13,7 +13,12 @@
 # prints the full lint output for diagnosis.
 
 execute_process(
-  COMMAND @PYTHON@ "@LINT@" --root "@ROOT@"
+  # "@PYTHON@" is quoted like every other generated-script command (the
+  # rationale is in expect-lint-result.cmake.in): unquoted text in an
+  # execute_process call is re-split on whitespace, which would break a
+  # python interpreter path containing spaces on a local Windows
+  # checkout.
+  COMMAND "@PYTHON@" "@LINT@" --root "@ROOT@"
   RESULT_VARIABLE _rc
   OUTPUT_VARIABLE _out
   ERROR_VARIABLE _err
