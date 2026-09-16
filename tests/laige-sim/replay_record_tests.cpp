@@ -31,6 +31,10 @@
 #include <utility>
 #include <vector>
 
+#if defined(_MSC_VER)
+#include <share.h>  // _SH_DENYNO: plain-fopen sharing for _fsopen
+#endif
+
 #include "gtest/gtest.h"
 #include "laige/errors.h"
 #include "laige/logging.h"
@@ -164,6 +168,23 @@ std::string tempPath(const char* name) {
   return std::string(::testing::TempDir()) + name;
 }
 
+// Portable file open (CPP-009 platform boundary, the
+// logging_tests.cpp / src/laige-sim/replay.cpp precedent): MSVC's CRT
+// deprecates plain `fopen` (C4996, fatal under the engine's /WX
+// policy). As in replay.cpp, the MSVC path uses `_fsopen(path, mode,
+// _SH_DENYNO)` — plain-`fopen` sharing semantics, so a read-only
+// re-open of a file the recorder still holds succeeds (the secure
+// `fopen_s` opens with `_SH_SECURE` and would deny it).
+#if defined(_MSC_VER)
+std::FILE* openReplayFile(const char* path, const char* mode) {
+  return ::_fsopen(path, mode, _SH_DENYNO);
+}
+#else
+std::FILE* openReplayFile(const char* path, const char* mode) {
+  return std::fopen(path, mode);
+}
+#endif
+
 // One log event captured from the facade (the engine_tests.cpp
 // MemorySink pattern — Warn+ only, rate limiting off).
 class MemorySink : public laige::log::Sink {
@@ -243,7 +264,7 @@ TEST(ReplayFormat, RoundTripBytes) {
   {
     std::size_t size = static_cast<std::size_t>(std::filesystem::file_size(path));
     raw.resize(size);
-    std::FILE* f = std::fopen(path.c_str(), "rb");
+    std::FILE* f = openReplayFile(path.c_str(), "rb");
     ASSERT_NE(f, nullptr);
     ASSERT_EQ(std::fread(raw.data(), 1, raw.size(), f), raw.size());
     std::fclose(f);
@@ -308,8 +329,8 @@ TEST(ReplayFormat, EncodingIsDeterministic) {
   std::vector<std::uint8_t> a, b;
   a.resize(static_cast<std::size_t>(std::filesystem::file_size(pathA)));
   b.resize(static_cast<std::size_t>(std::filesystem::file_size(pathB)));
-  std::FILE* fa = std::fopen(pathA.c_str(), "rb");
-  std::FILE* fb = std::fopen(pathB.c_str(), "rb");
+  std::FILE* fa = openReplayFile(pathA.c_str(), "rb");
+  std::FILE* fb = openReplayFile(pathB.c_str(), "rb");
   ASSERT_NE(fa, nullptr);
   ASSERT_NE(fb, nullptr);
   ASSERT_EQ(std::fread(a.data(), 1, a.size(), fa), a.size());
@@ -825,7 +846,15 @@ TEST(ReplayEngine, RecordsEmptyFramesPerTick) {
   EXPECT_TRUE(engine.replayRecordingActive());
   EXPECT_EQ(engine.replayBytesWritten(), laige::kReplayHeaderSize);
 
-  ASSERT_TRUE(engine.run_headless(8, laige::kDefaultMaxCatchUpTicks).ok());
+  // Frame budget 1 (the EngineRun.BoundedRunCompletesExactly
+  // precedent, engine_tests.cpp): each frame runs AT MOST one tick, so
+  // the run lands EXACTLY on 8 under any cadence — a late frame drops
+  // its extra due tick (the M1-LOOP-01 overload behavior), it does not
+  // overshoot. With a larger budget the run_headless contract (engine.h)
+  // allows the final count to run up to frameBudgetTicks - 1 over the
+  // target under overload, which breaks the exact-count assertions
+  // below on slow runners.
+  ASSERT_TRUE(engine.run_headless(8, 1).ok());
   EXPECT_EQ(engine.stats().ticks, 8u);
   EXPECT_TRUE(engine.isShutDown());
 
