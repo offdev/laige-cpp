@@ -13,7 +13,13 @@
 # prints the full lint output for diagnosis.
 
 execute_process(
-  COMMAND @PYTHON@ "@LINT@" --root "@ROOT@"
+  # "@PYTHON@" is quoted like every other generated-script command:
+  # configure_file substitutes plain text, and unquoted text in an
+  # execute_process call is re-split on whitespace, which would break a
+  # python interpreter path containing spaces (e.g. "C:/Program
+  # Files/Python3xx/python.exe" on a local Windows checkout; the CI
+  # runner's hostedtoolcache path has none, so this only bites locally).
+  COMMAND "@PYTHON@" "@LINT@" --root "@ROOT@"
   RESULT_VARIABLE _rc
   OUTPUT_VARIABLE _out
   ERROR_VARIABLE _err
