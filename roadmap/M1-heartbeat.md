@@ -172,7 +172,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R determinism_mode` green; determinism doc published; trait-check compiles-fail test (compile-check test) passes; sim-TU source scan green in CI.
   - **Size:** ~250 lines + tests
 
-- [ ] **M1-DET-02 · Replay recorder**
+- [x] **M1-DET-02 · Replay recorder**
   - **Refs:** FR-1.4, FR-11.3; PRD Appendix A (replay = input log + seed)
   - **Depends:** M1-DET-01, M0-CORE-01
   - **Scope:**

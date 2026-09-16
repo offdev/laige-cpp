@@ -42,10 +42,15 @@ default) guarantees:
 - `fp32_pinned` cross-ISA determinism is not promised; any desyncing CI
   pair is declared unsupported for that backend (ADR 0002 review
   conditions).
-- Replay *execution* (feeding a recorded input stream back through the
-  sim) is M1-DET-02; the `laige-run --replay` flag is a stub until then.
+- Replay *execution* (the `laige-replay` runner feeding a recorded
+  input stream back through the sim, `world.state_hash`) is
+  M1-DET-03. Replay *recording* has landed with M1-DET-02: the
+  versioned log format, the `ReplayRecorder`, and the
+  `Engine::startReplayRecording` / `laige-run --replay` wiring
+  ([api/replay.md](../api/replay.md)).
 - PRNG *state introspection* (reading a substream's state words) is
-  M1-DET-03; `laige::Prng` deliberately has no state getters.
+  M1-DET-03 (its state words join `world.state_hash`);
+  `laige::Prng` deliberately has no state getters.
 
 ## Why only SimMath ops (G-R8)
 
@@ -227,5 +232,8 @@ struct EngineConfig {
   backend policies.
 - [api/engine.md](../api/engine.md) — the `seed`/`determinism` config
   keys and the backend selection.
+- [api/replay.md](../api/replay.md) — the replay recording
+  (M1-DET-02): the versioned log format, the recorder, the replay
+  identity hashes.
 - [api/detcheck.md](../api/detcheck.md) — the replay-comparison tool
   (M1-DET-04 runs it against the two backends).

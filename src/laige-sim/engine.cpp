@@ -1,17 +1,20 @@
 // laige-sim headless engine run (M1-HEAD-01; FR-1.6, ARCH-003,
-// AC-6.2, CONC-006).
+// AC-6.2, CONC-006) + the opt-in replay recording (M1-DET-02).
 //
 // Implementation of the Engine, EngineConfig, and parseEngineConfig
 // declared in include/laige/sim/engine.h — see that header for the
 // full contract (the lifecycle, the run contract, the ordered
 // shutdown, the provisional config surface, the determinism scope,
-// the performance notes) and docs/api/engine.md for the API document
-// and the laige-run CLI contract.
+// the replay recording, the performance notes) and docs/api/engine.md
+// for the API document and the laige-run CLI contract.
 //
 // Hot-path cost (per headless frame): one clock read, one bounded
 // GameLoop::frame() dispatch, one snapshot onRenderFrame, one sleep —
 // no allocation and no logging on the healthy path (PERF-003,
 // LOG-003; the per-frame breakdown in engine.h "Performance").
+// Replay recording (M1-DET-02, opt-in debug builds only) adds one
+// bounded stdio write per completed tick when enabled, and one null
+// check per completed tick when disabled.
 
 #include "laige/sim/engine.h"  // the Engine contract (this header)
 
@@ -38,6 +41,7 @@ inline constexpr std::int64_t kNanosecondsPerSecond = 1000000000LL;
 // The stable subsystem names (LOG-001).
 inline constexpr const char* kEngineSubsystem = "engine";
 inline constexpr const char* kConfigSubsystem = "config";
+inline constexpr const char* kReplaySubsystem = "replay";
 
 // The headless clock source (M1-LOOP-01): the monotonic steady_clock
 // as nanoseconds since its epoch (the windowed clock arrives with
@@ -108,6 +112,45 @@ inline constexpr const char* kDeterminismMathInvalidMessage =
     "(default) or \"float_pinned_32\" (the ADR 0002 backend ids) | "
     "set determinism.math to one of the two backend ids | "
     "docs/api/engine.md";
+
+// M1-DET-02: the replay recording messages (NFR-13.3 5-field grammar;
+// the dynamic values are structured fields, never message text).
+#if defined(NDEBUG)
+// The debug-only message lives only in release builds (the
+// guardrails.cpp pattern: a debug-build-never-seen message must not
+// trip -Wunused-const-variable in debug trees).
+inline constexpr const char* kRecordDisabledMessage =
+    "record_disabled | replay recording is a debug-build feature | "
+    "this binary was built without debug support (NDEBUG defined — "
+    "release build) | rebuild with CMAKE_BUILD_TYPE=Debug, or remove "
+    "the --replay flag | docs/api/replay.md";
+#endif
+
+inline constexpr const char* kRecordAlreadyStartedMessage =
+    "record_already_started | startReplayRecording was called twice | "
+    "one engine records at most one replay per run | call "
+    "startReplayRecording once, after all registration and before "
+    "run_headless | docs/api/replay.md";
+
+inline constexpr const char* kRecordStartFailedMessage =
+    "record_start_failed | the replay recorder could not be started | "
+    "the temporary file could not be created (disk full, bad path), or "
+    "the size limit is below kMinReplaySizeLimit | check the path and "
+    "disk space, or raise maxBytes | docs/api/replay.md";
+
+inline constexpr const char* kRecordFailedMessage =
+    "record_failed | replay recording failed and the run stopped | the "
+    "total size limit was reached, or the log file could not be "
+    "written | raise the size limit or free disk space; the run "
+    "returned the failure Status and no partial log remains at the "
+    "final path | docs/api/replay.md";
+
+inline constexpr const char* kRecordAbortedMessage =
+    "record_aborted | the replay recording ended without finalization "
+    "| the run failed before the log was finalized (or the engine was "
+    "shut down pre-run) | the temporary file was removed (no partial "
+    "replay on disk); re-run the scenario with recording | "
+    "docs/api/replay.md";
 
 // The JSON seed bound: the largest value a JSON number can hold
 // exactly (doubles are exact integers to 2^53 — ADR 0003). The
@@ -374,6 +417,24 @@ void Engine::onTickHookDispatch(std::uint64_t tick) noexcept {
   // snapshot is still a no-op, never a crash (the handle's
   // hasSnapshot() guard — the never-crash contract, CORE-008).
   if (snapshot_.hasSnapshot()) snapshot_.onTick(snapshot_.context, tick);
+  // M1-DET-02: one recorded input frame per completed tick (the hook
+  // fires with the completed tick count — game_loop.h). M1 frames are
+  // ZERO-LENGTH: no input system exists yet (M3-INPUT-03 defines the
+  // payload shape and source); the frame record still carries the
+  // tick and the length field, so the log is forward-ready. A write
+  // failure STOPS THE RUN: the sticky replayFail_ makes runFrames
+  // return it, and the engine's shutdown still happens (CONC-006).
+  if (replayRecorder_ != nullptr && !replayFail_.isError()) {
+    const Status writeStatus = replayRecorder_->writeFrame(tick, nullptr, 0);
+    if (writeStatus.isError()) {
+      replayFail_ = writeStatus;
+      LAIGE_LOG_ERROR(kReplaySubsystem, "record_failed", kRecordFailedMessage,
+                      laige::log::field("path", replayRecorder_->path()),
+                      laige::log::field("tick", tick),
+                      laige::log::field("error",
+                                        laige::errorName(writeStatus.error())));
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -453,6 +514,35 @@ Status Engine::run_headless(std::uint64_t maxTicks,
       runStatus = loopResult.error();
     }
   }
+  // M1-DET-02: a SUCCESSFUL run with an active recording finalizes
+  // the recorder (flush + trailer + atomic temp-to-final rename)
+  // before the shutdown — the log appears at the final path only
+  // then. A mid-run recording failure (replayFail_) or a failed frame
+  // skips the finalization: the recorder's destructor (in shutdown)
+  // removes the temp file, and no partial log is ever left at the
+  // final path (replay.h "Recorder contract").
+  if (replayRecorder_ != nullptr && !replayFail_.isError() && runStatus.ok()) {
+    const Status finishStatus = replayRecorder_->finish();
+    if (finishStatus.ok()) {
+      LAIGE_LOG_INFO(kReplaySubsystem, "record_finished",
+                     "Replay log written (atomic temp + rename)",
+                     laige::log::field("path", replayRecorder_->path()),
+                     laige::log::field("bytes",
+                                       replayRecorder_->bytesWritten()),
+                     laige::log::field("frames",
+                                       replayRecorder_->frameCount()));
+    } else {
+      // Finalization failure (rename error, or the cap leaves no room
+      // for the trailer): the run reports it — never silent
+      // (CORE-008). The rename-failure case leaves the temp file for
+      // inspection (replay.h documents that).
+      LAIGE_LOG_ERROR(kReplaySubsystem, "record_failed", kRecordFailedMessage,
+                      laige::log::field("path", replayRecorder_->path()),
+                      laige::log::field("error",
+                                        laige::errorName(finishStatus.error())));
+      runStatus = finishStatus;
+    }
+  }
   // The loop's accounting BEFORE it is destroyed in shutdown (the
   // profiler feed; zeros when the loop never existed).
   lastStats_ = (loop_ != nullptr) ? loop_->stats() : GameLoopStats{};
@@ -479,10 +569,15 @@ Status Engine::runFrames(std::uint64_t maxTicks) noexcept {
   const std::int64_t startNs = loop_->startReferenceNs();
   const std::int64_t rate = static_cast<std::int64_t>(loop_->tickRateHz());
   for (;;) {
+    // M1-DET-02: a replay-recording failure stops the run (at most
+    // one frame's worth of ticks runs after the failing write — the
+    // hook's sticky error is observed here and at the frame boundary).
+    if (replayFail_.isError()) return replayFail_;
     if (maxTicks != 0 && loop_->currentTick() >= maxTicks) break;
     const std::int64_t now = steadyNowNs();
     const Status frameStatus = loop_->frame();
     if (frameStatus.isError()) return frameStatus;
+    if (replayFail_.isError()) return replayFail_;
     // The frame's clock reading goes to the presentation state
     // (presentation.h wiring: the engine reads the frame clock once
     // per frame and passes it to the snapshot). The snapshot exists
@@ -526,6 +621,20 @@ void Engine::shutdown() noexcept {
   // 1. systems: the loop stops first — no frame can start after this
   //    point (the system phase is over).
   loop_.reset();
+  // M1-DET-02: an UNFINISHED recording is abandoned here (CONC-006:
+  // every owned job is released in the ordered teardown). The
+  // recorder's destructor removes the temp file — no partial log is
+  // ever left at the final path. The structured warn makes the
+  // abandonment visible (CORE-008: never silent); the successful-run
+  // path finalized the recorder in run_headless, so this fires only
+  // for a failed run or a pre-run teardown.
+  if (replayRecorder_ != nullptr && !replayRecorder_->finished()) {
+    LAIGE_LOG_WARN(kReplaySubsystem, "record_aborted", kRecordAbortedMessage,
+                   laige::log::field("path", replayRecorder_->path()),
+                   laige::log::field("bytes", replayRecorder_->bytesWritten()));
+  }
+  replayRecorder_.reset();
+  replayFail_ = Status{};
   // 2. world: every live entity is destroyed (the per-entity
   //    component data is released with its rows; the registries
   //    survive — the entity.h clear() contract).
@@ -557,6 +666,71 @@ bool Engine::isShutDown() const noexcept { return shutDown_; }
 
 GameLoopStats Engine::stats() const noexcept { return lastStats_; }
 
+// ---------------------------------------------------------------------------
+// Replay recording (M1-DET-02; the contract in engine.h "Replay
+// recording" and docs/api/replay.md)
+// ---------------------------------------------------------------------------
+
+Status Engine::startReplayRecording(std::string_view path,
+                                    std::uint64_t maxBytes) noexcept {
+#if defined(NDEBUG)
+  // Replay recording is a debug-build feature (M1-DET-02 scope):
+  // release builds reject it with a structured warn (CORE-008: never
+  // silent). The recorder itself is compiled out of this branch.
+  LAIGE_LOG_WARN(kReplaySubsystem, "record_disabled", kRecordDisabledMessage);
+  return Status(ErrorCode::InvalidArgument);
+#else
+  // A stopped engine (shutdown or moved-from) is a no-op failure
+  // without logging (the stopped-state precedent — the GameLoop's
+  // moved-out frame()).
+  if (shutDown_ || world_ == nullptr) {
+    return Status(ErrorCode::InvalidArgument);
+  }
+  if (replayRecorder_ != nullptr) {
+    LAIGE_LOG_WARN(kReplaySubsystem, "record_already_started",
+                   kRecordAlreadyStartedMessage);
+    return Status(ErrorCode::InvalidArgument);
+  }
+  // The replay identity (ADR 0002) is captured at recording start:
+  // the component registry must be complete by now (the caller's
+  // registration phase — engine.h "Replay recording").
+  const ReplayIdentity identity = makeReplayIdentity(*world_, config_);
+  Result<ReplayRecorder, ErrorCode> created =
+      ReplayRecorder::create(identity, path, maxBytes);
+  if (created.isError()) {
+    LAIGE_LOG_WARN(kReplaySubsystem, "record_start_failed",
+                   kRecordStartFailedMessage,
+                   laige::log::field("path", path),
+                   laige::log::field("error",
+                                     laige::errorName(created.error())));
+    return Status(created.error());
+  }
+  replayRecorder_ =
+      std::make_unique<ReplayRecorder>(std::move(created).takeValue());
+  LAIGE_LOG_INFO(kReplaySubsystem, "record_started",
+                 "Replay recording started (opt-in, M1-DET-02)",
+                 laige::log::field("path", path),
+                 laige::log::field("size_limit",
+                                   maxBytes == 0 ? kDefaultReplaySizeLimit
+                                                 : maxBytes),
+                 laige::log::field("seed", config_.seed),
+                 laige::log::field("math_backend",
+                                   static_cast<int>(config_.determinism.math)),
+                 laige::log::field("config_hash", identity.configHash),
+                 laige::log::field("schema_hash",
+                                   identity.componentSchemaHash));
+  return Status{};
+#endif
+}
+
+bool Engine::replayRecordingActive() const noexcept {
+  return replayRecorder_ != nullptr && !replayRecorder_->finished();
+}
+
+std::uint64_t Engine::replayBytesWritten() const noexcept {
+  return replayRecorder_ != nullptr ? replayRecorder_->bytesWritten() : 0;
+}
+
 Engine::Engine(Engine&& other) noexcept
     : world_(std::move(other.world_)),
       loop_(std::move(other.loop_)),
@@ -564,16 +738,23 @@ Engine::Engine(Engine&& other) noexcept
       schedule_(other.schedule_),
       config_(other.config_),
       lastStats_(other.lastStats_),
+      replayRecorder_(std::move(other.replayRecorder_)),
+      replayFail_(other.replayFail_),
       shutDown_(other.shutDown_) {
   // The source becomes a STOPPED engine (the GameLoop moved-out
-  // precedent): nothing left to release, nothing to flush.
+  // precedent): nothing left to release, nothing to flush. Its
+  // recording (if any) is TRANSFERRED, not abandoned — the world it
+  // recorded is the same moved world (the recorder's identity still
+  // describes it).
   other.shutDown_ = true;
 }
 
 Engine& Engine::operator=(Engine&& other) noexcept {
   if (this != &other) {
     // Release this engine's current state first (ordered; a no-op
-    // when already stopped).
+    // when already stopped). An active recording on THIS engine is
+    // abandoned by that shutdown (the structured record_aborted warn)
+    // before it is replaced.
     shutdown();
     world_ = std::move(other.world_);
     loop_ = std::move(other.loop_);
@@ -581,6 +762,8 @@ Engine& Engine::operator=(Engine&& other) noexcept {
     schedule_ = other.schedule_;
     config_ = other.config_;
     lastStats_ = other.lastStats_;
+    replayRecorder_ = std::move(other.replayRecorder_);
+    replayFail_ = other.replayFail_;
     shutDown_ = other.shutDown_;
     other.shutDown_ = true;
   }

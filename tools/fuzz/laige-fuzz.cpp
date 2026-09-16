@@ -2,11 +2,13 @@
 // form; M0-TEST-01 extends it: CI lane semantics, nightly long runs,
 // seed-handling documentation).
 //
-// Roadmap step M0-CORE-07 lands the *minimal* runner this Verify gate
-// requires: `laige-fuzz json_parse --runs=1000` clean under ASan
-// (NFR-8.7: parsers are fuzzed in CI, bounded every commit — PRD §14).
-// The `json_parse` target is registered below; later steps add their
-// targets to kTargets.
+// Roadmap step M0-CORE-07 landed the *minimal* runner this Verify
+// gate requires: `laige-fuzz json_parse --runs=1000` clean under ASan
+// (NFR-8.7: parsers are fuzzed in CI, bounded every commit — PRD
+// §14). The `json_parse` and `replay_parse` targets are registered
+// below (M1-DET-02 added the latter: the replay log parser's
+// malformed-input surface, SCALE-005 / ARCH-007); later steps add
+// their targets to kTargets.
 //
 // Design (deterministic by construction):
 //   - Every input is generated from laige::Prng (M0-CORE-06): a fixed
@@ -39,12 +41,71 @@
 
 #include "laige/json.h"
 #include "laige/prng.h"
+#include "laige/sim/replay.h"  // parseReplay (M1-DET-02: the replay parser)
 
 namespace {
 
 constexpr std::uint64_t kDefaultSeed = 0x1F055EEDull;  // "one-fuzz-seed"
 constexpr int kDefaultRuns = 1000;
 constexpr std::size_t kMaxInputBytes = 64;
+
+// FNV-1a 64 constants (fnv.org — the same convention the replay
+// parser checks, laige/sim/replay.h). The local encoder below needs
+// only the byte-stream form.
+constexpr std::uint64_t kFnvBasis = 0xcbf29ce484222325ull;
+constexpr std::uint64_t kFnvPrime = 0x100000001b3ull;
+
+std::uint64_t fnv1aBytes(const std::uint8_t* bytes, std::size_t count) {
+  std::uint64_t h = kFnvBasis;
+  for (std::size_t i = 0; i < count; ++i) {
+    h ^= static_cast<std::uint64_t>(bytes[i]);
+    h *= kFnvPrime;
+  }
+  return h;
+}
+
+void pushU16le(std::vector<std::uint8_t>& out, std::uint16_t value) {
+  out.push_back(static_cast<std::uint8_t>(value & 0xFFu));
+  out.push_back(static_cast<std::uint8_t>((value >> 8) & 0xFFu));
+}
+void pushU32le(std::vector<std::uint8_t>& out, std::uint32_t value) {
+  for (int i = 0; i < 4; ++i) {
+    out.push_back(static_cast<std::uint8_t>((value >> (8 * i)) & 0xFFu));
+  }
+}
+void pushU64le(std::vector<std::uint8_t>& out, std::uint64_t value) {
+  for (int i = 0; i < 8; ++i) {
+    out.push_back(static_cast<std::uint8_t>((value >> (8 * i)) & 0xFFu));
+  }
+}
+
+// A minimal VALID v1 replay log (header + one zero-length frame +
+// trailer) — a corpus base for the mutate/truncate modes of the
+// replay_parse target (NFR-8.7: the parser gets real-shape input, not
+// only random bytes). Mirrors the format in laige/sim/replay.h
+// (SCALE-005); the trailer's fileHash is the canonical byte-stream
+// FNV-1a 64 the parser checks.
+std::string buildValidReplayLog() {
+  std::vector<std::uint8_t> log;
+  log.push_back('L');
+  log.push_back('G');
+  log.push_back('R');
+  log.push_back('P');  // magic
+  pushU16le(log, 1);  // formatVersion
+  pushU16le(log, 0);  // reserved
+  pushU64le(log, 42);  // seed
+  pushU32le(log, 60);  // tickRateHz
+  pushU64le(log, 0);  // componentSchemaHash
+  pushU32le(log, 0);  // mathBackendId (FixedPoint16_16)
+  pushU64le(log, 0);  // configHash
+  pushU64le(log, 1);  // frame tick
+  pushU32le(log, 0);  // frame byteLength (M1: zero-length frame)
+  // The trailer (frameCount + the fileHash over everything before it).
+  const std::uint64_t bodyHash = fnv1aBytes(log.data(), log.size());
+  pushU64le(log, 1);  // frameCount
+  pushU64le(log, bodyHash);
+  return std::string(log.begin(), log.end());
+}
 
 // Valid-document corpus: the base for mutate/truncate inputs. Kept ASCII
 // (explicit bytes for the one non-ASCII document) so the corpus bytes are
@@ -74,6 +135,10 @@ const std::vector<std::string> kCorpus = {
     "{\"a\":1,\"b\":null}",
     "{\"a\":{\"b\":[1,{\"c\":\"x\"}]}}",
     " \t\r\n [ 1 , 2 ] \r\n ",
+    // A valid v1 replay log (68 bytes) — the replay_parse target's
+    // mutate/truncate base (it is also fed to json_parse, where it
+    // is simply another invalid document).
+    buildValidReplayLog(),
 };
 
 // ---------------------------------------------------------------------------
@@ -91,8 +156,18 @@ void fuzzJsonParse(const std::uint8_t* data, std::size_t size) {
   (void)result;  // any Status is acceptable; only a crash fails the run
 }
 
+// M1-DET-02: the replay log parser (SCALE-005 / ARCH-007 — the
+// malformed-input surface). Any MalformedInput/IoError outcome is
+// acceptable; only a crash (or sanitizer report) fails the run.
+void fuzzReplayParse(const std::uint8_t* data, std::size_t size) {
+  const laige::Result<laige::ReplayLog, laige::ErrorCode> result =
+      laige::parseReplay(data, size);
+  (void)result;
+}
+
 const FuzzTarget kTargets[] = {
     {"json_parse", &fuzzJsonParse},
+    {"replay_parse", &fuzzReplayParse},
 };
 
 void printUsage() {

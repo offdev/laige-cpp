@@ -53,9 +53,16 @@
 # shutdown; the public types and contract live in
 # include/laige/sim/engine.h) plus the provisional JSON config surface
 # (parseEngineConfig — M1-CFG-01 owns the full declarative schema).
+# M1-DET-02 adds replay.cpp: the replay recording (ReplayRecorder —
+# the versioned log format, the atomic temp+rename writer, the
+# parseReplay/loadReplay readers, and the replay-identity hashes; the
+# public types and contract live in include/laige/sim/replay.h) plus
+# the Engine::startReplayRecording wiring in engine.cpp (the per-tick
+# empty-frame write, the mid-run failure stop, the finalization in
+# run_headless, the abandonment in shutdown).
 set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
                      systems.cpp system_timing.cpp game_loop.cpp
-                     engine.cpp)
+                     engine.cpp replay.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})

@@ -8,15 +8,19 @@ Engine tools and CI scripts, each landing with its roadmap step:
   server form), and the ordered idempotent shutdown. Exit codes:
   `0` ok · `1` engine run failure · `2` usage/IO/config error; one
   machine-greppable summary line on stdout (`laige-run headless
-  ticks=… status=…`). `--replay` is the M1-DET-02 stub (accepted,
-  warned, ignored). Full contract in
-  [docs/api/engine.md](../docs/api/engine.md); the `laige_run_smoke`
+  ticks=… status=…`). `--replay` records the run (M1-DET-02:
+  opt-in, debug builds only, atomic publish, 128 MiB default cap).
+  Full contract in
+  [docs/api/engine.md](../docs/api/engine.md) and
+  [docs/api/replay.md](../docs/api/replay.md); the `laige_run_smoke`
   CTest entry (1000 ticks @ 60 Hz, every P0 OS job) is its CI form.
 - `laige-fuzz` — deterministic bounded fuzz runner (minimal form from
-  M0-CORE-07, in `tools/fuzz`: the `json_parse` target, `--runs`/`--seed`,
+  M0-CORE-07, in `tools/fuzz`: the `json_parse` and `replay_parse`
+  targets (M1-DET-02 added the replay log parser), `--runs`/`--seed`,
   built with `LAIGE_BUILD_TESTS=ON`, registered as the `fuzz_json_parse`
-  CTest entry — bounded fuzz in every commit, PRD §14; M0-TEST-01
-  extends it: CI lane semantics, nightly long runs, seed documentation)
+  and `fuzz_replay_parse` CTest entries — bounded fuzz in every
+  commit, PRD §14; M0-TEST-01 extends it: CI lane semantics, nightly
+  long runs, seed documentation)
 - `laige-include-lint` — include-graph lint + vendored-dependency-count
   metric over `src/**` (M0-CI-03). Pure Python 3 stdlib; run it as
   `python3 tools/laige-include-lint [--root REPO_ROOT]`. Enforces the PRD

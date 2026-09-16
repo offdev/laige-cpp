@@ -17,11 +17,16 @@
 //   --ticks N                 run until N completed ticks (N = 0 or
 //                             omitted: the server form — run until the
 //                             process ends)
-//   --replay <log>            STUB (M1-DET-02): the flag is accepted so
-//                             the CLI is stable from M1, and a
-//                             structured warn explains that replay
-//                             recording is not implemented yet
-//                             (never silent — CORE-008)
+//   --replay <log>            REPLAY RECORDING (M1-DET-02): record the
+//                             run's replay log (versioned format,
+//                             laige/sim/replay.h) at <log> — opt-in,
+//                             DEBUG BUILDS ONLY (release builds exit 2
+//                             with the structured replay/record_
+//                             disabled warn). The log is written
+//                             atomically (temp + rename) and appears
+//                             at <log> only when the run succeeds.
+//                             Size limit: kDefaultReplaySizeLimit
+//                             (128 MiB)
 //
 // Exit codes (documented, stable for CI grepping):
 //   0  the run completed (the requested ticks reached; the summary
@@ -64,6 +69,7 @@
 #include "laige/result.h"
 #include "laige/sim/engine.h"
 #include "laige/sim/game_loop.h"
+#include "laige/sim/replay.h"
 
 namespace {
 
@@ -71,15 +77,6 @@ namespace {
 // default): the read stops one byte past the bound so an oversized
 // file is a MalformedInput, not a truncated parse.
 inline constexpr std::size_t kMaxConfigBytes = 1u << 20;
-
-// NFR-13.3 5-field grammar for the replay stub (stable text; the log
-// path is a structured field — LOG-005, never raw message text).
-inline constexpr const char* kReplayDeferredMessage =
-    "replay_deferred | the --replay flag was accepted but replay "
-    "recording is not implemented | replay recording lands with "
-    "M1-DET-02 (M1-HEAD-01 wires only the flag, keeping the CLI "
-    "stable) | remove --replay, or wait for M1-DET-02 | "
-    "docs/api/engine.md";
 
 void printUsage(std::FILE* out) {
   std::fprintf(out,
@@ -93,8 +90,13 @@ void printUsage(std::FILE* out) {
       "  --ticks N                 run until N completed ticks (N = 0\n"
       "                            or omitted: the server form — run\n"
       "                            until the process ends)\n"
-      "  --replay <log>            STUB (M1-DET-02): accepted; replay\n"
-      "                            recording is not implemented yet\n"
+      "  --replay <log>            record the run's replay log at\n"
+      "                            <log> (opt-in; DEBUG BUILDS ONLY —\n"
+      "                            release builds exit 2; written\n"
+      "                            atomically; appears at <log> only\n"
+      "                            when the run succeeds; the size\n"
+      "                            limit is kDefaultReplaySizeLimit,\n"
+      "                            128 MiB)\n"
       "  --help, -h                this help\n"
       "\n"
       "Exit codes: 0 = ok, 1 = engine run failure, 2 = usage / IO / "
@@ -213,13 +215,6 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  // The replay stub (M1-DET-02): accepted, WARNED, ignored — never
-  // silent (CORE-008).
-  if (!replayPath.empty()) {
-    LAIGE_LOG_WARN("replay", "replay_deferred", kReplayDeferredMessage,
-                   laige::log::field("log", replayPath));
-  }
-
   std::string document;
   const laige::Status readStatus = readConfigFile(configPath, &document);
   if (readStatus.isError()) {
@@ -249,6 +244,21 @@ int main(int argc, char** argv) {
     return 2;
   }
   laige::Engine engine = std::move(engineResult).takeValue();
+  // Replay recording (M1-DET-02): opt-in, debug builds only. The
+  // engine's built-in registration is complete at creation (laige-run
+  // registers no game components of its own), so the identity capture
+  // is at the right phase: after all registration, before the run.
+  // A failure here is an exit-2 usage/IO error (the flag's contract):
+  // the run did not happen.
+  if (!replayPath.empty()) {
+    const laige::Status replayStatus = engine.startReplayRecording(
+        replayPath, laige::kDefaultReplaySizeLimit);
+    if (replayStatus.isError()) {
+      std::fprintf(stderr, "laige-run: replay: %s\n",
+                   laige::errorText(replayStatus.error()));
+      return 2;
+    }
+  }
   const laige::Status runStatus =
       engine.run_headless(maxTicks, laige::kDefaultMaxCatchUpTicks);
   const laige::GameLoopStats stats = engine.stats();

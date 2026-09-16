@@ -185,6 +185,39 @@
 // enter authoritative state.
 //
 // ---------------------------------------------------------------------------
+// Replay recording (M1-DET-02; laige/sim/replay.h)
+// ---------------------------------------------------------------------------
+//
+// Opt-in, DEBUG-BUILDS-ONLY recording of the run's replay log (FR-1.4,
+// PRD Appendix A: replay = the input log + the seed). The engine owns
+// at most one ReplayRecorder per run:
+//
+//   startReplayRecording(path, maxBytes)  called after all
+//     component/system registration (the component schema hash is
+//     part of the replay identity — replay.h) and before
+//     run_headless. Captures the identity (ADR 0002) from
+//     (world, config) and opens the recorder's temp file.
+//
+//   run_headless  one recorded input frame per COMPLETED tick,
+//     written from the GameLoop's onTick hook (game_loop.h): M1
+//     frames are zero-length (no input system exists yet — M3-INPUT-03
+//     defines the payload shape and source). A recording failure
+//     (size limit reached, write error) STOPS THE RUN: run_headless
+//     returns the failure Status, and the ordered shutdown still
+//     happens (CONC-006).
+//
+//   a successful run finalizes the recorder (flush + trailer +
+//     atomic temp-to-final rename) before the shutdown; the log
+//     appears at `path` only then — a failed run or a pre-run
+//     teardown leaves NO partial log at the final path (the temp
+//     file is removed; the engine emits replay/record_aborted).
+//
+// The engine emits the structured replay/* events (LOG-001/002):
+// record_started / record_finished (Info), record_failed (Error),
+// record_aborted and record_already_started (Warn), record_disabled
+// (Warn — release builds only). The recorder itself logs nothing.
+//
+// ---------------------------------------------------------------------------
 // Ownership, threading
 // ---------------------------------------------------------------------------
 //
@@ -206,6 +239,13 @@
 // up to frameBudgetTicks system dispatches — PERF-002 bounded), one
 // snapshot onRenderFrame (a few integer ops), and one sleep. No
 // allocation and no logging on the healthy path (PERF-003, LOG-003).
+// Replay recording (M1-DET-02, opt-in debug feature): the DISABLED
+// path pays one null check per completed tick and nothing else
+// (DBG-004); the ENABLED path adds one bounded stdio write per
+// completed tick (the 12-byte frame record into stdio's 8 KiB buffer
+// — a flush to the OS only every ~680 zero-length frames) and the
+// cold finish (flush + trailer + rename). Recording is never on the
+// default run path.
 // The run's setup path allocates exactly three times, all one-shot
 // (verified per-frame-zero by the M1-HEAD-01 zero-allocation test):
 // the GameLoop object, the PresentationSnapshot object, and the
@@ -235,11 +275,18 @@
 //     deterministic contract.
 //   - run_headless after shutdown (or on a moved-from engine) is a
 //     no-op failure: recreate the engine, do not reuse it.
+//   - Replay recording is opt-in and debug-builds-only: call
+//     startReplayRecording ONCE, after all component/system
+//     registration and before run_headless (the component schema hash
+//     in the identity is captured at recording start). A second call
+//     fails (replay/record_already_started); release builds reject
+//     the call entirely (replay/record_disabled).
 
 #pragma once
 
 #include <cstdint>
 #include <memory>
+#include <string_view>
 
 #include "laige/errors.h"
 #include "laige/fpx16_16.h"
@@ -248,6 +295,7 @@
 #include "laige/sim/entity.h"       // World, kDefaultChurnPerFrameBudget
 #include "laige/sim/game_loop.h"    // GameLoop, GameLoopStats, tick-rate constants
 #include "laige/sim/presentation.h" // Position2D, PresentationSnapshot
+#include "laige/sim/replay.h"       // ReplayRecorder (M1-DET-02)
 
 namespace laige {
 
@@ -509,6 +557,50 @@ class Engine {
   // allocation, no side effects (the profiler feed, M1-PROF-01).
   [[nodiscard]] GameLoopStats stats() const noexcept;
 
+  // Start the opt-in replay recording of the upcoming run (M1-DET-02;
+  // see the header preamble "Replay recording" and docs/api/replay.md
+  // for the full contract). DEBUG BUILDS ONLY: a release build
+  // rejects the call with InvalidArgument plus the structured
+  // replay/record_disabled warn (CORE-008: never silent).
+  //
+  // Call after all component/system registration (the component
+  // schema hash is part of the identity, captured at recording
+  // start) and before run_headless.
+  //
+  //   path == the log's FINAL path (the recorder writes atomically:
+  //           a temp file `path + ".tmp"` + rename — the final path
+  //           appears only on a successful finish)
+  //   maxBytes == the total log cap, header + frames + trailer
+  //           (0 = kDefaultReplaySizeLimit; below
+  //           kMinReplaySizeLimit the cap cannot hold a complete
+  //           log)
+  //
+  //   stopped engine (already shut down) -> InvalidArgument (no log —
+  //                                          the stopped-state
+  //                                          precedent)
+  //   already recording                 -> InvalidArgument + warn
+  //                                          (replay/record_already_
+  //                                          started)
+  //   recorder start failure            -> the failure Status (the
+  //                                          temp-open / header-write
+  //                                          IoError) + warn (replay/
+  //                                          record_start_failed)
+  //
+  // A recording failure mid-run stops the run: run_headless returns
+  // the failure Status (BudgetExhausted at the size limit, IoError on
+  // a write failure) and no partial log remains at `path`.
+  // @budget cold path: one file open + one 40-byte header write; no per-tick cost while the engine is not recording.
+  [[nodiscard]] Status startReplayRecording(std::string_view path,
+                                             std::uint64_t maxBytes) noexcept;
+
+  // True while a replay recording is active (started and not yet
+  // finalized or abandoned). O(1), no side effects.
+  [[nodiscard]] bool replayRecordingActive() const noexcept;
+
+  // The bytes the active recording has written (header + frame
+  // bytes; 0 when not recording). O(1), no side effects.
+  [[nodiscard]] std::uint64_t replayBytesWritten() const noexcept;
+
   // Move transfers the owned state; the source becomes a STOPPED
   // engine (world() nullptr, run_headless fails, shutdown is a no-op
   // — the GameLoop moved-out precedent).
@@ -555,6 +647,12 @@ class Engine {
   // The last run's loop accounting (set on every run completion,
   // including a failed one — before the loop is destroyed).
   GameLoopStats lastStats_{};
+  // Replay recording (M1-DET-02): the active recorder (nullptr when
+  // not recording — the default path pays one null check per
+  // completed tick and nothing else) and the sticky failure that
+  // stopped the run (ok while nothing failed).
+  std::unique_ptr<ReplayRecorder> replayRecorder_;
+  Status replayFail_{};
   // True after shutdown() has run (or on a moved-from engine).
   bool shutDown_{false};
 };

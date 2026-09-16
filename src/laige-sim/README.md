@@ -113,6 +113,23 @@ trait API in
 [tests/laige-sim](../tests/laige-sim) (CTest entries
 `determinism_mode` + `trait_compile_*`; lint fixtures in
 [tests/tools](../tests/tools)).
-The profiler, replay (M1-DET-02), PRNG state introspection
+M1-DET-02 landed replay recording — the versioned replay log
+format (header: format version + the ADR 0002 replay identity —
+seed, tick rate, component schema hash, math backend id, config
+hash — + per-tick frames as opaque byte blobs + the trailer's
+FNV-1a fileHash; SCALE-005), the `ReplayRecorder` (opt-in, atomic
+temp+rename, size-bounded), the `parseReplay`/`loadReplay` readers,
+the `componentSchemaHash`/`configHash`/`makeReplayIdentity`
+identity hashes (`include/laige/sim/replay.h`, `replay.cpp`), the
+engine wiring (`Engine::startReplayRecording`: one zero-length
+frame per completed tick, a mid-run failure stops the run, the
+ordered shutdown abandons an unfinished recording) and the
+`laige-run --replay` flag (debug builds only; it was the
+M1-HEAD-01 stub); replay execution (`world.state_hash`, the
+`laige-replay` runner) is M1-DET-03; API contract in
+[docs/api/replay.md](../docs/api/replay.md), tests under
+[tests/laige-sim](../tests/laige-sim) (CTest entries
+`replay_record` + `fuzz_replay_parse`).
+The profiler, PRNG state introspection
 (M1-DET-03), the detcheck matrix (M1-DET-04), and the remaining M1
 steps land next; physics, input, and animation in M3.

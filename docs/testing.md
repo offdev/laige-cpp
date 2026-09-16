@@ -81,12 +81,17 @@ target may return any `Status`; the run fails only on process death
   1000 runs per target — the PRD §14 "every commit (bounded)" lane. In
   the ASan tree (`build-asan`) the runs are instrumented, so a crash or
   UB fails the job loudly (NFR-8.7).
+- **Targets so far:** `json_parse` (the JSON parser, M0-CORE-07) and
+  `replay_parse` (the replay log parser, M1-DET-02 — the
+  malformed-input surface of the version 1 replay format; the corpus
+  includes a valid v1 log as a mutate/truncate base). Both run the
+  bounded lane above in every P0 job.
 - **Nightly long runs (PRD §14 "nightly (long)"):** the canonical form is
   `./build/bin/laige-fuzz <target> --runs=1000000 [--seed=HEX]`. The
   scheduled nightly lane is documented here but not yet wired: it lands
-  with the first M1 fuzz target (asset import / network packets, PRD §14
-  fuzz row), when a long run protects more than the parser. Until then
-  the bounded lane above is the complete fuzz cadence in M0.
+  with the first M1 fuzz target whose long run protects more than the
+  parser (asset import / network packets, PRD §14 fuzz row). Until then
+  the bounded lane above is the complete fuzz cadence in M1.
 - **Seed handling:** fixed default seed `0x1F055EED` ("one-fuzz-seed"),
   overridable with `--seed=` (0x-prefixed hex or decimal). This is the
   same default seed the test suites use (below) — one documented
@@ -175,6 +180,7 @@ promised) at the scope ARCH-010 requires.
 |---|---|
 | Seeded-random KAT suite | `ctest --test-dir build -R test_infra --output-on-failure` |
 | Bounded fuzz, `json_parse` | `./build/bin/laige-fuzz json_parse --runs=1000` |
+| Bounded fuzz, `replay_parse` | `./build/bin/laige-fuzz replay_parse --runs=1000` |
 | Fuzz with an explicit seed | `./build/bin/laige-fuzz json_parse --runs=1000 --seed=0x12345678` |
 | Nightly long run (documented form) | `./build/bin/laige-fuzz json_parse --runs=1000000` |
 | Reproduce a randomized test's stream | `LAIGE_TEST_SEED=0x… ctest --test-dir build --output-on-failure` |
