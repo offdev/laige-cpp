@@ -254,4 +254,5 @@ if(LAIGE_BUILD_TESTS)
   add_subdirectory(tools/api)      # M0-TOOL-01: laige-api-scanner
   add_subdirectory(tools/detcheck) # M0-TOOL-02: laige-detcheck
   add_subdirectory(tools/run)      # M1-HEAD-01: laige-run (+ smoke test)
+  add_subdirectory(tools/replay)   # M1-DET-03: laige-replay
 endif()

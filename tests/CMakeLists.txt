@@ -85,3 +85,7 @@ add_subdirectory(api)
 # two-run scenario (built-in + fixture scenario binaries) in
 # tests/detcheck.
 add_subdirectory(detcheck)
+
+# Replay runner checks (M1-DET-03): laige-replay replays a recorded
+# log and compares the per-tick state hashes (tests/replay).
+add_subdirectory(replay)

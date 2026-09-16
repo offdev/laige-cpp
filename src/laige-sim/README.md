@@ -125,11 +125,26 @@ engine wiring (`Engine::startReplayRecording`: one zero-length
 frame per completed tick, a mid-run failure stops the run, the
 ordered shutdown abandons an unfinished recording) and the
 `laige-run --replay` flag (debug builds only; it was the
-M1-HEAD-01 stub); replay execution (`world.state_hash`, the
-`laige-replay` runner) is M1-DET-03; API contract in
+M1-HEAD-01 stub); API contract in
 [docs/api/replay.md](../docs/api/replay.md), tests under
 [tests/laige-sim](../tests/laige-sim) (CTest entries
 `replay_record` + `fuzz_replay_parse`).
+M1-DET-03 landed replay execution — `World::stateHash` (the
+deterministic state hash: a pure function of the live state, the
+canonical FNV-1a 64 stream, cold path, no allocation —
+`include/laige/sim/entity.h`, `state_hash.cpp`),
+`replayIdentityDiff` + `runReplay` (the identity-checked, tick-by-tick
+re-run producing the per-tick hash stream —
+`include/laige/sim/replay.h`, `replay.cpp`), and the `laige-replay`
+runner (`tools/replay`: prints `<tick> <hash>` lines on stdout,
+`--expect BASELINE` comparison, exit codes 0/1/2); API contract in
+[docs/api/replay.md](../docs/api/replay.md) +
+[docs/api/entity.md](../docs/api/entity.md), tests under
+[tests/laige-sim](../tests/laige-sim) (CTest entry `replay_replay`)
+and [tests/replay](../tests/replay) (CTest entries `replay_smoke`,
+`replay_deterministic`, `replay_expect_*`,
+`replay_identity_mismatch`, `replay_usage_error`,
+`replay_log_missing`).
 The profiler, PRNG state introspection
 (M1-DET-03), the detcheck matrix (M1-DET-04), and the remaining M1
 steps land next; physics, input, and animation in M3.

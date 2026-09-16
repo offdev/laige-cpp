@@ -183,7 +183,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R replay_record` green; malformed log file (truncated, bad version) → `Status` error, never crash.
   - **Size:** ~200 lines + tests
 
-- [ ] **M1-DET-03 · State hashing + replay runner**
+- [x] **M1-DET-03 · State hashing + replay runner**
   - **Refs:** FR-1.4 (replayable and diffable), FR-11.3; AGENTS TEST-004
   - **Depends:** M1-DET-02, M1-ECS-05
   - **Scope:**

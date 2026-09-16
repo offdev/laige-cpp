@@ -122,6 +122,8 @@ every statistical sense, but they are *not* cryptographically independent
 | `std::uint32_t next_range(std::uint32_t min, std::uint32_t max)` | Uniform in `[min, max)`; `max - min in [1, 2^32 - 1]`. `min >= max`: debug assert, documented UB in release (span underflow). Expected < 2 draws; the rejection probability per draw is `< 1/2` (it is `(2^64 mod n) / 2^64`, which is 0 for power-of-two spans). |
 | `float next_float01()` | Uniform in `[0, 1)`, 24-bit resolution. Never 1.0; 0.0 with probability 2^-24. |
 | `std::uint64_t seed() const` | The construction seed (save/replay identity). |
+| `std::uint64_t statePart1() const` | The first state word (the xorshift128+ `s0_`; M1-DET-03: feeds `World::stateHash`). Read-only, O(1), no side effects. |
+| `std::uint64_t statePart2() const` | The second state word (`s1_`). Same contract as `statePart1()`. |
 | `Prng substream(std::uint32_t id) const` | `deriveSubstream(seed(), id)`; a fresh stream position, independent of this stream's current state. |
 | `static Prng deriveSubstream(std::uint64_t seed, std::uint32_t id)` | The documented derivation: `Prng(seed + id * K)`. Composes (see Algorithm). |
 | `static void seedState(std::uint64_t seed, std::uint64_t& part1, std::uint64_t& part2)` | Seed-to-state mapping; exposed for determinism verification and M1 save/replay (a saved stream is `(seed, part1, part2)`). |
@@ -174,9 +176,10 @@ system as `SystemContext::rng` (non-null in deterministic mode,
 `nullptr` when disabled; see
 [api/system_registry.md](system_registry.md)). The stream is advanced
 in place during the system's draws, so the registry's stream state is
-the replay state (its inclusion in the state hash lands with
-M1-DET-03). Scope and guarantees:
-[concepts/determinism.md](../concepts/determinism.md).
+the replay state: M1-DET-03's `World::stateHash` feeds each system's
+substream `(seed, statePart1, statePart2)` into the hash (see
+[api/replay.md](replay.md), the state-hash scope). Scope and
+guarantees: [concepts/determinism.md](../concepts/determinism.md).
 
 ## Misuse warnings
 

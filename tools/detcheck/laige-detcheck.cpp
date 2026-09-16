@@ -7,9 +7,10 @@
 //
 // The step's scope: run a named scenario in two build configurations
 // (e.g. Debug+ASan vs Release, or two compiler builds) and compare
-// per-tick state hashes. The engine state-hash API arrives with
-// M1-DET-03; this skeleton accepts the hash-file output contract — a
-// stream of `<tick> <hash>` lines — and compares two such streams.
+// per-tick state hashes. The engine state-hash API landed with
+// M1-DET-03 (`World::stateHash`); this tool accepts the hash-file
+// output contract — a stream of `<tick> <hash>` lines — and compares
+// two such streams.
 //
 // ============================================================================
 // SCENARIO CONTRACT (documented here; also in docs/api/detcheck.md)

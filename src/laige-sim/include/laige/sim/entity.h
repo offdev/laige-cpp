@@ -33,7 +33,9 @@
 //            kBudgetCriticalMultiplier,
 //            World::systemTimingStats/systemTimingWindow — the
 //            per-tick rolling windows plus the G-R5 warn/error
-//            events, driven from runSystems).
+//            events, driven from runSystems); M1-DET-03 adds the
+//            deterministic state hash (stateHash — the per-tick
+//            replay hash line, a pure function of the live state).
 //
 // ---------------------------------------------------------------------------
 // The handle contract (FR-1.2, CPP-007)
@@ -149,6 +151,90 @@
 // safe to replicate and are replay state from M1 on. (The one
 // generation-wrap case above is defined unsigned wrap, hence
 // bit-identical too.)
+//
+// ---------------------------------------------------------------------------
+// Deterministic state hash (M1-DET-03; FR-1.4, FR-11.3, ARCH-010)
+// ---------------------------------------------------------------------------
+//
+// stateHash(tick) is the deterministic 64-bit hash of the world's LIVE
+// sim state at `tick` completed ticks — the per-tick hash line the
+// replay runner (M1-DET-03, replay.h runReplay) and the detcheck
+// scenario contract (docs/api/detcheck.md) compare run against run.
+// It is a pure function of the state — never of the operation history
+// that produced it: two worlds that converge on the same live state
+// (same live handles, same components, same PRNG states) hash
+// identically, whatever their create/destroy/move interleavings were.
+//
+// Canonical encoding (FNV-1a 64, offset basis 0xcbf29ce484222325,
+// prime 0x100000001b3 — the house word-stream convention, fnv.org;
+// the same constants as the fpx16_16 determinism KAT, the Prng golden
+// vectors, and laige-detcheck). One streaming FNV state over a fixed
+// byte stream:
+//
+//   1. u64 tick                          (the completed tick count)
+//   2. u64 liveCount                     (the live entity count)
+//   3. per live slot, ascending slot-id:
+//        u16 slot id
+//        u16 generation
+//   4. per distinct live component set S (every NON-EMPTY archetype),
+//      ascending lexicographic order over S's sorted component-id
+//      vector (the canonical order of the set — history-independent):
+//        u16 component count
+//        u32 x count   the component ids, ascending
+//        u32 row count
+//        the raw component bytes: per row, ascending slot order (the
+//        dense-id row order), per column in S's signature order, the
+//        component's sizeof(T) bytes in memory order
+//   5. per system, ascending system id (1..systemCount):
+//        u32 system id
+//        u8  1 if the system has a PRNG substream, else 0
+//        u64 x 3   the substream's seed, state part1, state part2
+//                  (when present)
+//
+// All u16/u32/u64 words are fed big-endian (the house word-stream
+// convention); the component bytes are fed in raw memory order (every
+// P0 target is little-endian — PRD §6).
+//
+// SCOPE (exactly what enters the hash): the tick counter; the live
+// entity handles (slot + generation); the archetype assignment —
+// carried by step 4 (a live slot's archetype is the unique component
+// set whose row list contains it; a slot in no list has no
+// components); every live component's bytes in that canonical order;
+// every system's PRNG substream state (seed + the two state words —
+// the draw position, PRD §10.3).
+//
+// SCOPE (deliberately EXCLUDED — history or non-authoritative):
+//   - dead slots and their generations (history; the live set is the
+//     state — two histories with the same live set differ in dead
+//     generations and must hash the same);
+//   - the free-list order (same live set, different free stacks after
+//     different destroy orders — hashing it would make the hash
+//     history-dependent);
+//   - empty archetypes and the assigned archetype ids (history:
+//     first-seen order; step 4's signature order is the canonical
+//     stand-in);
+//   - the component registry and the world capacity (replay identity
+//     and config, not state — ADR 0002);
+//   - presentation state (the PresentationSnapshot's alpha is
+//     wall-clock and presentation-only — ARCH-009; presentation.h);
+//   - timing diagnostics (wall-clock — the system.h lines that carry
+//     the documented exception markers);
+//   - the guardrail counters (diagnostic bookkeeping, not
+//     authoritative state);
+//   - the master seed itself (replay identity; represented through
+//     the derived substream seeds when systems exist).
+//
+// Complexity: O(capacity + the live component bytes +
+// kMaxArchetypes²) — the per-set ordering is an insertion sort over at
+// most kMaxArchetypes (256) non-empty archetypes comparing ≤
+// kMaxArchetypeComponents (32) component ids. No allocation (fixed
+// stack state), no side effects, no logging. COLD path: the replay
+// runner and the detcheck scenarios call it once per tick; the
+// engine's per-tick hot path never does (PERF-002/003).
+//
+// Not a cryptographic hash: a state-difference detector for
+// determinism verification (FR-1.4/FR-11.3), not a security primitive
+// (DEP-002).
 //
 // ---------------------------------------------------------------------------
 // Misuse warnings
@@ -661,6 +747,26 @@ class World {
   // moved-from world. The window is owned by the world (one owner
   // thread — CONC-001): never keep the reference past the world.
   [[nodiscard]] const Histogram* systemTimingWindow(SystemId id) const noexcept;
+
+  // -------------------------------------------------------------
+  // Deterministic state hash (M1-DET-03; full contract in the header
+  // preamble "Deterministic state hash" and docs/api/entity.md)
+  // -------------------------------------------------------------
+
+  // The deterministic 64-bit hash of the world's live sim state at
+  // `tick` completed ticks (the replay hash line, M1-DET-03): the tick,
+  // the live entity handles, the archetype assignment, every live
+  // component's bytes in the canonical order, and every system's PRNG
+  // substream state (preamble "Canonical encoding"). A pure function
+  // of the state — the free list, dead-slot generations, empty
+  // archetypes, presentation, timing, and guardrail state are EXCLUDED
+  // (preamble "SCOPE"). `tick` is the caller's completed-tick count
+  // (0 before the first tick — the initial state's hash). Cold path:
+  // O(capacity + live component bytes + kMaxArchetypes²); no
+  // allocation, no side effects, no logging.
+  // @budget O(capacity + live component bytes + kMaxArchetypes²); no
+  // allocation.
+  [[nodiscard]] std::uint64_t stateHash(std::uint64_t tick) const noexcept;
 
   // Destroy every live entity (shutdown path, CONC-006). Every handle
   // becomes stale; the capacity is unchanged and the world is

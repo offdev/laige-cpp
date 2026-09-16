@@ -60,9 +60,15 @@
 # the Engine::startReplayRecording wiring in engine.cpp (the per-tick
 # empty-frame write, the mid-run failure stop, the finalization in
 # run_headless, the abandonment in shutdown).
+# M1-DET-03 adds state_hash.cpp: the deterministic state hash
+# (World::stateHash — the per-tick replay hash line, a pure function of
+# the live state; the public contract lives in include/laige/sim/
+# entity.h) and the replay EXECUTION half in replay.cpp
+# (replayIdentityDiff + runReplay; the public types and contract live
+# in include/laige/sim/replay.h).
 set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
                      systems.cpp system_timing.cpp game_loop.cpp
-                     engine.cpp replay.cpp)
+                     engine.cpp replay.cpp state_hash.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})

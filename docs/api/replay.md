@@ -1,14 +1,18 @@
-# Replay recording (`ReplayRecorder`, M1-DET-02)
+# Replay recording and execution (`ReplayRecorder`, `runReplay`, M1-DET-02/03)
 
-The M1 replay **recording** (M1-DET-02; PRD FR-1.4, FR-11.3, PRD
-Appendix A — replay = input log + seed, ADR 0002, ARCH-007, SCALE-005):
-a **versioned replay log format** plus the `ReplayRecorder` (the atomic,
-size-bounded writer), the `parseReplay`/`loadReplay` readers, and the
-replay-identity hashes. The engine records one frame per completed
-tick (`Engine::startReplayRecording`) and `laige-run --replay <path>`
-wires the flag that M1-HEAD-01 stubbed. Replay **execution** (the
-`laige-replay` runner, `world.state_hash`) is M1-DET-03; this step
-lands the recording half.
+The M1 replay system in both halves: the **recording** (M1-DET-02;
+PRD FR-1.4, FR-11.3, PRD Appendix A — replay = input log + seed,
+ADR 0002, ARCH-007, SCALE-005) — a **versioned replay log format**
+plus the `ReplayRecorder` (the atomic, size-bounded writer), the
+`parseReplay`/`loadReplay` readers, and the replay-identity hashes —
+and the **execution** (M1-DET-03): `World::stateHash` (the
+deterministic state hash), `runReplay` (the identity-checked,
+tick-by-tick re-run that produces the per-tick hash stream), and the
+`laige-replay` runner that prints the stream and compares it against a
+baseline. The engine records one frame per completed tick
+(`Engine::startReplayRecording`), `laige-run --replay <path>` wires the
+flag that M1-HEAD-01 stubbed, and `laige-replay --log <log> --config
+<cfg> [--expect <baseline>]` closes the loop.
 
 Public header: `src/laige-sim/include/laige/sim/replay.h` (the full
 contract: format layout, identity hashes, the error tables, the
@@ -234,6 +238,115 @@ laige-run --headless CONFIG.json [--ticks N] [--replay LOG]
   `status=` summary line carries the error name) with no partial log
   at `LOG`.
 
+## The state hash (`World::stateHash`, M1-DET-03)
+
+`std::uint64_t World::stateHash(std::uint64_t tick) const noexcept;`
+— the 64-bit FNV-1a hash of the authoritative sim state at `tick`
+completed ticks. Full contract in
+[api/entity.md](entity.md) ("The deterministic state hash"): the
+canonical stream (tick → live handles → per-archetype component bytes
+in lexicographic signature order → per-system PRNG substream state),
+the scope in/out lists (history and non-authoritative state excluded —
+convergent worlds hash identically), and the complexity/allocation
+contract (cold path, `O(capacity + live bytes + kMaxArchetypes²)`, no
+allocation, `const`, no logging).
+
+## The identity check (`replayIdentityDiff`, M1-DET-03)
+
+```cpp
+struct ReplayIdentityDiff { /* one bool per identity field */ };
+ReplayIdentityDiff replayIdentityDiff(const ReplayLog&, const World&,
+                                      const EngineConfig&) noexcept;
+```
+
+ADR 0002's replay identity is enforced **field by field**: a log
+replayed against a `(world, config)` whose seed, `tickRateHz`,
+`componentSchemaHash`, `mathBackendId`, or `configHash` differs is a
+**rejected replay** — `runReplay` fails with `ErrorCode::InvalidArgument`
+plus the `replay/identity_mismatch` structured warn naming exactly
+which fields differ (both sides' values — the log's and the
+world+config's). The caller must surface it (CORE-008: never silently
+replay a foreign log); `replayIdentityDiff` is exposed for callers who
+want the per-field report without a full run.
+
+## The execution half (`runReplay`, M1-DET-03)
+
+```cpp
+struct ReplayRunResult { std::vector<std::uint64_t> tickHashes; };
+Result<ReplayRunResult, ErrorCode> runReplay(const ReplayLog&, World&,
+                                             const EngineConfig&) noexcept;
+```
+
+One deterministic replay of a loaded log against a world:
+
+1. **Identity check** — `replayIdentityDiff`; any differing field is
+   `ErrorCode::InvalidArgument` (the `replay/identity_mismatch` warn
+   names the fields and both sides' values).
+2. **Determinism check** — the world's deterministic mode must be
+   enabled (it is by default); a disabled world fails with
+   `ErrorCode::InvalidArgument` + the `replay/determinism_disabled`
+   warn — replaying a non-deterministic sim would produce
+   meaningless hashes.
+3. **Schedule** — `world.scheduleSystems(...)` once, before the loop
+   (the schedule is a function of the registrations, which the
+   identity already pinned); a schedule failure returns the world's
+   `Status` (already logged by the world).
+4. **Loop** — one frame per tick: `beginFrame(); runSystems(schedule);`
+   (the log's frames are zero-length in M1 — there is no input system
+   yet; non-empty frames are accepted and ignored until M3-INPUT-03
+   defines consumption). A failing tick returns the world's `Status`
+   and the replay stops (no partial hashes in the result).
+
+The result's `tickHashes[i]` is `world.stateHash(i)` after `i`
+completed ticks — **size `frameCount + 1`**: index 0 is the initial
+state's hash (before any tick), and index `i` (≥ 1) is the state
+after tick `i`. That is the **hash line contract** the `laige-replay`
+runner prints and compares:
+
+```
+<tick> <hash>            tick 0,1,2,...,N — one line per completed tick,
+                          plus the tick-0 initial line (N+1 lines total)
+<hash> = 16 lowercase hex digits (the canonical FNV-1a 64 text form)
+```
+
+No allocation on the replay *per tick* beyond the result vector's
+single growth; the per-tick work is exactly the normal engine tick
+(the replay is the sim, not a second engine).
+
+## The `laige-replay` runner (M1-DET-03)
+
+```
+laige-replay --log LOG --config CONFIG.json [--expect BASELINE]
+```
+
+- **stdout is only hash lines** (the contract above) — pipeable and
+  diff-able; the summary and every diagnostic go to **stderr**.
+- **Exit codes:** `0` — replayed and (if `--expect`) matched;
+  `1` — **hash mismatch** (the first diverging tick is reported) or
+  **stream-length mismatch** (the first missing/extra tick);
+  `2` — usage/identity/log/baseline error (nothing was replayed).
+- **`--expect BASELINE`** — compares the replayed stream against a
+  baseline file of `<tick> <hash>` lines (CRLF tolerated, trailing
+  newline optional). The first mismatch is reported on stderr as an
+  actionable line pair —
+  `hash mismatch at tick 5 (first divergence)` + the baseline and
+  replay values — and the run exits `1`. A different stream length is
+  reported as `baseline stream length mismatch` + `first
+  missing/extra at tick N`, also `1`.
+- **Baseline grammar is strict** — exactly `<tick> <16 lowercase hex>`,
+  tick strictly `0, 1, 2, ...`; any other line is a malformed-baseline
+  failure (`2`) naming the offending line.
+- **Bounds (CORE-005):** config read ≤ 1 MiB; baseline ≤ 8 MiB /
+  65 536 lines / 64 bytes per line (named constants in
+  `tools/replay/laige-replay.cpp`); no unbounded read before parsing
+  (the ADR 0003 bounded-read precedent).
+- **Scope:** `laige-replay` replays logs recorded by `laige-run
+  --headless --replay` (the engine's built-in registration). A
+  game-scenario log is replayed by the scenario binary itself through
+  the same `runReplay` library (the M1-SAMPLE-01 scenario wires it;
+  M1-DET-04's detcheck `--run-a/--run-b` compares two scenarios' hash
+  streams).
+
 ## Performance (PERF-002/003, LOG-003)
 
 - **Disabled** — one null check per tick in the engine's onTick hook;
@@ -283,17 +396,41 @@ laige-run --headless CONFIG.json [--ticks N] [--replay LOG]
   empty frames + matching identity; the mid-run failure stop with the
   `record_failed`/`record_aborted` events; double-start and
   stopped-engine failures).
+- `ctest -R replay_replay` — the M1-DET-03 Verify (the
+  `StateHash.*` + `DetReplay.*` suites in
+  `tests/laige-sim/replay_replay_tests.cpp`): the state hash's known-
+  answer vector, capacity/handle/component/archetype/PRNG sensitivity,
+  convergent-world equality (different histories, same live state,
+  same hash), the zero-allocation proof; and the replay half — the
+  **500-tick record → replay integration** (identical hash streams,
+  the step's headline test), a perturbed-world divergence at the exact
+  tick, the per-field identity-mismatch rejection, the
+  determinism-disabled rejection, and an engine round trip (record
+  under `run_headless`, replay through two fresh engines, world-level
+  twin state comparison).
+- `ctest -R "^replay_"` — the `laige-replay` runner's CTest entries
+  (`tests/replay/`, one generated check script per case): the smoke
+  stream contract (N+1 lines, tick sequence, 16-hex hashes), the
+  double-run determinism, `--expect` match / perturbed (divergence at
+  the right tick) / truncated (length report) / malformed (line
+  report) / identity mismatch (field report) / usage error / missing
+  log — exit codes 0/1/2 asserted per case.
 - `ctest -R fuzz_replay_parse` — the parser's malformed-input surface
   under the bounded-every-commit fuzz gate (1000 deterministic inputs;
   the corpus includes a valid v1 log as a mutate/truncate base; TEST-005,
   NFR-8.7).
 - The include-graph lint and the API manifest (`laige-api.json`)
-  cover the new public header (regenerated in this change).
+  cover the new public declarations (`stateHash`, `replayIdentityDiff`,
+  `runReplay`; regenerated in this change).
 
 ## Related
 
+- [api/entity.md](entity.md) — `World`, the handle contract, and
+  `World::stateHash` (the state-hash scope and canonical stream).
 - [api/engine.md](engine.md) — `Engine`, the run contract, the
   `startReplayRecording` wiring, the `laige-run` CLI.
+- [api/detcheck.md](detcheck.md) — the cross-configuration hash-stream
+  comparison (M1-DET-04) built on the same hash lines.
 - [concepts/determinism.md](../concepts/determinism.md) — the
   determinism scope, the replay identity (ADR 0002), the
   SimMath-only rule.

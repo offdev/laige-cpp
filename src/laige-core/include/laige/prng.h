@@ -159,6 +159,16 @@ class Prng {
   // PRD §10.3; M1-DET-03 hashes this together with the substream id).
   std::uint64_t seed() const { return seed_; }
 
+  // The stream's state word 1 (the save/replay identity's part1; PRD
+  // §10.3 — a saved stream is (seed, part1, part2)). Read-only; O(1),
+  // no side effects. M1-DET-03: World::stateHash folds these into the
+  // deterministic state hash with the substream id.
+  std::uint64_t statePart1() const { return s0_; }
+
+  // The stream's state word 2 (the save/replay identity's part2).
+  // Read-only; O(1), no side effects. See statePart1().
+  std::uint64_t statePart2() const { return s1_; }
+
   // A substream of this stream's seed: deriveSubstream(seed(), id).
   // Independent stream position; id 0 == the master stream.
   Prng substream(std::uint32_t id) const;

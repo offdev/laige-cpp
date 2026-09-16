@@ -174,8 +174,10 @@ floats, addresses, wall clocks, or platform intrinsics enter it. The
 scope the contract promises is therefore the widest ARCH-010 allows:
 **the same state visited identically on every supported platform,
 architecture, and compiler** (same build). The state *hash* that
-M1-DET-03 computes over the visit order inherits this scope once the
-component-value encoding is pinned there.
+M1-DET-03's `World::stateHash` computes inherits this scope: the
+canonical stream feeds the component values in this visit order
+(entity rows ascending, columns in the archetype signature order —
+[api/entity.md](entity.md)).
 
 ## Performance (DOC-004)
 

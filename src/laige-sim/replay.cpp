@@ -36,6 +36,7 @@
 #include <windows.h> // MoveFileExA / MOVEFILE_REPLACE_EXISTING
 #endif
 
+#include "laige/logging.h"  // the structured replay/* events (runReplay)
 #include "laige/sim/engine.h"  // EngineConfig (configHash, makeReplayIdentity)
 
 namespace laige {
@@ -573,6 +574,89 @@ ReplayIdentity makeReplayIdentity(const World& world,
       componentSchemaHash(world),
       static_cast<std::uint32_t>(config.determinism.math),
       configHash(config)};
+}
+
+// -----------------------------------------------------------------------
+// Replay execution (M1-DET-03)
+// -----------------------------------------------------------------------
+
+ReplayIdentityDiff
+replayIdentityDiff(const ReplayLog& log, const World& world,
+                   const EngineConfig& config) noexcept {
+  const ReplayIdentity expected = makeReplayIdentity(world, config);
+  return ReplayIdentityDiff{
+      log.identity.seed != expected.seed,
+      log.identity.tickRateHz != expected.tickRateHz,
+      log.identity.componentSchemaHash != expected.componentSchemaHash,
+      log.identity.mathBackendId != expected.mathBackendId,
+      log.identity.configHash != expected.configHash};
+}
+
+Result<ReplayRunResult, ErrorCode>
+runReplay(const ReplayLog& log, World& world,
+          const EngineConfig& config) noexcept {
+  // Step 1: the identity (replay.h preamble "The replay identity": a
+  // replay recorded under identity X is bit-exact only when replayed
+  // under X — a mismatch is a rejected replay, never a silent
+  // divergence).
+  const ReplayIdentityDiff diff = replayIdentityDiff(log, world, config);
+  if (!diff.empty()) {
+    // The differing fields are structured values, never message text
+    // (LOG-002; the system_timing.cpp precedent).
+    LAIGE_LOG_WARN("replay", "identity_mismatch",
+                   "Replay identity mismatch: the log was recorded under "
+                   "a different identity than (world, config); the replay "
+                   "is rejected (ADR 0002)",
+                   laige::log::field("seed", diff.seed),
+                   laige::log::field("tick_rate", diff.tickRateHz),
+                   laige::log::field("component_schema",
+                                     diff.componentSchemaHash),
+                   laige::log::field("math_backend", diff.mathBackendId),
+                   laige::log::field("config", diff.configHash));
+    return Result<ReplayRunResult, ErrorCode>(ErrorCode::InvalidArgument);
+  }
+  // Step 2: the determinism mode (determinism.h "Determinism mode
+  // semantics": a run recorded with determinism disabled is not
+  // replayable — the seed and the substreams are part of the replay
+  // identity only in deterministic mode).
+  if (!config.determinism.enabled) {
+    LAIGE_LOG_WARN("replay", "determinism_disabled",
+                   "The replay was recorded with determinism disabled; "
+                   "such runs are not replayable (determinism.h)",
+                   laige::log::field("seed", log.identity.seed));
+    return Result<ReplayRunResult, ErrorCode>(ErrorCode::InvalidArgument);
+  }
+  // Step 3: the deterministic tick driver. One frame per tick: the
+  // original run's frame grouping is a wall-clock fact, not part of the
+  // deterministic contract (engine.h "Determinism scope"); the
+  // guardrail warn events a replay emits may therefore differ from
+  // the recorded run's (diagnostics, excluded from the state hash —
+  // entity.h scope). The recorded frame bytes are opaque in M1: no
+  // input system consumes them yet (M3-INPUT-03 defines consumption —
+  // non-empty frames are accepted and ignored).
+  SystemSchedule schedule;
+  const Status schedStatus = world.scheduleSystems(schedule);
+  if (!schedStatus.ok()) {
+    // The world already logged the failure (system/schedule_*); no
+    // partial result (CORE-008).
+    return Result<ReplayRunResult, ErrorCode>(schedStatus.error());
+  }
+  ReplayRunResult result;
+  result.tickHashes.reserve(log.frames.size() + 1);
+  // Tick 0: the initial state (the hash line contract's first line).
+  result.tickHashes.push_back(world.stateHash(0));
+  for (std::size_t i = 0; i < log.frames.size(); ++i) {
+    world.beginFrame();
+    static_cast<void>(log.frames[i].data);  // opaque in M1 (above)
+    const Status tickStatus = world.runSystems(schedule);
+    if (!tickStatus.ok()) {
+      // The world already logged the failed system; the replay stops —
+      // no partial hashes (CORE-008).
+      return Result<ReplayRunResult, ErrorCode>(tickStatus.error());
+    }
+    result.tickHashes.push_back(world.stateHash(i + 1));
+  }
+  return Result<ReplayRunResult, ErrorCode>::success(std::move(result));
 }
 
 }  // namespace laige

@@ -42,15 +42,17 @@ default) guarantees:
 - `fp32_pinned` cross-ISA determinism is not promised; any desyncing CI
   pair is declared unsupported for that backend (ADR 0002 review
   conditions).
-- Replay *execution* (the `laige-replay` runner feeding a recorded
-  input stream back through the sim, `world.state_hash`) is
-  M1-DET-03. Replay *recording* has landed with M1-DET-02: the
-  versioned log format, the `ReplayRecorder`, and the
+- Replay *execution* has landed with M1-DET-03: `World::stateHash`
+  (the deterministic state hash — [api/entity.md](../api/entity.md)),
+  `runReplay` (the identity-checked, tick-by-tick re-run and its
+  per-tick hash stream), and the `laige-replay` runner
+  ([api/replay.md](../api/replay.md)). Replay *recording* landed with
+  M1-DET-02: the versioned log format, the `ReplayRecorder`, and the
   `Engine::startReplayRecording` / `laige-run --replay` wiring
   ([api/replay.md](../api/replay.md)).
-- PRNG *state introspection* (reading a substream's state words) is
-  M1-DET-03 (its state words join `world.state_hash`);
-  `laige::Prng` deliberately has no state getters.
+- PRNG *state introspection* has landed with M1-DET-03:
+  `Prng::statePart1()/statePart2()` (read-only; the substream state
+  words join `World::stateHash` — [api/prng.md](../api/prng.md)).
 
 ## Why only SimMath ops (G-R8)
 

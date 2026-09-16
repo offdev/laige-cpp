@@ -1,0 +1,6 @@
+{
+  "tick_rate_hz": 60,
+  "entity_budget": 64,
+  "churn_per_frame_budget": 256,
+  "seed": 43
+}

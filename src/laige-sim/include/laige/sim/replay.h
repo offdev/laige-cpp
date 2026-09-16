@@ -10,12 +10,14 @@
 // state is a pure function of (config, seed, registration order, N,
 // inputs)); CORE-005 (the size bounds below are named constants).
 //
-// This header carries the RECORDED half of the replay contract: the
-// versioned, byte-exact log of one deterministic run — the replay
+// This header carries the FULL replay contract: the RECORDED half —
+// the versioned, byte-exact log of one deterministic run (the replay
 // identity in a fixed header plus one opaque input frame per completed
-// tick. The EXECUTION half (loading a log, feeding its frames back
-// through the sim, comparing per-tick state hashes) is M1-DET-03, which
-// reads exactly this format through parseReplay / loadReplay.
+// tick) — and the EXECUTION half (M1-DET-03): loading a log, checking
+// its identity against the caller's (world, config), feeding its
+// frames back through the sim tick by tick, and producing the per-tick
+// state hashes (World::stateHash) that the laige-replay runner
+// (tools/replay) prints and compares against a baseline.
 //
 //   ReplayIdentity    The replay identity (ADR 0002) as a plain value.
 //   ReplayFrame       One recorded input frame: the completed tick
@@ -33,6 +35,13 @@
 //   configHash        The provisional EngineConfig's deterministic hash.
 //   makeReplayIdentity
 //                     The full identity from (world, config).
+//   ReplayIdentityDiff
+//                     The field-by-field identity comparison result.
+//   replayIdentityDiff
+//                     Compare a log's identity against (world, config).
+//   ReplayRunResult   One replay's per-tick state hashes.
+//   runReplay         The execution half: identity check + the
+//                     deterministic tick-by-tick replay + the hashes.
 //
 // ---------------------------------------------------------------------------
 // The log format (version 1; SCALE-005: byte order, bounds, version,
@@ -465,5 +474,111 @@ loadReplay(std::string_view path,
 // @budget O(componentCount); no allocation.
 [[nodiscard]] ReplayIdentity makeReplayIdentity(const World& world,
                                                 const EngineConfig& config) noexcept;
+
+// -----------------------------------------------------------------------
+// Replay execution (M1-DET-03)
+// -----------------------------------------------------------------------
+//
+// The execution half: a recorded log is replayed headlessly on a
+// fully-registered world (the SAME registrations as the recording
+// run — the caller's responsibility: the component registry and the
+// system order are what the identity and the sim behavior depend on)
+// and the per-tick state hashes (World::stateHash) are produced.
+//
+// The HASH LINE CONTRACT (the laige-replay stdout form; the same
+// contract laige-detcheck enforces on scenario binaries —
+// docs/api/detcheck.md): one line per tick, in order,
+//
+//   <tick> <hash>
+//
+// where <tick> is a non-negative decimal (no leading zeros) and
+// <hash> is the 16 lowercase hex digits of a 64-bit state hash. The
+// FIRST line is tick 0 (the INITIAL state, before any tick); line i+1
+// is the state after completed tick i. A log with N frames therefore
+// produces N+1 lines (ticks 0..N).
+
+// The field-by-field result of replayIdentityDiff: one bit per
+// identity field (ADR 0002); empty() == every field matches.
+struct ReplayIdentityDiff {
+  bool seed{};
+  bool tickRateHz{};
+  bool componentSchemaHash{};
+  bool mathBackendId{};
+  bool configHash{};
+
+  // True when no field differs (the identities match).
+  [[nodiscard]] bool empty() const noexcept {
+    return !seed && !tickRateHz && !componentSchemaHash &&
+           !mathBackendId && !configHash;
+  }
+};
+
+// Compare a loaded log's replay identity against the identity the
+// caller's (world, config) would produce (makeReplayIdentity). A
+// non-empty result is a REJECTED REPLAY (never a silent divergence —
+// the header preamble "The replay identity"): the log was recorded
+// under a different identity and must not be replayed on this world.
+// O(n) in the registered types, no allocation, no side effects.
+// @budget O(componentCount); no allocation.
+[[nodiscard]] ReplayIdentityDiff
+replayIdentityDiff(const ReplayLog& log, const World& world,
+                   const EngineConfig& config) noexcept;
+
+// The result of runReplay: the per-tick state hashes (the hash line
+// contract above): tickHashes[i] == the world's stateHash(i) after the
+// replay — index 0 is the initial state, indices 1..frameCount one
+// entry per completed tick.
+struct ReplayRunResult {
+  // frameCount + 1 entries (tick 0 .. frameCount).
+  std::vector<std::uint64_t> tickHashes;
+};
+
+// Replay `log` headlessly on `world`:
+//
+//   1. Check the log's identity against (world, config) (step 0 below);
+//   2. Check the determinism mode: a log recorded with determinism
+//      DISABLED is not replayable (determinism.h: the seed and the
+//      substreams are part of the replay identity only in deterministic
+//      mode) — rejected;
+//   3. Drive exactly log.frames.size() ticks, each one
+//      world.beginFrame() + world.runSystems(schedule) (the schedule is
+//      computed once, before the first tick; one frame per tick — the
+//      original run's frame grouping is a wall-clock fact, not part of
+//      the deterministic contract, engine.h; the recorded frame bytes
+//      are fed as opaque blobs: M1 has no input system to consume
+//      them, M3-INPUT-03 defines consumption — non-empty frames are
+//      accepted and ignored);
+//   4. Return the per-tick state hashes (World::stateHash — tick 0
+//      before the loop, then one hash per completed tick).
+//
+//   replay identity mismatch (any field — see replayIdentityDiff)
+//                                   -> ErrorCode::InvalidArgument + one
+//                                      structured warn
+//                                      (replay/identity_mismatch naming
+//                                      the differing fields, LOG-002)
+//   determinism disabled (config.determinism.enabled == false — the
+//                                   identity already matched, so the
+//                                   log's header says the same)
+//                                   -> ErrorCode::InvalidArgument + one
+//                                      structured warn
+//                                      (replay/determinism_disabled)
+//   scheduleSystems fails            -> the world's Status (the world
+//                                      already logged it; no partial
+//                                      result)
+//   a tick's runSystems fails        -> the world's Status (the world
+//                                      already logged it; the replay
+//                                      stops — no partial hashes)
+//
+// Cold path (a caller's run, never the engine's per-tick hot path):
+// O(frameCount × per-tick system work + per-tick state hash);
+// allocates only the result vector (the hash itself allocates
+// nothing — entity.h stateHash contract). The caller's world is the
+// same kind the recording run used: built-in + game registrations,
+// same order (ARCH-010).
+// @budget O(frameCount × tick work + state hash); one allocation
+// (the result vector).
+[[nodiscard]] Result<ReplayRunResult, ErrorCode>
+runReplay(const ReplayLog& log, World& world,
+          const EngineConfig& config) noexcept;
 
 }  // namespace laige

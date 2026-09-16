@@ -247,6 +247,51 @@ stale handle assert in debug and degrade in release.
   bit-identical `Entity` handle sequences on every platform, so
   handles are replay state from M1 on.
 
+## The deterministic state hash (`World::stateHash`, M1-DET-03)
+
+```cpp
+std::uint64_t World::stateHash(std::uint64_t tick) const noexcept;
+```
+
+The 64-bit FNV-1a hash of the world's **authoritative sim state** at
+`tick` completed ticks — the per-tick value the replay runner
+(`runReplay`, [api/replay.md](replay.md)) and the detcheck scenario
+contract ([api/detcheck.md](detcheck.md)) compare run against run.
+
+- **Pure function of the live state** — never of the operation
+  history that produced it. Two worlds that converge on the same live
+  state (same live handles, same component bytes, same PRNG substream
+  states) hash identically, whatever their create/destroy interleavings
+  were; dead-slot generations, the free-list order, and empty archetypes
+  are deliberately out (see the header's scope list, entity.h).
+- **Canonical stream (FNV-1a 64, the house word-stream convention —
+  big-endian per u64 word; basis `0xcbf29ce484222325`, prime
+  `0x100000001b3`, fnv.org):** `tick` → live count → per live slot
+  ascending `(slot, generation)` → per non-empty archetype in
+  lexicographic signature order `(component ids ascending, row count,
+  then the raw component bytes row-major in signature column order)` →
+  per system ascending `(system id, has-substream flag, substream
+  seed/state1/state2)`. Component bytes go in raw memory order (every
+  P0 target is little-endian — PRD §6).
+- **Determinism scope (ARCH-010):** same build, platform, architecture,
+  and compiler — the hash is pure integers over a canonical byte
+  order; no wall clock, no addresses, no unordered containers.
+  Cross-build identity is M1-DET-04's detcheck matrix.
+- **Performance (PERF-002/003, DOC-004):** `O(capacity + live component
+  bytes + kMaxArchetypes²)` (the per-set ordering is an insertion sort
+  over ≤ 256 non-empty archetypes); **no allocation** (fixed stack
+  state), no logging, no side effects, `const`. COLD path: the replay
+  runner and detcheck scenarios call it once per tick; the engine's
+  per-tick hot path never does.
+- **Not a cryptographic hash** — a state-difference detector for
+  determinism verification (FR-1.4/FR-11.3), not a security primitive
+  (DEP-002).
+
+Verified by `ctest -R replay_replay` (the `StateHash.*` suites: the
+known-answer vector, capacity independence, tick/handle sensitivity,
+component and archetype sensitivity, convergence equality, PRNG
+sensitivity, and the zero-allocation proof).
+
 ## Usage (performant pattern)
 
 ```cpp
@@ -311,3 +356,7 @@ if (!world.isValid(handle)) { /* stale — drop it, log if unexpected */ }
   `guardrailStats()`, the `ecs/entity_budget_{25,50,100}` and
   `ecs/churn_per_frame` warns (the "Guardrails" section above);
   suite `ctest -R ecs_guardrails`.
+- **M1-DET-03 (done):** `World::stateHash` — the deterministic state
+  hash ("The deterministic state hash" section above); the replay
+  execution half and the `laige-replay` runner live in
+  [api/replay.md](replay.md); suite `ctest -R replay_replay`.

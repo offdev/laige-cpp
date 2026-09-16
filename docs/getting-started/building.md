@@ -37,6 +37,7 @@ The canonical-commands table in [roadmap/README.md](../../roadmap/README.md)
 | Fuzz (long, nightly form) | `./build/bin/laige-fuzz <target> --runs=1000000` |
 | Benchmarks | `./build/bin/laige-bench --suite=<name>` |
 | Determinism check | `./build/bin/laige-detcheck --scenario=<name>` |
+| Replay runner | `./build/bin/laige-replay --log LOG --config CONFIG.json [--expect BASELINE]` |
 | API manifest | `cmake --build build --target laige-api` |
 | Include-graph lint + dependency count | `python3 tools/laige-include-lint` |
 | Determinism source scan (sim module) | `python3 tools/laige-determinism-lint` |
@@ -52,8 +53,12 @@ Notes:
   M0-TEST-01 documents the CI lane semantics — bounded `--runs=1000` in
   every P0 job's `ctest`, the nightly long-run form above — and the
   seed-handling rules), `laige-bench` (M0-CORE-08), `laige-detcheck`
-  (M0-TOOL-02), and target `laige-api` (M0-TOOL-01). Their command forms
-  were fixed here when they were reserved, so no step can drift them.
+  (M0-TOOL-02), `laige-replay` (M1-DET-03: prints the replayed
+  per-tick state-hash stream on stdout; `--expect BASELINE` compares
+  and exits 1 at the first diverging tick — contract in
+  [docs/api/replay.md](../api/replay.md)), and target `laige-api`
+  (M0-TOOL-01). Their command forms were fixed here when they were
+  reserved, so no step can drift them.
   Fuzz and randomized-test seeds: fixed default `0x1F055EED`,
   overridable (`laige-fuzz --seed=…`; tests via the `LAIGE_TEST_SEED`
   environment variable) — see [docs/testing.md](../testing.md).
