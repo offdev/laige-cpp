@@ -6,7 +6,8 @@
 // the registration order (part of the replay identity — ADR 0002), and
 // the per-tick state-hash stream (docs/api/detcheck.md).
 //
-// Usage:  hello [--replay LOG] | hello --log LOG
+// Usage:  hello [--replay LOG] | hello --log LOG | hello --expect BASELINE
+//   (the modes are composable: --expect applies to either run form)
 //   stdout  N+1 '<tick> <hash>' lines (tick 0 = initial state, then one
 //           per completed tick; 16 lowercase hex) — nothing else
 //   stderr  the one-line summary + diagnostics
@@ -17,6 +18,22 @@
 // config, embedded below and documented in config.json (identical
 // values): the M1 template keeps the CLI minimal (CORE-004); the
 // engine's CLI (laige-run) exercises the declarative config surface.
+//
+// --expect BASELINE (M1-DET-04): compare the run's per-tick hash stream
+// against the committed baseline of the reference build (canonical
+// Debug g++; the samples/hello/baselines/ README) with the laige-replay
+// --expect contract: 0 match, 1 first-divergence report, 2 baseline
+// read/contract error. The scenario's own binary carries the check —
+// a game log cannot be replayed by laige-replay (different
+// registrations — the replay identity, ADR 0002).
+//
+// The SimMath backend (ADR 0002): fixed_point_16_16 by default; the
+// hello-fp32 build variant (hello-fp32.cpp) swaps the three
+// LAIGE_HELLO_BACKEND macros to run the same game on float_pinned_32 —
+// one op surface, two backends, the game code written once (M1-DET-04).
+// LAIGE_HELLO_FROM_INT32 is the exact small-int → Scalar construction
+// for the active backend (the Scalars differ: fpx16_16 has fromInt32,
+// float has none).
 //
 // The tick loop uses the engine's own tick primitives (one beginFrame()
 // + one runSystems() per tick — the runReplay shape, laige/sim/
@@ -37,8 +54,14 @@
 #include "laige/result.h"
 #include "laige/sim/engine.h"  // EngineConfig
 #include "laige/sim/replay.h"  // ReplayRecorder, loadReplay, identity
+#include "hello-baseline.h"  // M1-DET-04: the --expect baseline check
 
-using M = laige::sim::SimMathFpx16;  // the ADR 0002 default backend
+#ifndef LAIGE_HELLO_BACKEND
+#define LAIGE_HELLO_BACKEND laige::sim::SimMathFpx16
+#define LAIGE_HELLO_BACKEND_ID laige::SimMathBackend::FixedPoint16_16
+#define LAIGE_HELLO_FROM_INT32(V) laige::fpx16_16::fromInt32(V)
+#endif
+using M = LAIGE_HELLO_BACKEND;
 
 // The game's only component (FR-1.2): the player's 2D position (PRD §4:
 // the simulation is 2D). Marked a component and determinism-safe (G-R8):
@@ -55,10 +78,10 @@ namespace {
 // unit per tick along the diagonal and wraps in a 32-unit box — a full
 // crossing is 32 ticks (~0.53 s at the canonical 60 Hz).
 constexpr std::uint32_t kScenarioTicks = 300;    // the M1 CI scenario
-constexpr M::Scalar kVelocity = M::Scalar::fromInt32(1);   // 1 unit/tick
-constexpr M::Scalar kBoxMin = M::Scalar::fromInt32(-16);
-constexpr M::Scalar kBoxMax = M::Scalar::fromInt32(16);
-constexpr M::Scalar kBoxSize = M::Scalar::sub(kBoxMax, kBoxMin);  // 32 units
+constexpr M::Scalar kVelocity = LAIGE_HELLO_FROM_INT32(1);  // 1 unit/tick
+constexpr M::Scalar kBoxMin = LAIGE_HELLO_FROM_INT32(-16);
+constexpr M::Scalar kBoxMax = LAIGE_HELLO_FROM_INT32(16);
+constexpr M::Scalar kBoxSize = LAIGE_HELLO_FROM_INT32(32);  // 32 units
 
 // The game's only system (FR-1.3: plain function, 1 ms budget, declared
 // Write on PlayerPos): advance each axis by the constant velocity and
@@ -71,11 +94,7 @@ void MovePlayer(laige::World&, laige::SystemContext& ctx) {
   // facade in release and asserts in debug — the query guard's
   // documented behavior (query.h), so the Status is cast away here.
   static_cast<void>(ctx.each<PlayerPos>([](laige::Entity, PlayerPos& p) {
-    auto stepAxis = [](M::Scalar& v) {
-      v = M::add(v, kVelocity);
-      if (v >= kBoxMax) v = M::sub(v, kBoxSize);
-      if (v < kBoxMin) v = M::add(v, kBoxSize);
-    };
+    auto stepAxis = [](M::Scalar& v) { v = M::add(v, kVelocity); if (v >= kBoxMax) v = M::sub(v, kBoxSize); if (v < kBoxMin) v = M::add(v, kBoxSize); };
     stepAxis(p.pos.x);
     stepAxis(p.pos.y);
   }, laige::Write{}));
@@ -88,38 +107,36 @@ void report(const char* stage, laige::ErrorCode code) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string replayPath, logPath;
+  std::string replayPath, logPath, expectPath;
   std::uint32_t ticks = kScenarioTicks;
   if (argc % 2 == 0) { std::fprintf(stderr, "hello: an option is missing its value\n"); return 2; }
   for (int i = 1; i < argc; i += 2) {
     const std::string_view a = argv[i], v = argv[i + 1];
     if (a == "--replay") replayPath = v;
     else if (a == "--log") logPath = v;
+    else if (a == "--expect") expectPath = v;
     else { std::fprintf(stderr, "hello: unknown option '%.*s' (see samples/hello/README.md)\n", static_cast<int>(a.size()), a.data()); return 2; }
   }
   if (!logPath.empty() && !replayPath.empty()) { std::fprintf(stderr, "hello: --log and --replay are exclusive\n"); return 2; }
 
-  // 1. The canonical config (identical to config.json): 60 Hz, scene
+  // 1. The canonical config (identical to config.json, except the
+  //    hello-fp32 variant's LAIGE_HELLO_BACKEND_ID): 60 Hz, scene
   //    budget 8, the engine churn default, the house seed
-  //    (docs/testing.md), deterministic fpx16_16 — the only backend this
-  //    template supports (ADR 0002).
-  const laige::EngineConfig config{60, 8, 256, 0x1F055EED, {true, laige::SimMathBackend::FixedPoint16_16}};
+  //    (docs/testing.md), deterministic — the backend is part of the
+  //    replay identity (ADR 0002).
+  const laige::EngineConfig config{60, 8, 256, 0x1F055EED, {true, LAIGE_HELLO_BACKEND_ID}};
 
   // 2. World + the game's registration (the setup phase; the registration
   //    order is part of the replay identity — ADR 0002), then the player
   //    entity at the box center (the initial state the tick-0 line covers)
   //    and the pre-run system schedule (M1-SYS-02).
-  laige::World::Options o{config.entityCapacity, config.churnPerFrameBudget, config.seed, config.determinism.enabled};
-  auto wr = laige::World::create(o);
-  if (wr.isError()) { report("world", wr.error()); return 2; }
+  const laige::World::Options o{config.entityCapacity, config.churnPerFrameBudget, config.seed, config.determinism.enabled};
+  auto wr = laige::World::create(o); if (wr.isError()) { report("world", wr.error()); return 2; }
   laige::World world = std::move(wr).takeValue();
   const laige::Status setup = [&world] {
-    const auto c = world.registerComponent<PlayerPos>();
-    if (c.isError()) return laige::Status(c.error());
-    const auto s = world.registerSystem(MovePlayer_Def, laige::Io<PlayerPos, laige::Access::Write>{});
-    if (s.isError()) return laige::Status(s.error());
-    const auto e = world.create();
-    if (e.isError()) return laige::Status(e.error());
+    const auto c = world.registerComponent<PlayerPos>(); if (c.isError()) return laige::Status(c.error());
+    const auto s = world.registerSystem(MovePlayer_Def, laige::Io<PlayerPos, laige::Access::Write>{}); if (s.isError()) return laige::Status(s.error());
+    const auto e = world.create(); if (e.isError()) return laige::Status(e.error());
     return world.addComponent<PlayerPos>(e.value(), PlayerPos{});
   }();
   if (setup.isError()) { report("world", setup.error()); return 2; }
@@ -131,8 +148,7 @@ int main(int argc, char** argv) {
   //    replay, never a silent divergence). The log's frame count defines
   //    the run length.
   if (!logPath.empty()) {
-    const auto lg = laige::loadReplay(logPath);
-    if (lg.isError()) { report("replay", lg.error()); return 2; }
+    const auto lg = laige::loadReplay(logPath); if (lg.isError()) { report("replay", lg.error()); return 2; }
     if (!laige::replayIdentityDiff(lg.value(), world, config).empty()) { report("replay: identity mismatch", laige::ErrorCode::InvalidArgument); return 2; }
     ticks = static_cast<std::uint32_t>(lg.value().frames.size());
   }
@@ -145,31 +161,42 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "hello: replay: recording is a debug-build feature (NDEBUG)\n");
     return 2;
 #else
-    auto r = laige::ReplayRecorder::create(laige::makeReplayIdentity(world, config), replayPath, laige::kDefaultReplaySizeLimit);
-    if (r.isError()) { report("replay", r.error()); return 2; }
+    auto r = laige::ReplayRecorder::create(laige::makeReplayIdentity(world, config), replayPath, laige::kDefaultReplaySizeLimit); if (r.isError()) { report("replay", r.error()); return 2; }
     recorder = std::make_unique<laige::ReplayRecorder>(std::move(r).takeValue());
 #endif
   }
 
-  // 5. The tick loop: the tick-0 line (initial state), then one line per
-  //    completed tick — stdout carries nothing else.
-  std::printf("0 %016llx\n", static_cast<unsigned long long>(world.stateHash(0)));
-  laige::Status runStatus{};
-  std::uint64_t completed = 0;
+  // 5. The baseline check (--expect, M1-DET-04): the committed per-tick
+  //    hash stream of the reference build (canonical Debug g++; the
+  //    samples/hello/baselines/ README). A read/contract failure is a
+  //    usage-level error (2) before any tick is run.
+  hello::BaselineCheck baseline(expectPath);
+  if (!baseline.errorText().empty()) { std::fprintf(stderr, "hello: baseline: %s\n", baseline.errorText().c_str()); return 2; }
+
+  // 6. The tick loop: the tick-0 line (initial state), then one line per
+  //    completed tick — stdout carries nothing else. Each line is emitted
+  //    through the baseline check (it compares in place when --expect was
+  //    given — the laige-replay --expect semantics).
+  baseline.emit(0, world.stateHash(0));
+  laige::Status runStatus{}; std::uint64_t completed = 0;
   for (std::uint64_t tick = 1; tick <= ticks; ++tick) {
     world.beginFrame();
     const laige::Status step = world.runSystems(schedule);
     if (step.isError()) { runStatus = step; break; }
     if (recorder != nullptr) { const laige::Status f = recorder->writeFrame(tick, nullptr, 0); if (f.isError()) { runStatus = f; break; } }
     ++completed;
-    std::printf("%llu %016llx\n", static_cast<unsigned long long>(tick), static_cast<unsigned long long>(world.stateHash(tick)));
+    baseline.emit(tick, world.stateHash(tick));
   }
 
-  // 6. Ordered teardown (CONC-006): finalize the log only on success (an
+  // 7. Ordered teardown (CONC-006): finalize the log only on success (an
   //    unfinished recorder's destructor removes its temp file), clear the
-  //    world, shut down the logging facade.
+  //    world, shut down the logging facade. A per-tick identity mismatch
+  //    with the baseline is exit 1 with the first-divergence report
+  //    (laige-replay --expect parity, M1-DET-04).
   if (recorder != nullptr) runStatus = runStatus.ok() ? recorder->finish() : runStatus;
   std::fprintf(stderr, "hello %s ticks=%llu status=%s\n", logPath.empty() ? "headless" : "replay", static_cast<unsigned long long>(completed), runStatus.ok() ? "ok" : laige::errorName(runStatus.error()));
+  const std::string baselineFail = runStatus.ok() ? baseline.failText(completed + 1) : std::string{};
+  if (!baselineFail.empty()) { std::fprintf(stderr, "hello: %s\n", baselineFail.c_str()); return 1; }
   static_cast<void>(world.clear());
   laige::log::Logger::instance().shutdown();
   return runStatus.ok() ? 0 : 1;

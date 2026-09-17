@@ -26,7 +26,12 @@ temp+rename, size-bounded), `Engine::startReplayRecording`, and
 template game (samples/hello: one component, one system, one entity,
 the per-tick `World::stateHash` stream on stdout, record → replay
 through the scenario's own binary, the PRD §9.4 line budget —
-[samples/hello/README.md](../../samples/hello/README.md)).
+[samples/hello/README.md](../../samples/hello/README.md));
+M1-DET-04: bit-exactness CI — the hello scenario's committed per-tick
+hash baselines (both SimMath backends), the `hello --expect` baseline
+check in every P0 OS job's ctest, the merge `detcheck` job's
+two-configuration pairs (g++ vs clang++, Debug+ASan vs Release), and
+the [determinism report](benchmarks/determinism-matrix.md)).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -142,7 +147,8 @@ still to land.
   (M0-CORE-06).
 - [Determinism checker](api/detcheck.md) — the `laige-detcheck` tool and
   the scenario hash-line contract (`<tick> <hash>` lines, two build
-  configurations) (M0-TOOL-02).
+  configurations) (M0-TOOL-02; activated on the hello scenario by
+  M1-DET-04 — the baseline comparison and the CI matrix).
 
 ## Guides
 
@@ -166,8 +172,13 @@ still to land.
   report fields, the `budgets.json` field mapping, the baseline-file
   convention, and the PRD §8.1 regression policy (M0-DOC-01).
 - [Baselines](benchmarks/baselines/README.md) — recorded baseline
-  reports. **Empty so far** (all `budgets.json` entries have
-  `measured: 0`); the first, `m0-synthetic.md`, lands with M0-EXIT-01.
+  reports (`m0-synthetic.md`, M0-EXIT-01, and `m1-ecs-stress.md`,
+  M1-ECS-07; every `budgets.json` entry still has `measured: 0`).
+- [Determinism matrix](benchmarks/determinism-matrix.md) — the
+  M1-DET-04 determinism report: the committed per-tick hash baselines
+  of the hello scenario (both SimMath backends), the CI matrix (every
+  P0 OS job's baseline check + the merge detcheck job's cross-compiler
+  / sanitizer / Release pairs), and the ARCH-010 scope statement.
 
 ## Architecture decisions (ADRs)
 

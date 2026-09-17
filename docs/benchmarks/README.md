@@ -15,6 +15,12 @@ Benchmark methodology, baselines, results, and the regression policy
   `baselines/m1-ecs-stress.md`, M1-ECS-07) measure harness and stress
   workloads that update no budget. `baselines/m1-profiler-cost.md`
   lands with M1-PROF-01.
+- [determinism-matrix.md](determinism-matrix.md) — the **determinism
+  report** for the M1-SAMPLE-01 hello scenario (M1-DET-04): the
+  committed per-tick hash baselines (both SimMath backends), the CI
+  matrix (every P0 OS job's ctest baseline check + the merge detcheck
+  job's cross-compiler / sanitizer / Release pairs), the ARCH-010
+  scope statement, and the `float_pinned_32` per-platform support list.
 - Per-milestone performance results (M1 10k-entity tick, M2 50k-sprite
   scene, M6/M7 zone server, …) land here as their milestones close —
   see the [roadmap progress board](../../roadmap/README.md).

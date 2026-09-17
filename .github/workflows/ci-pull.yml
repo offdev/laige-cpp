@@ -306,13 +306,19 @@ jobs:
         run: ./build/bin/laige-api-scanner --root . --check laige-api.json
 
   detcheck:
-    # M0-TOOL-02: runs on every PR (no ci:* condition). The determinism
-    # checker skeleton (FR-11.5): the built-in synthetic scenario
-    # self-check runs here so a broken checker lands red before the real
-    # scenarios exist. The real-scenario comparison (two build
-    # configurations of M1-SAMPLE-01's hello) is skipped until that
-    # sample lands; M1-DET-04 activates it (see the job in ci.yml for
-    # the full note).
+    # M1-DET-04: runs on every PR (no ci:* condition). The determinism
+    # checker (FR-11.5): the built-in synthetic scenario self-check,
+    # then the M1-SAMPLE-01 hello scenario asserted against the
+    # committed per-tick hash baselines (samples/hello/baselines/) on
+    # BOTH SimMath backends (fixed_point_16_16, float_pinned_32 — ADR
+    # 0002) with `hello --expect` (the laige-replay --expect contract:
+    # 0 match, 1 first divergence, 2 baseline read/contract error).
+    # The PR's P0 OS job's ctest repeats the same baseline assertion on
+    # its own platform (tests/sample: hello_baseline_fpx /
+    # hello_baseline_fp32); this tooling job guarantees the check runs
+    # on every PR, including ones labelled for non-Linux P0 OSes. The
+    # full two-configuration matrix (g++ vs clang++, Debug+ASan vs
+    # Release) runs on merges in the detcheck job of ci.yml.
     name: Determinism check
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -324,15 +330,13 @@ jobs:
         run: cmake --build build -j
       - name: Synthetic scenario self-check
         run: ./build/bin/laige-detcheck --scenario=synthetic
-      - name: Real scenario (M1-SAMPLE-01)
-        # Skipped until M1-SAMPLE-01 lands the hello scenario binary;
-        # M1-DET-04 replaces this step with the two-configuration
-        # comparison (see the job in ci.yml).
+      - name: Real scenario vs baselines (M1-SAMPLE-01, both backends)
+        # The hello template is always built in this job, so both steps
+        # always execute. Each must exit 0 (a first-divergence report is
+        # exit 1; a baseline read/contract failure is exit 2) and print
+        # the 301-line per-tick hash stream.
         run: |
-          if [ -x samples/hello/bin/hello ]; then
-            ./build/bin/laige-detcheck \
-              --run-a=samples/hello/bin/hello \
-              --run-b=samples/hello/bin/hello
-          else
-            echo "skipped: no real scenario yet (M1-SAMPLE-01)"
-          fi
+          ./samples/hello/bin/hello \
+            --expect samples/hello/baselines/fixed_point_16_16/hash_stream.txt
+          ./samples/hello/bin/hello-fp32 \
+            --expect samples/hello/baselines/float_pinned_32/hash_stream.txt

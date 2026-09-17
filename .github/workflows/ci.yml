@@ -330,42 +330,112 @@ jobs:
         run: ./build/bin/laige-api-scanner --root . --check laige-api.json
 
   detcheck:
-    # M0-TOOL-02 (FR-11.5; AGENTS ARCH-010, TEST-004): the determinism
-    # checker skeleton. This job runs the built-in synthetic scenario
-    # self-check (two in-process runs, per-tick hash comparison — the
-    # step's Verify clause), so a broken checker lands red here before
-    # the real scenarios exist. The real-scenario comparison — two build
-    # configurations of M1-SAMPLE-01's hello scenario (Debug+ASan vs
-    # Release, plus g++ vs clang++ on Linux) — is SKIPPED until that
-    # sample lands; M1-DET-04 activates it and records the result per
-    # ARCH-010. Like include-lint and api-manifest, the job runs on every
-    # PR and merge, independent of the ci:* label selector — it is a
-    # tooling check, not an additional P0 OS build (the PRD §14 cadence
-    # is unchanged).
+    # M1-DET-04 (FR-11.5; AGENTS ARCH-010, TEST-004): bit-exactness CI.
+    # The M1-SAMPLE-01 hello scenario is run headless across the
+    # determinism matrix and asserted for per-tick hash identity:
+    #
+    #   vs the committed baselines (samples/hello/baselines/; reference
+    #       build: canonical Debug g++) — the P0 OS jobs' ctest already
+    #       runs this half on every platform (tests/sample:
+    #       hello_baseline_fpx / hello_baseline_fp32); this job pins the
+    #       reference build against its own baselines and adds the
+    #       cross-build pairs no single P0 job can produce:
+    #
+    #   pair A:  g++ Debug   vs clang++ Debug     (the two Linux
+    #                                                compilers)
+    #   pair B:  Debug+ASan  vs g++ Release       (the two
+    #                                                configurations)
+    #
+    #   ... x both SimMath backends (fixed_point_16_16 and
+    #       float_pinned_32 — ADR 0002). A desynced pair is declared
+    #       unsupported for float_pinned_32 (same-build/same-ISA
+    #       scope); fixed_point_16_16 must always match. The result is
+    #       recorded in docs/benchmarks/determinism-matrix.md (scope
+    #       stated per ARCH-010).
+    #
+    # Like include-lint and api-manifest, the job runs on every PR and
+    # merge, independent of the ci:* label selector — it is a tooling
+    # check, not an additional P0 OS build (the PRD §14 cadence is
+    # unchanged).
     name: Determinism check
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-      - name: Build
-        run: cmake --build build -j
-      - name: Synthetic scenario self-check
-        run: ./build/bin/laige-detcheck --scenario=synthetic
-      - name: Real scenario (M1-SAMPLE-01)
-        # The hello template (samples/hello) is always built in this
-        # job, so this step always executes: two no-arg runs of the
-        # scenario — both must exit 0 and print the 301-line per-tick
-        # hash stream (the guard is defensive only). M1-DET-04 replaces
-        # this step with the two-configuration comparison, e.g.:
-        #   ./build/bin/laige-detcheck --run-a=build-asan/bin/hello
-        #                              --run-b=build/bin/hello
+      # -- The four build configurations (targeted builds: only the
+      #    scenario binaries and the checker — no full project build).
+      #    The hello binaries land at the SOURCE-tree path
+      #    samples/hello/bin/ (shared across build trees), so each
+      #    tree's binaries are copied into detbin/ immediately after
+      #    that tree is built.
+      - name: Build reference (Debug g++)
         run: |
-          if [ -x samples/hello/bin/hello ]; then
-            ./build/bin/laige-detcheck \
-              --run-a=samples/hello/bin/hello \
-              --run-b=samples/hello/bin/hello
-          else
-            echo "skipped: no real scenario yet (M1-SAMPLE-01)"
-          fi
+          cmake -S . -B build-det-ref \
+                -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+          cmake --build build-det-ref -j \
+                --target hello hello-fp32 laige-detcheck
+          mkdir -p detbin
+          cp samples/hello/bin/hello detbin/hello-gcc-debug
+          cp samples/hello/bin/hello-fp32 detbin/hello-fp32-gcc-debug
+          cp build-det-ref/bin/laige-detcheck detbin/laige-detcheck
+      - name: Build clang++ Debug
+        run: |
+          cmake -S . -B build-det-clang \
+                -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+          cmake --build build-det-clang -j --target hello hello-fp32
+          cp samples/hello/bin/hello detbin/hello-clang-debug
+          cp samples/hello/bin/hello-fp32 detbin/hello-fp32-clang-debug
+      - name: Build Debug + ASan (clang++)
+        run: |
+          cmake -S . -B build-det-asan \
+                -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ \
+                -DLAIGE_ASAN=ON
+          cmake --build build-det-asan -j --target hello hello-fp32
+          cp samples/hello/bin/hello detbin/hello-asan-debug
+          cp samples/hello/bin/hello-fp32 detbin/hello-fp32-asan-debug
+      - name: Build Release (g++)
+        run: |
+          cmake -S . -B build-det-release \
+                -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++
+          cmake --build build-det-release -j --target hello hello-fp32
+          cp samples/hello/bin/hello detbin/hello-gcc-release
+          cp samples/hello/bin/hello-fp32 detbin/hello-fp32-gcc-release
+      # -- The reference build must reproduce its own committed baselines
+      #    (a stale baseline is a loud job failure, never a silent
+      #    re-baseline — CORE-008).
+      - name: Reference baseline sanity
+        run: |
+          ./detbin/hello-gcc-debug \
+            --expect samples/hello/baselines/fixed_point_16_16/hash_stream.txt
+          ./detbin/hello-fp32-gcc-debug \
+            --expect samples/hello/baselines/float_pinned_32/hash_stream.txt
+      # -- The checker's built-in synthetic scenario self-check (two
+      #    in-process runs; the M0-TOOL-02 step's Verify clause).
+      - name: Synthetic scenario self-check
+        run: ./detbin/laige-detcheck --scenario=synthetic
+      # -- The two-configuration pairs (the roadmap matrix), both
+      #    backends. Phase 1 spawns the two runs and streams their
+      #    per-tick hash lines into one combined file (the children
+      #    inherit the redirected stdout); phase 2 compares it offline
+      #    (the Windows handle-delivery workaround; this job is
+      #    ubuntu-only, so phase 1 is a plain bash redirection).
+      - name: Pair A — g++ Debug vs clang++ Debug
+        run: |
+          ./detbin/laige-detcheck \
+            --run-a=detbin/hello-gcc-debug --run-b=detbin/hello-clang-debug \
+            > detbin/combined-a-fpx.txt
+          ./detbin/laige-detcheck --compare-combined=detbin/combined-a-fpx.txt
+          ./detbin/laige-detcheck \
+            --run-a=detbin/hello-fp32-gcc-debug --run-b=detbin/hello-fp32-clang-debug \
+            > detbin/combined-a-fp32.txt
+          ./detbin/laige-detcheck --compare-combined=detbin/combined-a-fp32.txt
+      - name: Pair B — Debug+ASan vs Release
+        run: |
+          ./detbin/laige-detcheck \
+            --run-a=detbin/hello-asan-debug --run-b=detbin/hello-gcc-release \
+            > detbin/combined-b-fpx.txt
+          ./detbin/laige-detcheck --compare-combined=detbin/combined-b-fpx.txt
+          ./detbin/laige-detcheck \
+            --run-a=detbin/hello-fp32-asan-debug --run-b=detbin/hello-fp32-gcc-release \
+            > detbin/combined-b-fp32.txt
+          ./detbin/laige-detcheck --compare-combined=detbin/combined-b-fp32.txt

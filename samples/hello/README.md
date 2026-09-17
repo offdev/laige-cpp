@@ -13,7 +13,10 @@ order.
 |---|---|
 | `hello.laige` | The project manifest (provisional M1 format: `laige.project` v1 JSON. The asset-pipeline format it replaces is owned by M3-ASSET-01). |
 | `config.json` | The canonical sample config in the engine's declarative JSON surface (`laige-run`'s format, M1-HEAD-01). The values are identical to the config embedded in `hello.cpp` (see "Config" below). |
-| `hello.cpp` | The game source (the only source). |
+| `hello.cpp` | The game source. |
+| `hello-baseline.cpp` | The `--expect` baseline check (M1-DET-04) — separate TU so `hello.cpp` stays inside the PRD §9.4 line budget. |
+| `hello-fp32.cpp` | The `float_pinned_32` build variant (M1-DET-04, ADR 0002): defines the backend macros and includes `hello.cpp` — same game source, backend swapped by the build. |
+| `baselines/` | The committed per-tick hash-stream baselines, one per backend (M1-DET-04; [baselines/README.md](baselines/README.md)). |
 | `LICENSE` | Per-sample license (ADR 0001: each sample ships its own license; MIT, matching the repository). |
 
 ## Build and run
@@ -25,17 +28,19 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j
 ```
 
-The binary lands at the **source-tree** path `samples/hello/bin/hello`
-(a `RUNTIME_OUTPUT_DIRECTORY` override — the CI detcheck step invokes it
-from the repository root without arguments). Run it from anywhere. Note
-the path is shared across build trees: building a second tree (e.g.
-`build-asan/`) overwrites it, so rebuild the tree you intend to run
-before executing the binary.
+The binaries land at the **source-tree** path `samples/hello/bin/`
+(a `RUNTIME_OUTPUT_DIRECTORY` override — the CI detcheck job invokes
+them from the repository root without arguments). Run them from
+anywhere. Note the path is shared across build trees: building a second
+tree (e.g. `build-asan/`) overwrites it, so rebuild the tree you intend
+to run before executing the binary.
 
 ```sh
-./samples/hello/bin/hello                    # 300 ticks, no replay
+./samples/hello/bin/hello                    # 300 ticks, no replay (fixed_point_16_16)
 ./samples/hello/bin/hello --replay LOG       # 300 ticks + record LOG (debug builds)
 ./samples/hello/bin/hello --log LOG          # replay LOG, print its hash stream
+./samples/hello/bin/hello --expect BASELINE  # compare the stream against a baseline
+./samples/hello/bin/hello-fp32               # the same game on float_pinned_32
 ```
 
 - **stdout** carries exactly the hash stream — nothing else: `N+1`
@@ -48,10 +53,14 @@ before executing the binary.
 - **stderr** carries the one-line summary (`hello headless ticks=300
   status=ok` / `hello replay ticks=300 status=ok`) and diagnostics.
 - **Exit codes:** `0` ok; `1` a run failure (a tick failed, a replay
-  write failed, or the log finalization failed); `2` usage, IO, or
-  replay-identity error (nothing was run).
-- `--replay` and `--log` are mutually exclusive; an unknown option or a
-  missing option value is a usage error (`2`).
+  write failed, the log finalization failed, or — with `--expect` — a
+  per-tick identity mismatch with the baseline, with the
+  first-divergence report on stderr); `2` usage, IO, or
+  replay-identity error (nothing was run), including a baseline
+  read/contract failure (`hello: baseline: ...`).
+- `--replay` and `--log` are mutually exclusive; `--expect` composes
+  with either run form; an unknown option or a missing option value is
+  a usage error (`2`).
 
 ## The game
 
@@ -87,14 +96,16 @@ runner for a game scenario, and `laige-replay`'s scope note
 The canonical sample config is **embedded** in `hello.cpp` (the
 aggregate at the top of `main`): 60 Hz, scene budget 8, the engine
 churn default (256), the house seed `0x1F055EED`
-([docs/testing.md](../../docs/testing.md)), deterministic
-`fpx16_16` — the only backend this template supports (selecting
-`float_pinned_32` would make the config lie about the math the state
-was computed in: the replay identity, ADR 0002). `config.json` is the
-declarative record of the same values in the engine's JSON surface —
-it is what `laige-run --headless samples/hello/config.json` consumes
-and what the M1-DET-04 baseline tooling reads; the template binary
-keeps its CLI minimal (CORE-004) and does not re-read it.
+([docs/testing.md](../../docs/testing.md)), deterministic — the
+backend field is `fixed_point_16_16` in `hello` and
+`float_pinned_32` in the `hello-fp32` build variant (the
+`LAIGE_HELLO_BACKEND_ID` macro, ADR 0002: the backend is part of the
+replay identity, so each binary's stream belongs to exactly one
+backend). `config.json` is the declarative record of the same values
+in the engine's JSON surface — it is what
+`laige-run --headless samples/hello/config.json` consumes and what the
+M1-DET-04 baseline tooling reads; the template binary keeps its CLI
+minimal (CORE-004) and does not re-read it.
 
 ## Replay
 
@@ -119,6 +130,29 @@ Note: `laige-replay` (the engine tool) replays only logs recorded by
 log is replayed by the scenario's own binary — which is why this
 template carries the `--log` mode.
 
+## Baselines and the determinism matrix (M1-DET-04)
+
+`--expect BASELINE` compares the run's per-tick hash stream against a
+committed baseline with the `laige-replay --expect` contract (the
+scenario's own binary carries the check because a game log cannot be
+replayed by `laige-replay` — the replay identity, ADR 0002):
+**exit 0** identity, **exit 1** first-divergence report (or stream-
+length mismatch) on stderr, **exit 2** baseline read/contract error
+before any tick is run. The committed baselines
+([baselines/](baselines/README.md)) are the 301-line streams of the
+**reference build (canonical Debug g++)**, one per backend;
+`fixed_point_16_16` must be reproduced by every conforming build,
+`float_pinned_32` is same-build/same-ISA (a desynced build is declared
+unsupported — never re-baselined).
+
+In CI: every P0 OS job's ctest runs `hello_baseline_fpx` /
+`hello_baseline_fp32` (this job's own build vs the baselines, both
+backends) plus the failure fixtures, and the merge `detcheck` job adds
+the two-configuration pairs (g++ vs clang++ Debug, Debug+ASan vs
+Release, both backends, via `laige-detcheck --run-a/--run-b`). Scope
+and results:
+[docs/benchmarks/determinism-matrix.md](../../docs/benchmarks/determinism-matrix.md).
+
 ## Tests
 
 `ctest --test-dir build -R '^hello'` (registered in `tests/sample`):
@@ -134,6 +168,12 @@ template carries the `--log` mode.
 | `hello_usage_missing_value` | A dangling option: exit 2. |
 | `hello_config_valid` | `config.json` parses cleanly on the engine's config surface (`laige-run --headless` consumes it). |
 | `hello_line_budget` | The game-code budget (PRD §9.4): non-comment, non-blank lines of `hello.cpp` < 100. |
+| `hello_baseline_fpx` | **M1-DET-04:** this build's `hello --expect` the committed `fixed_point_16_16` baseline: exit 0, 301 hash lines — per-tick identity vs the reference build on every P0 OS job. |
+| `hello_baseline_fp32` | **M1-DET-04:** the same assertion for `hello-fp32` vs the `float_pinned_32` baseline. |
+| `hello_baseline_mismatch` | **M1-DET-04:** a derived baseline with one flipped hash: exit 1, the `laige-replay --expect` first-divergence report. |
+| `hello_baseline_truncated` | **M1-DET-04:** a derived baseline cut to 160 lines: exit 1, the stream-length-mismatch report. |
+| `hello_baseline_malformed` | **M1-DET-04:** a derived baseline with a bad hash token: exit 2 before any tick is run (the load-time contract, CORE-008). |
+| `hello_baseline_missing` | **M1-DET-04:** a missing baseline file: exit 2, the actionable read error. |
 
 ## Line budget (PRD §9.4, NFR-13.5)
 

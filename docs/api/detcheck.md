@@ -17,8 +17,13 @@ output contract** defined below and compares two such streams. The
 real scenario now exists: **M1-SAMPLE-01**'s `hello` (samples/hello)
 prints exactly this contract — the tick-0 line plus one
 `World::stateHash` line per completed tick — and the CI job's real-
-scenario step runs it; **M1-DET-04** activates the two-configuration
-comparison of it (the tool's line-by-line comparison is unchanged).
+scenario stream in CI: **M1-DET-04** activated the checker on it — the
+merge CI job runs the two-configuration matrix (g++ vs clang++ Debug,
+Debug+ASan vs Release, both SimMath backends; see [CI status](#ci-status)),
+and every P0 OS job's ctest asserts the stream against the committed
+per-tick hash baselines (`samples/hello/baselines/`) with `hello
+--expect` ([baseline comparison](#baseline-comparison-hello---expect)).
+The tool's line-by-line comparison is unchanged.
 
 ## Scenario contract
 
@@ -186,17 +191,69 @@ early exit / short stream). Each test is a generated `cmake -P` check
 script asserting both the exit code and the required output fragments
 (same pattern as `tests/api`).
 
+## Baseline comparison (`hello --expect`)
+
+`laige-detcheck` compares **two runs of one build configuration**
+against each other; the committed baselines (below) compare a run
+against the **reference build**. The scenario's own binary carries that
+check — `hello --expect BASELINE` — because a game scenario's log
+cannot be replayed by `laige-replay` (different registrations → replay
+identity mismatch; ADR 0002). It is the scenario-side equivalent of
+`laige-replay --expect` and follows the same contract:
+
+- stdout is the run's 301-line hash stream (unchanged);
+- **exit 0** — every line matches the baseline (identity);
+- **exit 1** — first divergence, with the `laige-replay --expect`
+  report on stderr (`hash mismatch at tick N (first divergence)` + the
+  baseline/run lines, or the stream-length-mismatch report);
+- **exit 2** — a baseline read/contract error (missing file, a line
+  not matching `<tick> <hash>`, the 65536-line bound, the 64-byte
+  line bound, the 8 MiB read cap) before any tick is run.
+
+The check is O(1) per tick in place (one line compared at a time; no
+allocation after the baseline loads).
+
+The committed per-tick hash baselines live in
+[`samples/hello/baselines/`](../../samples/hello/baselines/README.md) —
+one stream per SimMath backend, generated from the **reference build
+(canonical Debug g++)**:
+
+- `fixed_point_16_16/hash_stream.txt` — bit-exact by the C++20
+  standard; every conforming build must reproduce it;
+- `float_pinned_32/hash_stream.txt` — same-build/same-ISA scope (ADR
+  0002); a desynced build is declared **unsupported** for that backend
+  on its platform (never re-baselined silently).
+
 ## CI status
 
-The `detcheck` CI job (`.github/workflows/ci.yml` and `ci-pull.yml`) runs
-the built-in self-check on every PR and merge (like `include-lint` and
-`api-manifest`, independent of the `ci:*` label selector — it is a
-tooling check, not an additional P0 OS build). It also runs the **real
-scenario** (M1-SAMPLE-01): both `--run-a` and `--run-b` point at
-`samples/hello/bin/hello` (the no-arg 300-tick headless run — the step
-activates once the sample binary exists, which it now does), so every
-PR and merge executes the template game's detcheck contract: both runs
-must complete (exit 0) and print the 301-line hash stream. **M1-DET-04**
-replaces this same-configuration step with the two-configuration
-comparison (`build-asan/bin/hello` vs `build/bin/hello`) and records the
-result per ARCH-010.
+M1-DET-04 wired the determinism matrix into CI (PRD §14 cadence — every
+merge; the result is recorded per ARCH-010 in
+[benchmarks/determinism-matrix.md](../benchmarks/determinism-matrix.md)):
+
+- **Every P0 OS job** (merge: all five; PR: the labelled one) runs the
+  full ctest suite, which includes `hello_baseline_fpx` /
+  `hello_baseline_fp32` — this job's own native build of the scenario
+  must reproduce the reference baselines bit-exactly, on both backends
+  (`hello --expect`, above). The failure fixtures (first divergence,
+  stream length, malformed line, missing file) are pinned by
+  `hello_baseline_mismatch` / `_truncated` / `_malformed` / `_missing`.
+- **The merge `detcheck` job** (`.github/workflows/ci.yml`,
+  "Determinism check" — a tooling job on every merge, like
+  `include-lint` and `api-manifest`, independent of the `ci:*` label
+  selector): builds the scenario in four configurations (Debug g++,
+  Debug clang++, Debug+ASan clang++, Release g++ — only the scenario
+  targets + the checker), then runs
+  1. the **reference-baseline sanity** — the Debug g++ build must
+     reproduce both committed baselines (a stale baseline is a red
+     job, CORE-008);
+  2. the built-in **synthetic self-check** (two in-process runs — the
+     M0-TOOL-02 Verify clause);
+  3. the two-configuration **pairs**, both backends, via
+     `--run-a/--run-b` + `--compare-combined`:
+     **pair A** g++ Debug vs clang++ Debug (the two Linux compilers),
+     **pair B** Debug+ASan vs Release (the two configurations).
+- **The PR `detcheck` job** (`.github/workflows/ci-pull.yml`) keeps the
+  single-build shape (the synthetic self-check) plus the
+  **both-backend baseline comparison** (`hello --expect` /
+  `hello-fp32 --expect`) — so the check always runs, even on PRs
+  labelled for a non-Linux P0 OS.

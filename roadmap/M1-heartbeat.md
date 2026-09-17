@@ -193,7 +193,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R replay_replay` green; perturbed baseline makes `laige-replay --expect` fail at the correct tick with an actionable report.
   - **Size:** ~250 lines + tests
 
-- [ ] **M1-DET-04 · Bit-exactness CI (all P0 OS jobs, both SimMath backends)**
+- [x] **M1-DET-04 · Bit-exactness CI (all P0 OS jobs, both SimMath backends)**
   - **Refs:** FR-1.4, NFR-8.3, FR-11.5; PRD §14 (determinism every merge)
   - **Depends:** M1-DET-03, M1-SAMPLE-01, M0-TOOL-02
   - **Scope:**
