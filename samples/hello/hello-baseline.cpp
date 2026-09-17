@@ -176,7 +176,11 @@ std::string BaselineCheck::failText(std::uint64_t emitted) const {
            "\n  run:      " + lineB_;
   }
   if (emitted != baseline_.size()) {
-    const std::uint64_t at = std::min(emitted, baseline_.size());
+    // Both arguments must be one type for std::min's template deduction:
+    // on platforms where uint64_t is not size_t (macOS: unsigned long
+    // long vs unsigned long) the mixed call is a hard compile error.
+    const std::uint64_t at =
+        std::min(emitted, static_cast<std::uint64_t>(baseline_.size()));
     return "baseline stream length mismatch: the baseline has " +
            std::to_string(baseline_.size()) + " lines, the run produces " +
            std::to_string(emitted) + " (first missing/extra at tick " +

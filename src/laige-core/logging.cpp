@@ -497,7 +497,15 @@ namespace {
 // disposition (core dump / debugger / abort) continues unchanged.
 void crashHandler(int signum, siginfo_t*, void*) {
   static const char msg[] = "laige: fatal signal received; flushing logs\n";
-  (void)write(STDERR_FILENO, msg, sizeof(msg) - 1);
+  // glibc declares write() with warn_unused_result (attached under
+  // fortification, i.e. optimized builds); a (void) cast does not
+  // suppress it, and the engine's -Werror makes it fatal. Consume the
+  // result instead — the notice is best-effort, and there is no
+  // async-signal-safe fallback if the write fails (LOG-007).
+  const ssize_t written = write(STDERR_FILENO, msg, sizeof(msg) - 1);
+  if (written == -1) {
+    // Intentionally empty: nothing else is async-signal-safe here.
+  }
   Logger::instance().crashFlush();
   raise(signum);
 }
