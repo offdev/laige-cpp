@@ -6,6 +6,11 @@ build-*/
 Testing/
 CMakeUserPresets.json
 
+# Sample binaries (samples/hello builds into its own source-tree bin/ —
+# the CI detcheck step invokes samples/hello/bin/hello from the repo
+# root; M1-SAMPLE-01)
+samples/*/bin/
+
 # Compiled artifacts (in case they ever land outside build trees)
 *.o
 *.obj

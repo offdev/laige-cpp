@@ -14,9 +14,11 @@ state across configurations (NFR-8.3, FR-1.4). The engine state-hash API
 landed with **M1-DET-03** (`World::stateHash`,
 [api/entity.md](entity.md)); this tool works against the **hash-file
 output contract** defined below and compares two such streams. The
-current scenario fixture still prints its own ad-hoc hash stream; the
-scenario wiring that switches it to the `World::stateHash` stream lands
-with M1-SAMPLE-01 (the tool's line-by-line comparison is unchanged).
+real scenario now exists: **M1-SAMPLE-01**'s `hello` (samples/hello)
+prints exactly this contract — the tick-0 line plus one
+`World::stateHash` line per completed tick — and the CI job's real-
+scenario step runs it; **M1-DET-04** activates the two-configuration
+comparison of it (the tool's line-by-line comparison is unchanged).
 
 ## Scenario contract
 
@@ -159,10 +161,9 @@ body index and a nudge in [-4, 3] applied to x. Per-tick hash: FNV-1a 64
 and compiler by the language standard; no float anywhere in the workload.
 **Hash scope (M0):** tick counter + seed + body words. The Prng position
 is a pure function of (seed, nudge history) in this workload; the
-definitive scope — including PRNG state and the exact hash function —
-is M1-DET-03's `World::stateHash`
-([api/entity.md](entity.md)), which the scenario wiring switches to
-with M1-SAMPLE-01 (the tool's line-by-line comparison is unchanged).
+definitive scope — including PRNG state and the exact hash function — is
+M1-DET-03's `World::stateHash` ([api/entity.md](entity.md)), which the
+`hello` scenario (M1-SAMPLE-01) prints directly on its stdout stream.
 
 ## Performance and bounds
 
@@ -190,7 +191,12 @@ script asserting both the exit code and the required output fragments
 The `detcheck` CI job (`.github/workflows/ci.yml` and `ci-pull.yml`) runs
 the built-in self-check on every PR and merge (like `include-lint` and
 `api-manifest`, independent of the `ci:*` label selector — it is a
-tooling check, not an additional P0 OS build). The real-scenario
-comparison — two build configurations of M1-SAMPLE-01's `hello` — is
-**skipped until that sample exists**; **M1-DET-04** activates it and
-records the result per ARCH-010.
+tooling check, not an additional P0 OS build). It also runs the **real
+scenario** (M1-SAMPLE-01): both `--run-a` and `--run-b` point at
+`samples/hello/bin/hello` (the no-arg 300-tick headless run — the step
+activates once the sample binary exists, which it now does), so every
+PR and merge executes the template game's detcheck contract: both runs
+must complete (exit 0) and print the 301-line hash stream. **M1-DET-04**
+replaces this same-configuration step with the two-configuration
+comparison (`build-asan/bin/hello` vs `build/bin/hello`) and records the
+result per ARCH-010.

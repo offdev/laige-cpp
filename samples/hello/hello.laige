@@ -1,0 +1,7 @@
+{
+  "format": "laige.project",
+  "version": 1,
+  "name": "hello",
+  "config": "config.json",
+  "sources": ["hello.cpp"]
+}

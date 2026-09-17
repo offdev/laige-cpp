@@ -242,6 +242,13 @@ endfunction()
 add_subdirectory(src/laige-core)
 add_subdirectory(src/laige-sim)
 
+# Samples (M1-SAMPLE-01): the hello.laige headless template game.
+# Unconditional (not test-gated): the sample is a shipped project, and
+# the CI detcheck step builds and runs it from the default tree. Its
+# binary lands at the source-tree path samples/hello/bin/hello (its own
+# CMakeLists sets RUNTIME_OUTPUT_DIRECTORY — see there why).
+add_subdirectory(samples/hello)
+
 # ---------------------------------------------------------------------------
 # Tests (gated by LAIGE_BUILD_TESTS; conventions in tests/README.md)
 # ---------------------------------------------------------------------------

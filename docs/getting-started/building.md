@@ -38,6 +38,8 @@ The canonical-commands table in [roadmap/README.md](../../roadmap/README.md)
 | Benchmarks | `./build/bin/laige-bench --suite=<name>` |
 | Determinism check | `./build/bin/laige-detcheck --scenario=<name>` |
 | Replay runner | `./build/bin/laige-replay --log LOG --config CONFIG.json [--expect BASELINE]` |
+| hello template (run) | `./samples/hello/bin/hello [--replay LOG]` |
+| hello template (replay) | `./samples/hello/bin/hello --log LOG` |
 | API manifest | `cmake --build build --target laige-api` |
 | Include-graph lint + dependency count | `python3 tools/laige-include-lint` |
 | Determinism source scan (sim module) | `python3 tools/laige-determinism-lint` |
@@ -58,7 +60,16 @@ Notes:
   and exits 1 at the first diverging tick — contract in
   [docs/api/replay.md](../api/replay.md)), and target `laige-api`
   (M0-TOOL-01). Their command forms were fixed here when they were
-  reserved, so no step can drift them.
+   reserved, so no step can drift them. The `hello` rows are the
+   M1-SAMPLE-01 template game (samples/hello): it builds into the
+   source-tree path `samples/hello/bin/hello` (its own CMake target
+   property — the CI detcheck step invokes it from the repository
+   root with no arguments), prints the 301-line per-tick state-hash
+   stream on stdout (the detcheck scenario contract —
+   [docs/api/detcheck.md](../api/detcheck.md)), and exits 0/1/2; the
+   `hello_*` CTest entries (`tests/sample`) are its CI form, and
+   `--replay` is a debug-build feature. Contract:
+   [samples/hello/README.md](../../samples/hello/README.md).
   Fuzz and randomized-test seeds: fixed default `0x1F055EED`,
   overridable (`laige-fuzz --seed=…`; tests via the `LAIGE_TEST_SEED`
   environment variable) — see [docs/testing.md](../testing.md).

@@ -1,0 +1,10 @@
+{
+  "tick_rate_hz": 60,
+  "entity_budget": 8,
+  "churn_per_frame_budget": 256,
+  "seed": 520445677,
+  "determinism": {
+    "enabled": true,
+    "math": "fixed_point_16_16"
+  }
+}
