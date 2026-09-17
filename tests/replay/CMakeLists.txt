@@ -85,6 +85,12 @@ endfunction()
 
 # The shared setup: record a 32-tick headless run (the M1-DET-02
 # recorder wiring on laige-run; the engine's built-in registrations).
+# The recorded tick count is PLATFORM-STABLE: laige-run drives a
+# bounded run with frame budget 1, so the run lands exactly on 32
+# under any cadence (a late frame drops its extra due tick — the
+# EngineRun.BoundedRunCompletesExactly precedent — it does not
+# overshoot; with the engine's default catch-up budget the macOS CI
+# runners measured 33 ticks for --ticks 32).
 set(RECORD_SETUP
     "<RUN> --headless <FIXTURE> --ticks 32 --replay <OUT>/replay_smoke.log")
 # The shared replay command (stdout: exactly the 33 hash lines).

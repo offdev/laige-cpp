@@ -264,7 +264,12 @@ laige-run --headless CONFIG.json [--ticks N] [--replay LOG]
 - `--headless CONFIG` — required: the JSON config file (bounded read,
   1 MiB max; over-bound → `MalformedInput`; read error → `IoError`).
 - `--ticks N` — the bounded run target (decimal digits only;
-  default 0 = the server form).
+  default 0 = the server form). A bounded run completes EXACTLY N
+  ticks: the CLI drives it with frame budget 1, so a late frame
+  drops its extra due tick (counted in `dropped_ticks`) instead of
+  overshooting the target by up to budget - 1 (the `run_headless`
+  contract). The completed tick count is therefore platform-stable —
+  what the `--replay` log contract (api/replay.md) relies on.
 - `--replay LOG` — **records the run** (M1-DET-02; it was the
   M1-HEAD-01 stub): opt-in, **debug builds only** (release builds
   reject it with `InvalidArgument` + a `replay/record_disabled`

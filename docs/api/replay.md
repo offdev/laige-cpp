@@ -229,6 +229,13 @@ laige-run --headless CONFIG.json [--ticks N] [--replay LOG]
   game components of its own — the built-in registration is complete at
   `create`), the run records one zero-length frame per completed tick,
   and on a clean bounded run the log is atomically published at `LOG`.
+- **The recorded tick count is platform-stable:** a bounded
+  `--ticks N` run completes exactly N ticks (the CLI's frame budget 1
+  — api/engine.md), so a log recorded for N ticks carries exactly N
+  frame records (N + 1 hash lines on replay) on every platform. A
+  run under the engine's default catch-up budget can overshoot the
+  target by up to budget - 1 ticks under overload; the CLI never
+  uses that budget for bounded runs.
 - **Debug builds only**: in a release build the flag fails with
   `InvalidArgument` (`replay/record_disabled`), the same contract as
   the engine call.
