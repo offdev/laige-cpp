@@ -148,11 +148,33 @@ cross-compiler identity re-verified, and always recorded here with the
 reason and commit. This file gains one "Regeneration" subsection per
 event (methodology §4: reports are append-only history).
 
+## First GitHub run (PR #41, 2026-09-17)
+
+The step's PR run (`CI (pull request)`, run 35238175154) — the first
+GitHub execution of the matrix:
+
+- **Linux x64 (g++), Linux x64 (clang++), Linux x64 ASan+UBSan, Linux
+  x64 TSan** — all green, each running the full 82-test ctest suite
+  including the six `hello_baseline_*` tests (per-tick identity of the
+  job's own build against both committed baselines, plus the failure
+  fixtures). Job log (Linux x64 g++): `73/82 hello_baseline_fpx
+  Passed`, … `78/82 hello_baseline_missing Passed`.
+- **Determinism check (tooling)** — green: synthetic self-check
+  (`detcheck scenario=synthetic result=OK ticks=256`) followed by the
+  both-backend baseline comparison (`hello --expect` /
+  `hello-fp32 --expect`, both exit 0, `hello headless ticks=300
+  status=ok`).
+- macOS/Windows P0 jobs: skipped without `ci:*` labels on the PR (the
+  label selector); they run on the merge via `ci.yml` (all P0 jobs).
+
 ## Open until the first merge
 
-- The merge `detcheck` job and the macOS/Windows P0 baseline checks
-  have not yet run on GitHub (they land with this step's merge). Until
+- The merge `detcheck` job (the four-configuration matrix: pair A
+  g++ vs clang++, pair B Debug+ASan vs Release, both backends, plus
+  the reference-baseline sanity) and the macOS/Windows P0 baseline
+  checks run with this step's merge (`ci.yml`). Until
   then, the support-list rows marked *pending* above are projections
-  from the local evidence; the first merge run converts them into
-  matrix results (or, for a desynced `float_pinned_32` pair, into an
-  "unsupported" declaration per ADR 0002).
+  from the local evidence plus the PR run above; the first merge run
+  converts them into matrix results (or, for a desynced
+  `float_pinned_32` pair, into an "unsupported" declaration per
+  ADR 0002).
