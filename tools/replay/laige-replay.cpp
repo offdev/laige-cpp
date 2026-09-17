@@ -435,7 +435,12 @@ int main(int argc, char** argv) {
                             (formatHex16(repHex, hashes[i]), repHex)) != 0) {
               hashDiff = true;
               firstDiff = i;
-              std::strncpy(baseHex, parsedHex, 16);
+              // Exactly 16 hex characters (parseBaselineLine wrote a
+              // 16-digit hash + NUL into parsedHex via formatHex16): a
+              // plain byte copy. MSVC's CRT deprecates strncpy (C4996,
+              // fatal under the engine's /WX policy) — the C4996 class
+              // the openFile/_fsopen precedent already handles here.
+              std::memcpy(baseHex, parsedHex, 16);
               baseHex[16] = '\0';
               break;
             }

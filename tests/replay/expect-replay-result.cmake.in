@@ -9,7 +9,12 @@
 # real `\n` escape, which CMake turns into a newline character), the
 # required stderr fragments, and — when requested — the byte-identity
 # of the two runs' stdout. On failure the FATAL_ERROR carries the
-# captured output.
+# captured output. Captured stdout/stderr is normalized CRLF -> LF
+# (run_cmd below): on Windows a child's text-mode streams are CRLF and
+# whether the capture retains the \r is CMake-version-dependent, so
+# the script normalizes itself — the per-line contract and the
+# baseline derive checks see the platform-independent LF form
+# (already-normalized content is untouched).
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -44,6 +49,13 @@ function(run_cmd cmd out_var err_var rc_var)
                   RESULT_VARIABLE _rc
                   OUTPUT_VARIABLE _out
                   ERROR_VARIABLE _err)
+  # CRLF tolerance (the detcheck contract): on Windows a child process
+  # writes CRLF to its text-mode stdout/stderr, and whether the
+  # capture keeps the \r is CMake-version-dependent — normalize to
+  # LF BEFORE any line parsing (the hash-line contract, the baseline
+  # capture, the derive checks). Already-LF content is untouched.
+  string(REPLACE "\r\n" "\n" _out "${_out}")
+  string(REPLACE "\r\n" "\n" _err "${_err}")
   set(${out_var} "${_out}" PARENT_SCOPE)
   set(${err_var} "${_err}" PARENT_SCOPE)
   set(${rc_var} "${_rc}" PARENT_SCOPE)

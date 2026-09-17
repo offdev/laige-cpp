@@ -14,9 +14,12 @@
 //   --headless <config.json>  run the engine headless with the given
 //                             JSON config (required; the windowed mode
 //                             is M2)
-//   --ticks N                 run until N completed ticks (N = 0 or
-//                             omitted: the server form — run until the
-//                             process ends)
+//   --ticks N                 run until N completed ticks — a bounded
+//                             run completes EXACTLY N ticks (frame
+//                             budget 1: a late frame drops its extra
+//                             due tick, it does not overshoot); N = 0
+//                             or omitted: the server form — run until
+//                             the process ends
 //   --replay <log>            REPLAY RECORDING (M1-DET-02): record the
 //                             run's replay log (versioned format,
 //                             laige/sim/replay.h) at <log> — opt-in,
@@ -87,9 +90,13 @@ void printUsage(std::FILE* out) {
       "given\n"
       "                            JSON config (required; the windowed\n"
       "                            mode is M2)\n"
-      "  --ticks N                 run until N completed ticks (N = 0\n"
-      "                            or omitted: the server form — run\n"
-      "                            until the process ends)\n"
+      "  --ticks N                 run until N completed ticks — a\n"
+      "                            bounded run completes EXACTLY N\n"
+      "                            ticks (frame budget 1: a late frame\n"
+      "                            drops its extra due tick, it does not\n"
+      "                            overshoot); N = 0 or omitted: the\n"
+      "                            server form — run until the process\n"
+      "                            ends\n"
       "  --replay <log>            record the run's replay log at\n"
       "                            <log> (opt-in; DEBUG BUILDS ONLY —\n"
       "                            release builds exit 2; written\n"
@@ -259,8 +266,23 @@ int main(int argc, char** argv) {
       return 2;
     }
   }
+  // The frame budget (the run_headless contract, engine.h): a bounded
+  // run uses budget 1 — each frame runs AT MOST one tick, so the run
+  // lands EXACTLY on maxTicks under any cadence (a late frame drops
+  // its extra due tick, the M1-LOOP-01 overload behavior, counted in
+  // dropped_ticks — it never overshoots the target). The engine's
+  // default catch-up budget would let a late frame complete several
+  // due ticks at once and end the run up to budget - 1 ticks OVER
+  // the requested count (measured on the macOS CI runners:
+  // --ticks 32 completing 33); a recorded replay log (--replay) must
+  // carry a platform-stable tick count, and "--ticks N" reads as
+  // "exactly N ticks". The server form (maxTicks == 0) keeps the
+  // default budget: the run never ends on its own, and a stalled
+  // frame must be able to catch up.
+  const std::uint32_t frameBudgetTicks =
+      (maxTicks != 0) ? 1u : laige::kDefaultMaxCatchUpTicks;
   const laige::Status runStatus =
-      engine.run_headless(maxTicks, laige::kDefaultMaxCatchUpTicks);
+      engine.run_headless(maxTicks, frameBudgetTicks);
   const laige::GameLoopStats stats = engine.stats();
   std::fprintf(stdout,
                "laige-run headless ticks=%llu dropped_ticks=%llu "
