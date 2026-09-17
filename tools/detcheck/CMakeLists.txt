@@ -9,8 +9,10 @@
 # per-tick state-hash streams (the scenario contract — `<tick> <hash>`
 # lines, 16 lowercase hex hash digits — is documented in the header
 # comment of laige-detcheck.cpp and in docs/api/detcheck.md). The
-# built-in `synthetic` scenario is the M0 stand-in; M1-DET-04 activates
-# the real two-configuration mode (--run-a/--run-b) with M1-SAMPLE-01.
+# built-in `synthetic` scenario is the M0 self-check; M1-DET-04
+# activated the real two-configuration mode (--run-a/--run-b +
+# --compare-combined) on M1-SAMPLE-01's hello scenario — the CI matrix
+# is in docs/benchmarks/determinism-matrix.md.
 #
 # Gated with the test suite like tools/fuzz, tools/bench, and tools/api:
 # a library-only build does not need it.

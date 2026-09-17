@@ -38,8 +38,9 @@ The canonical-commands table in [roadmap/README.md](../../roadmap/README.md)
 | Benchmarks | `./build/bin/laige-bench --suite=<name>` |
 | Determinism check | `./build/bin/laige-detcheck --scenario=<name>` |
 | Replay runner | `./build/bin/laige-replay --log LOG --config CONFIG.json [--expect BASELINE]` |
-| hello template (run) | `./samples/hello/bin/hello [--replay LOG]` |
-| hello template (replay) | `./samples/hello/bin/hello --log LOG` |
+| hello template (run) | `./samples/hello/bin/hello [--replay LOG] [--expect BASELINE]` |
+| hello template (replay) | `./samples/hello/bin/hello --log LOG [--expect BASELINE]` |
+| hello template (fp32 backend) | `./samples/hello/bin/hello-fp32 [--replay LOG] [--expect BASELINE]` |
 | API manifest | `cmake --build build --target laige-api` |
 | Include-graph lint + dependency count | `python3 tools/laige-include-lint` |
 | Determinism source scan (sim module) | `python3 tools/laige-determinism-lint` |
@@ -63,12 +64,20 @@ Notes:
    reserved, so no step can drift them. The `hello` rows are the
    M1-SAMPLE-01 template game (samples/hello): it builds into the
    source-tree path `samples/hello/bin/hello` (its own CMake target
-   property — the CI detcheck step invokes it from the repository
+   property — the CI detcheck job invokes it from the repository
    root with no arguments), prints the 301-line per-tick state-hash
    stream on stdout (the detcheck scenario contract —
-   [docs/api/detcheck.md](../api/detcheck.md)), and exits 0/1/2; the
-   `hello_*` CTest entries (`tests/sample`) are its CI form, and
-   `--replay` is a debug-build feature. Contract:
+   [docs/api/detcheck.md](../api/detcheck.md)), and exits 0/1/2.
+   `--expect BASELINE` compares the stream against a committed
+   per-tick hash baseline with the `laige-replay --expect` contract
+   (0 match, 1 first-divergence report, 2 baseline read/contract
+   error) — M1-DET-04's baseline check; the committed streams live in
+   `samples/hello/baselines/` (one per backend; the reference build is
+   canonical Debug g++). `hello-fp32` is the same game on the
+   `float_pinned_32` backend (ADR 0002 — same source, the backend
+   swapped by the build). The `hello_*` CTest entries (`tests/sample`)
+   are its CI form — including the baseline tests every P0 OS job
+   runs — and `--replay` is a debug-build feature. Contract:
    [samples/hello/README.md](../../samples/hello/README.md).
   Fuzz and randomized-test seeds: fixed default `0x1F055EED`,
   overridable (`laige-fuzz --seed=…`; tests via the `LAIGE_TEST_SEED`
@@ -271,9 +280,16 @@ pinned set and the NaN/Inf policy):
   (`<tick> <hash>` lines, 16 lowercase hex hash digits) and the tool's
   report/exit-code grammar are in
   [docs/api/detcheck.md](../api/detcheck.md); the CI `detcheck` job runs
-  the self-check on every PR and merge, with the real-scenario comparison
-  (two build configurations) skipped until M1-SAMPLE-01 (M1-DET-04
-  activates it).
+  the self-check on every PR and merge, and — with M1-DET-04 — the
+  real-scenario determinism matrix: every P0 OS job's ctest asserts
+  the hello scenario's
+  per-tick hash stream against the committed baselines on both SimMath
+  backends (`hello --expect` — the `hello_baseline_*` entries of
+  `tests/sample`), and the merge `detcheck` job adds the two-
+  configuration pairs (g++ vs clang++ Debug, Debug+ASan vs Release,
+  both backends, via `--run-a/--run-b` + `--compare-combined`).
+  Scope and results:
+  [docs/benchmarks/determinism-matrix.md](../benchmarks/determinism-matrix.md).
 - `test_infra` is the M0-TEST-01 CTest entry (`tests/testing`): the
   `SeededRandom` suite of the `test_infra_tests` executable pins
   known-answer hashes for the seed-handling convention (the default seed

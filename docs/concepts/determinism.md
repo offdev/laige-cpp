@@ -219,7 +219,13 @@ struct EngineConfig {
   message).
 - `ctest -R determinism-lint` — the source-scan fixture tests + real
   tree (plus the `determinism-lint` CI job in both workflows).
-- Cross-target: M1-DET-04 (the detcheck matrix over both backends).
+- Cross-target (M1-DET-04, done): the detcheck matrix over both
+  backends — every P0 OS job's ctest asserts the hello scenario's
+  per-tick hash stream against the committed baselines on both
+  backends, and the merge detcheck job adds the cross-compiler /
+  sanitizer / Release pairs. Scope and results:
+  [benchmarks/determinism-matrix.md](../benchmarks/determinism-matrix.md)
+  (ARCH-010).
 
 ## Related
 
