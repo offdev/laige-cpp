@@ -52,7 +52,7 @@ identity across:
 | 7 | Warm-up | n/a (state hashes, not timings) |
 | 8 | Sample count | 301 hash lines per run (tick 0 + 300 completed ticks); 4 pairs × 2 backends compared locally, 4 pairs × 2 backends in CI |
 | 9 | Summary statistics | See the result tables below — the "metric" is bit-identity (0/1), not a distribution |
-| 10 | Before / after | `before=n/a` (first recording) · `after=4/4 pairs OK, 2/2 baselines reproduced` (local, 2026-09-17) · `target=all pairs OK on every merge, both backends, all P0 OS jobs` |
+| 10 | Before / after | `before=n/a` (first recording) · `after=4/4 pairs OK, 2/2 baselines reproduced` (local, 2026-09-17; first green CI merge run 35246893883, 2026-09-17) · `target=all pairs OK on every merge, both backends, all P0 OS jobs` |
 
 ## Determinism scope (ARCH-010)
 
@@ -72,9 +72,9 @@ by matrix results or a documented baseline regeneration).
 | linux-gcc | g++ `Debug` | reproduced (local, 2026-09-17) | pair A/B run A (local, 2026-09-17) | **supported** |
 | linux-clang | clang++ `Debug` | reproduced (local, 2026-09-17) | pair A/B run A (local, 2026-09-17) | **supported** |
 | linux-gcc (Debug+ASan / Release lanes) | clang++ `Debug+ASan`, g++ `Release` | reproduced (local, 2026-09-17) | pair B (local, 2026-09-17) | **supported** |
-| macos-arm64 | AppleClang `Debug` | pending first merge run | pending (P0 job baseline check) | pending — expected supported |
-| macos-intel | AppleClang `Debug` | pending first merge run | pending (P0 job baseline check) | pending — expected supported |
-| windows-msvc | MSVC `Debug` | pending first merge run | pending (P0 job baseline check) | pending — expected supported |
+| macos-arm64 | AppleClang `Debug` | reproduced (CI merge run 35246893883, 2026-09-17) | — (the P0 job's baseline check is the platform's matrix entry) | **supported** |
+| macos-intel | AppleClang `Debug` | reproduced (CI merge run 35246893883, 2026-09-17) | — (the P0 job's baseline check is the platform's matrix entry) | **supported** |
+| windows-msvc | MSVC `Debug` | reproduced (CI merge run 35246893883, 2026-09-17) | — (the P0 job's baseline check is the platform's matrix entry) | **supported** |
 
 If a pending platform's `hello_baseline_fp32` fails on its P0 job, that
 platform is moved to **unsupported** in this table (ADR 0002:
@@ -167,14 +167,49 @@ GitHub execution of the matrix:
 - macOS/Windows P0 jobs: skipped without `ci:*` labels on the PR (the
   label selector); they run on the merge via `ci.yml` (all P0 jobs).
 
-## Open until the first merge
+## First merge run (2026-09-17)
 
-- The merge `detcheck` job (the four-configuration matrix: pair A
-  g++ vs clang++, pair B Debug+ASan vs Release, both backends, plus
-  the reference-baseline sanity) and the macOS/Windows P0 baseline
-  checks run with this step's merge (`ci.yml`). Until
-  then, the support-list rows marked *pending* above are projections
-  from the local evidence plus the PR run above; the first merge run
-  converts them into matrix results (or, for a desynced
-  `float_pinned_32` pair, into an "unsupported" declaration per
-  ADR 0002).
+The step's first merge — `c8ce649` (PR #41), CI run 35240883610 —
+was red on exactly the three jobs this section had open:
+**macOS Intel** and **macOS arm64** (AppleClang cannot deduce the
+`std::min` template over the `std::uint64_t` / `std::size_t` pair in
+`hello-baseline.cpp` — on macOS `size_t` is `unsigned long`, not
+`unsigned long long`) and the **Determinism check** job (glibc's
+`warn_unused_result` on the crash handler's `write()` fires under
+`-Werror` in the job's Release g++ tree — the attribute is only
+active under fortification, which is why the Debug and clang trees
+compiled). PR #42 fixed both; the run's other eight jobs (the Linux
+lanes, Windows, lint/manifest) had already passed.
+
+The first green full-matrix merge run — **35246893883** (master push
+of `a22c45d`, 2026-09-17T16:29Z) — passed all 11 jobs:
+
+- **Determinism check (tooling):**
+  - reference-baseline sanity: the canonical Debug g++ tree
+    (`hello-gcc-debug --expect`, `hello-fp32-gcc-debug --expect`)
+    reproduces both committed baselines, exit 0 each (`hello
+    headless ticks=300 status=ok`);
+  - synthetic self-check: `detcheck scenario=synthetic
+    result=OK ticks=256`;
+  - the four cross-build pairs, both backends (two-stage
+    `--run-a/--run-b` + `--compare-combined`):
+
+    ```text
+    detcheck scenario=combined result=OK ticks=301   (pair A: g++ Debug vs clang++ Debug, fixed_point_16_16)
+    detcheck scenario=combined result=OK ticks=301   (pair A, float_pinned_32)
+    detcheck scenario=combined result=OK ticks=301   (pair B: clang++ Debug+ASan vs g++ Release, fixed_point_16_16)
+    detcheck scenario=combined result=OK ticks=301   (pair B, float_pinned_32)
+    ```
+- **macOS arm64 (AppleClang), macOS Intel (AppleClang), Windows x64
+  (MSVC 2022):** each ran the full 82-test ctest suite — including
+  `hello_baseline_fpx` / `hello_baseline_fp32` (tests 73/74: the job's
+  own native build reproduces both committed baselines per tick) and
+  the four failure fixtures (tests 75–78) — with `100% tests passed
+  out of 82`.
+
+The support-list rows marked *pending* above are therefore converted
+into matrix results: **macos-arm64, macos-intel, and windows-msvc are
+supported** — the `float_pinned_32` per-platform support list is
+complete for all P0 platforms. No pair desynced, so ADR 0002's
+"unsupported" branch never fired and no baseline regeneration was
+needed: every stream reproduced the committed baselines byte-exactly.
