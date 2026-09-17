@@ -89,3 +89,8 @@ add_subdirectory(detcheck)
 # Replay runner checks (M1-DET-03): laige-replay replays a recorded
 # log and compares the per-tick state hashes (tests/replay).
 add_subdirectory(replay)
+
+# hello.laige checks (M1-SAMPLE-01): the template game's scenario run,
+# its record -> replay pipeline, its failure paths, its config, and
+# its PRD §9.4 line budget (tests/sample).
+add_subdirectory(sample)

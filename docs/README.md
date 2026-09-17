@@ -22,7 +22,11 @@ temp+rename, size-bounded), `Engine::startReplayRecording`, and
 `laige-run --replay`; M1-DET-03: replay execution —
 `World::stateHash` (the deterministic state hash), `runReplay`
 (the identity-checked re-run and its per-tick hash stream), and the
-`laige-replay` runner).
+`laige-replay` runner; M1-SAMPLE-01: `hello.laige` — the headless
+template game (samples/hello: one component, one system, one entity,
+the per-tick `World::stateHash` stream on stdout, record → replay
+through the scenario's own binary, the PRD §9.4 line budget —
+[samples/hello/README.md](../../samples/hello/README.md)).
 Every section of the AGENTS §13 `docs/` tree exists; each entry below
 links what is written and the "not yet written" section marks what is
 still to land.
@@ -35,6 +39,10 @@ still to land.
   status. Tool commands: `laige-run`, `laige-replay`, `laige-fuzz`, `laige-bench`,
   `laige-detcheck`, the `laige-api` manifest target, and the
   include-graph lint.
+- [hello.laige](../../samples/hello/README.md) — the headless template
+  game (M1-SAMPLE-01): the canonical smallest-complete Laige game —
+  build it with the repository, run it headless, record and replay it,
+  and learn every component/system/tick mark a Laige game uses.
 
 ## Concepts
 

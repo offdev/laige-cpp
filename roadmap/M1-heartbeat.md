@@ -271,7 +271,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `laige-bench --suite=sim-tick` avg ≤ 3.0 ms and p99 ≤ 5 ms on both backends on the CI reference machine (if local machine differs, record measured value + CI is the gate); baseline file exists.
   - **Size:** ~200 lines + baseline doc
 
-- [ ] **M1-SAMPLE-01 · `hello.laige` (headless template)**
+- [x] **M1-SAMPLE-01 · `hello.laige` (headless template)**
   - **Refs:** NFR-13.5 (template < 100 lines), PRD §13
   - **Depends:** M1-HEAD-01, M1-DET-03
   - **Scope:**

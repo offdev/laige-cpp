@@ -349,10 +349,13 @@ laige-replay --log LOG --config CONFIG.json [--expect BASELINE]
   (the ADR 0003 bounded-read precedent).
 - **Scope:** `laige-replay` replays logs recorded by `laige-run
   --headless --replay` (the engine's built-in registration). A
-  game-scenario log is replayed by the scenario binary itself through
-  the same `runReplay` library (the M1-SAMPLE-01 scenario wires it;
-  M1-DET-04's detcheck `--run-a/--run-b` compares two scenarios' hash
-  streams).
+  game-scenario log is replayed by the scenario binary itself: it loads
+  the log (`loadReplay`), checks the replay identity against its own
+  (world, config) (`replayIdentityDiff` — a mismatch is a rejected
+  replay, never a silent divergence), and re-runs the log's frame count
+  through the same tick loop `runReplay` drives (M1-SAMPLE-01's
+  `hello --log` wires this; M1-DET-04's detcheck `--run-a/--run-b`
+  compares two scenarios' hash streams).
 
 ## Performance (PERF-002/003, LOG-003)
 

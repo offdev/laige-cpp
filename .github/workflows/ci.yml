@@ -354,9 +354,11 @@ jobs:
       - name: Synthetic scenario self-check
         run: ./build/bin/laige-detcheck --scenario=synthetic
       - name: Real scenario (M1-SAMPLE-01)
-        # Skipped until M1-SAMPLE-01 lands the hello scenario binary;
-        # M1-DET-04 replaces this step with the two-configuration
-        # comparison, e.g.:
+        # The hello template (samples/hello) is always built in this
+        # job, so this step always executes: two no-arg runs of the
+        # scenario — both must exit 0 and print the 301-line per-tick
+        # hash stream (the guard is defensive only). M1-DET-04 replaces
+        # this step with the two-configuration comparison, e.g.:
         #   ./build/bin/laige-detcheck --run-a=build-asan/bin/hello
         #                              --run-b=build/bin/hello
         run: |
