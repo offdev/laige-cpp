@@ -25,7 +25,13 @@
 # states — its pure-function-of-state property over convergent
 # worlds, and runReplay's 500-tick record->replay round trip, the
 # first-divergence detection, the identity-mismatch rejection, and
-# the determinism-disabled rejection).
+# the determinism-disabled rejection), and the replay diff
+# (M1-DET-05: World::stateDiff's bounded canonical-order comparison,
+# World::componentStateHash's PRNG-excluded scope, and diffReplays'
+# identity/determinism rejections, the lock-step tick walk aligned on
+# the component-state hash, the first divergent tick + bounded state
+# diff, the length divergence, and the fullStateDivergent flag —
+# including the tick-37 integration scenario).
 #
 # One executable per module (tests/README.md; docs/testing.md is the
 # source of truth): laige-sim_tests links the module under test plus
@@ -33,17 +39,19 @@
 # `component_registry`, `archetype`, `query`, `iter_order`,
 # `ecs_guardrails`, `ecs_stress`, `system_registry`, `scheduler`,
 # `system_timing`, `game_loop`, `presentation`, `engine`,
-# `determinism_mode`, `replay_record`, and `replay_replay` entries
+# `determinism_mode`, `replay_record`, `replay_replay`, and
+# `replay_diff` entries
 # are the M1-ECS-01, M1-ECS-02, M1-ECS-03, M1-ECS-04, M1-ECS-05,
 # M1-ECS-06, M1-ECS-07, M1-SYS-01, M1-SYS-02, M1-SYS-03, M1-LOOP-01,
-# M1-LOOP-02, M1-HEAD-01, M1-DET-01, M1-DET-02, and M1-DET-03 Verify
-# commands (`ctest -R entity`, `ctest -R component_registry`,
-# `ctest -R archetype`, `ctest -R query`, `ctest -R iter_order`,
-# `ctest -R ecs_guardrails`, `ctest -R ecs_stress`, `ctest -R
-# system_registry`, `ctest -R scheduler`, `ctest -R system_timing`,
-# `ctest -R game_loop`, `ctest -R presentation`, `ctest -R engine`,
-# `ctest -R determinism_mode`, `ctest -R replay_record`, and
-# `ctest -R replay_replay`), selecting exactly the suites below from
+# M1-LOOP-02, M1-HEAD-01, M1-DET-01, M1-DET-02, M1-DET-03, and
+# M1-DET-05 Verify commands (`ctest -R entity`, `ctest -R
+# component_registry`, `ctest -R archetype`, `ctest -R query`,
+# `ctest -R iter_order`, `ctest -R ecs_guardrails`, `ctest -R
+# ecs_stress`, `ctest -R system_registry`, `ctest -R scheduler`,
+# `ctest -R system_timing`, `ctest -R game_loop`, `ctest -R
+# presentation`, `ctest -R engine`, `ctest -R determinism_mode`,
+# `ctest -R replay_record`, `ctest -R replay_replay`, and
+# `ctest -R replay_diff`), selecting exactly the suites below from
 # the shared executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
@@ -58,7 +66,8 @@ set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            engine_tests.cpp
                            determinism_tests.cpp
                            replay_record_tests.cpp
-                           replay_replay_tests.cpp)
+                           replay_replay_tests.cpp
+                           replay_diff_tests.cpp)
 # M1-ECS-03: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own
 # new/delete (strong symbols in the Clang/GCC TSan runtime archives,
@@ -242,6 +251,17 @@ add_test(NAME replay_replay
          COMMAND laige-sim_tests
          --gtest_filter=StateHash.*:DetReplay.*)
 
+# M1-DET-05: the replay diff (FR-11.3: diff two replays by frame/
+# state). The step's Verify command is `ctest -R replay_diff`; this
+# entry selects exactly the StateDiff / ReplayDiff suites from the
+# shared laige-sim_tests executable (NOT Replay*-prefixed, so the
+# replay_record entry above keeps selecting exactly the recording
+# suites). The machine-greppable replay-diff-37 line lands in the
+# ctest output (docs/testing.md §4).
+add_test(NAME replay_diff
+         COMMAND laige-sim_tests
+         --gtest_filter=StateDiff.*:ReplayDiff.*)
+
 # M1-DET-01: the G-R8 trait compile-checks (the compile-time half of
 # the determinism guarantee). Each fixture is compiled (not linked,
 # not run) with the engine policy flags; the positive fixture must
@@ -305,6 +325,6 @@ if(LAIGE_TSAN)
   set_tests_properties(laige-sim_tests entity component_registry archetype
     query iter_order ecs_guardrails ecs_stress system_registry scheduler
     system_timing game_loop presentation engine determinism_mode
-    replay_record replay_replay PROPERTIES
+    replay_record replay_replay replay_diff PROPERTIES
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

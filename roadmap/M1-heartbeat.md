@@ -203,7 +203,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** determinism CI job green on a merge across all P0 OS jobs (both backends); an intentional perturbation (a changed SimMath constant in a scratch system) makes the job fail (then revert).
   - **Size:** CI wiring + ~100 lines
 
-- [ ] **M1-DET-05 · Replay diff tool**
+- [x] **M1-DET-05 · Replay diff tool**
   - **Refs:** FR-11.3 (diff two replays by frame/state)
   - **Depends:** M1-DET-03
   - **Scope:**

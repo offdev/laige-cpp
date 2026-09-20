@@ -10,14 +10,15 @@
 // Usage (docs/api/replay.md, the "laige-replay" section):
 //
 //   laige-replay --log <log> --config <config.json> [--expect <baseline>]
+//   laige-replay --diff <logA> <logB> --config <config.json> [--entries <n>]
 //
-// Loads the recorded replay log (the M1-DET-02 versioned format,
-// laige/sim/replay.h), checks its replay identity against (the
-// engine's world, the config) — a mismatch is a REJECTED REPLAY,
-// never a silent divergence (ADR 0002) — replays the log headlessly
-// on the engine's world (runReplay: one beginFrame() + one
-// runSystems per recorded tick), and prints the per-tick state hashes
-// (World::stateHash) as the hash line contract:
+// Log mode loads the recorded replay log (the M1-DET-02 versioned
+// format, laige/sim/replay.h), checks its replay identity against
+// (the engine's world, the config) — a mismatch is a REJECTED
+// REPLAY, never a silent divergence (ADR 0002) — replays the log
+// headlessly on the engine's world (runReplay: one beginFrame() +
+// one runSystems per recorded tick), and prints the per-tick state
+// hashes (World::stateHash) as the hash line contract:
 //
 //   <tick> <hash>
 //
@@ -27,14 +28,32 @@
 // (docs/api/detcheck.md).
 //
 // Exit codes (documented, stable for CI grepping):
-//   0  the replay completed and, when --expect was given, every hash
-//      matches the baseline (the summary line goes to stderr; the hash
-//      lines are the ONLY stdout content — a redirect captures a clean
-//      baseline file)
-//   1  a per-tick hash mismatch with the --expect baseline (the first
-//      divergence is reported to stderr)
+//   0  log mode: the replay completed and, when --expect was given,
+//      every hash matches the baseline (the summary line goes to
+//      stderr; the hash lines are the ONLY stdout content — a redirect
+//      captures a clean baseline file). diff mode: the two replays'
+//      component states are identical over the aligned ticks.
+//   1  log mode: a per-tick hash mismatch with the --expect baseline
+//      (the first divergence is reported to stderr). diff mode: a
+//      component-state or length divergence was found (the report is
+//      on stdout).
 //   2  usage, IO, config-parse, log-load, identity-mismatch, or
 //      engine-create error (the message carries the actionable text)
+//
+// Diff mode (M1-DET-05, laige/sim/replay_diff.h — the full contract):
+// loads both logs, derives a per-log config (the base config with
+// THAT log's header seed — the seed is the identity field the diff
+// legitimately varies), identity-checks each log against its (world,
+// config) — a mismatch is a REJECTED DIFF (never a silent divergence,
+// ADR 0002; both logs are reported), then diffReplays: the lock-step
+// tick walk aligned on World::componentStateHash (the PRNG substream
+// state is excluded — it is a function of the master seed; the honest
+// full-state report is the full_state_divergent flag), and the bounded
+// state-difference report at the first divergent tick (World::stateDiff,
+// ≤ --entries items — 0 = count only, default 16, cap 64). The report
+// is the ONLY stdout content (a stable key=value grammar, documented
+// in the usage text and docs/api/replay.md); the summary and
+// diagnostics go to stderr.
 //
 // Headless invariants (ARCH-003, NFR-8.11): this binary and everything
 // it links (laige-sim, laige-core) touch no GL, window, audio, or
@@ -69,6 +88,7 @@
 #include "laige/result.h"
 #include "laige/sim/engine.h"
 #include "laige/sim/replay.h"
+#include "laige/sim/replay_diff.h"  // diff mode (M1-DET-05)
 
 namespace {
 
@@ -87,30 +107,61 @@ void printUsage(std::FILE* out) {
   std::fprintf(out,
       "Usage: laige-replay --log <log> --config <config.json> "
       "[--expect <baseline>]\n"
+      "       laige-replay --diff <logA> <logB> --config "
+      "<config.json> [--entries <n>]\n"
       "\n"
-      "  --log <log>             the recorded replay log (required;\n"
-      "                          the laige/sim/replay.h version 1\n"
-      "                          format)\n"
+      "  --log <log>             the recorded replay log (required in\n"
+      "                          log mode; the laige/sim/replay.h\n"
+      "                          version 1 format)\n"
       "  --config <config.json>  the engine config of the recorded\n"
       "                          run (required; the replay identity is\n"
       "                          checked against it — ADR 0002: a\n"
-      "                          mismatch is a rejected replay)\n"
+      "                          mismatch is a rejected replay). In diff\n"
+      "                          mode the base config: each log's header\n"
+      "                          seed is copied onto a per-log copy\n"
+      "                          before the identity check (the seed is\n"
+      "                          the identity field the diff\n"
+      "                          legitimately varies)\n"
       "  --expect <baseline>     compare the replay's per-tick hashes\n"
       "                          against the baseline hash stream\n"
       "                          (one '<tick> <hash>' line per tick,\n"
       "                          tick 0 first — the detcheck scenario\n"
       "                          contract); a mismatch exits 1 with the\n"
       "                          first divergence report\n"
+      "  --diff <logA> <logB>    diff two recorded replay logs (mutually\n"
+      "                          exclusive with --log/--expect): replay\n"
+      "                          both headlessly, align by tick, and\n"
+      "                          report the first divergent tick plus\n"
+      "                          the bounded state diff (the M1-DET-05\n"
+      "                          report — the \"Diff-mode stdout\" section\n"
+      "                          below)\n"
+      "  --entries <n>           diff mode only: the bounded report size\n"
+      "                          — the maximum number of differing\n"
+      "                          (entity, component) item lines (0 =\n"
+      "                          count only; 1..64; default 16)\n"
       "  --help, -h              this help\n"
       "\n"
-      "stdout: exactly one '<tick> <hash>' line per tick (tick 0 = the\n"
-      "initial state; 16 lowercase hex hash digits) — nothing else. A\n"
-      "redirect captures a clean baseline file. All diagnostics and\n"
-      "the summary line go to stderr.\n"
+      "Log-mode stdout: exactly one '<tick> <hash>' line per tick\n"
+      "(tick 0 = the initial state; 16 lowercase hex hash digits) —\n"
+      "nothing else. A redirect captures a clean baseline file. All\n"
+      "diagnostics and the summary line go to stderr.\n"
       "\n"
-      "Exit codes: 0 = ok (and the hashes match the baseline when\n"
-      "--expect was given), 1 = a per-tick hash mismatch with the\n"
-      "baseline, 2 = usage / IO / config / log / identity error.\n");
+      "Diff-mode stdout: a stable structured report (the M1-DET-05\n"
+      "contract, docs/api/replay.md): a banner line\n"
+      "'replay_diff result=<identical|divergent|length_divergence>',\n"
+      "then one line each of frames_a, frames_b,\n"
+      "first_divergent_tick, length_divergence, full_state_divergent,\n"
+      "differing_items, reported_items, then one\n"
+      "'item slot=<s> component=<id> presence=<both|a_only|b_only>\n"
+      " a=<hex|-> b=<hex|->' line per reported difference (component\n"
+      "0 = an entity-presence difference; '-' = that side absent).\n"
+      "\n"
+      "Exit codes — log mode: 0 = ok (and the hashes match the\n"
+      "baseline when --expect was given), 1 = a per-tick hash mismatch\n"
+      "with the baseline, 2 = usage / IO / config / log / identity\n"
+      "error. Diff mode: 0 = the replays' component states are\n"
+      "identical, 1 = a divergence (component-state or length) was\n"
+      "found, 2 = usage / IO / config / log / identity / engine error.\n");
 }
 
 // Portable file open (CPP-009 compile-time platform boundary — the
@@ -169,6 +220,61 @@ void formatHex16(char* out /* 17 bytes */, std::uint64_t v) {
                 static_cast<unsigned long long>(v));
 }
 
+// The field-by-field identity mismatch report for one log against one
+// (world, config) (the ADR 0002 report — CORE-008: a mismatch is a
+// rejected replay/diff, never a silent divergence). Returns true when
+// the identity mismatches (the report was printed).
+bool reportIdentityMismatch(std::FILE* out, const char* label,
+                            const laige::ReplayLog& log, laige::World& world,
+                            const laige::EngineConfig& config) {
+  const laige::ReplayIdentityDiff diff =
+      laige::replayIdentityDiff(log, world, config);
+  if (diff.empty()) return false;
+  const laige::ReplayIdentity recorded = log.identity;
+  const laige::ReplayIdentity expected =
+      laige::makeReplayIdentity(world, config);
+  char a[17], b[17];
+  std::fprintf(out,
+               "laige-replay: replay identity mismatch (%s) — the log "
+               "was recorded under a different identity; a mismatch is "
+               "a rejected replay, never a silent divergence (ADR 0002)\n",
+               label);
+  reportIdentityField(out, "seed", diff.seed,
+                      (formatHex16(a, recorded.seed), a),
+                      (formatHex16(b, expected.seed), b));
+  reportIdentityField(out, "tick_rate_hz", diff.tickRateHz,
+                      (std::to_string(recorded.tickRateHz)).c_str(),
+                      (std::to_string(expected.tickRateHz)).c_str());
+  reportIdentityField(out, "component_schema_hash",
+                      diff.componentSchemaHash,
+                      (formatHex16(a, recorded.componentSchemaHash), a),
+                      (formatHex16(b, expected.componentSchemaHash), b));
+  reportIdentityField(out, "math_backend_id", diff.mathBackendId,
+                      (std::to_string(recorded.mathBackendId)).c_str(),
+                      (std::to_string(expected.mathBackendId)).c_str());
+  reportIdentityField(out, "config_hash", diff.configHash,
+                      (formatHex16(a, recorded.configHash), a),
+                      (formatHex16(b, expected.configHash), b));
+  std::fprintf(out,
+               "laige-replay: re-record the log or pass the config "
+               "(and registrations) that produced it\n");
+  return true;
+}
+
+// The 2 * n lowercase hex digits of a byte string (the diff report's
+// a=/b= fields); "-" when the side is absent (null).
+std::string formatHexBytes(const std::uint8_t* bytes, std::size_t n) {
+  if (bytes == nullptr) return "-";
+  static const char kHexDigits[] = "0123456789abcdef";
+  std::string out;
+  out.reserve(n * 2);
+  for (std::size_t i = 0; i < n; ++i) {
+    out.push_back(kHexDigits[bytes[i] >> 4]);
+    out.push_back(kHexDigits[bytes[i] & 0x0Fu]);
+  }
+  return out;
+}
+
 // One baseline line (the hash line contract, detcheck scenario form):
 // '<tick> <hash>' — tick the exact decimal of the line index (no
 // padding, no leading zeros), one space, 16 lowercase hex digits.
@@ -209,8 +315,12 @@ int main(int argc, char** argv) {
   std::string logPath;
   std::string configPath;
   std::string baselinePath;
+  std::string diffPathA;
+  std::string diffPathB;
   bool hasLog = false;
   bool hasConfig = false;
+  bool hasDiff = false;
+  std::uint32_t diffEntries = laige::kReplayDiffDefaultEntries;
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -239,6 +349,38 @@ int main(int argc, char** argv) {
         return 2;
       }
       baselinePath = argv[++i];
+    } else if (arg == "--diff") {
+      if (i + 2 >= argc) {
+        std::fprintf(stderr,
+                     "laige-replay: --diff needs two log paths\n");
+        printUsage(stderr);
+        return 2;
+      }
+      hasDiff = true;
+      diffPathA = argv[++i];
+      diffPathB = argv[++i];
+    } else if (arg == "--entries") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr,
+                     "laige-replay: --entries needs a number\n");
+        printUsage(stderr);
+        return 2;
+      }
+      // strtoul (no exceptions — NFR-8.10): reject non-numeric,
+      // negative (a leading '-' is rejected explicitly — strtoul would
+      // otherwise parse the digits after it), and over-bound values.
+      const char* number = argv[++i];
+      char* end = nullptr;
+      const unsigned long value = std::strtoul(number, &end, 10);
+      if (number[0] == '-' || end == number || *end != '\0' ||
+          value > laige::kMaxReplayDiffEntries) {
+        std::fprintf(stderr,
+                     "laige-replay: --entries needs an integer in 0..%u\n",
+                     static_cast<unsigned>(laige::kMaxReplayDiffEntries));
+        printUsage(stderr);
+        return 2;
+      }
+      diffEntries = static_cast<std::uint32_t>(value);
     } else if (arg == "--help" || arg == "-h") {
       printUsage(stdout);
       return 0;
@@ -249,7 +391,21 @@ int main(int argc, char** argv) {
       return 2;
     }
   }
-  if (!hasLog || !hasConfig) {
+  if (hasDiff) {
+    if (!hasConfig) {
+      std::fprintf(stderr,
+                   "laige-replay: --config <config.json> is required\n");
+      printUsage(stderr);
+      return 2;
+    }
+    if (hasLog || !baselinePath.empty()) {
+      std::fprintf(stderr,
+                   "laige-replay: --diff is mutually exclusive with "
+                   "--log/--expect\n");
+      printUsage(stderr);
+      return 2;
+    }
+  } else if (!hasLog || !hasConfig) {
     std::fprintf(stderr,
                  "laige-replay: --log <log> and --config <config.json> "
                  "are required\n");
@@ -281,6 +437,169 @@ int main(int argc, char** argv) {
     return 2;
   }
 
+  if (hasDiff) {
+    // ---------------------------------------------------------------
+    // Diff mode (M1-DET-05): replay both logs on two worlds, align by
+    // tick, report the first divergence + the bounded state diff
+    // (laige/sim/replay_diff.h — the full contract).
+    // ---------------------------------------------------------------
+
+    // The two logs (M1-DET-02 format; the bounded read + the
+    // structural validation are loadReplay's).
+    const laige::Result<laige::ReplayLog, laige::ErrorCode> logAR =
+        laige::loadReplay(diffPathA);
+    if (logAR.isError()) {
+      std::fprintf(stderr, "laige-replay: logA: %s\n",
+                   laige::errorText(logAR.error()));
+      return 2;
+    }
+    const laige::Result<laige::ReplayLog, laige::ErrorCode> logBR =
+        laige::loadReplay(diffPathB);
+    if (logBR.isError()) {
+      std::fprintf(stderr, "laige-replay: logB: %s\n",
+                   laige::errorText(logBR.error()));
+      return 2;
+    }
+    const laige::ReplayLog& logA = logAR.value();
+    const laige::ReplayLog& logB = logBR.value();
+
+    // The per-log configs: the base config with THAT log's header
+    // seed (the seed is the identity field the diff legitimately
+    // varies — the other config fields stay as passed and are
+    // identity-checked below).
+    laige::EngineConfig configA = config.value();
+    configA.seed = logA.identity.seed;
+    laige::EngineConfig configB = config.value();
+    configB.seed = logB.identity.seed;
+
+    // The two engines (the built-in registrations — this binary
+    // registers no game components of its own; the M1 scenario
+    // surface, see the header preamble: a log recorded with game-
+    // scenario registrations is a schema-mismatch rejected diff).
+    laige::Result<laige::Engine, laige::ErrorCode> engineAResult =
+        laige::Engine::create(configA);
+    if (engineAResult.isError()) {
+      std::fprintf(stderr, "laige-replay: engineA: %s\n",
+                   laige::errorText(engineAResult.error()));
+      return 2;
+    }
+    laige::Engine engineA = std::move(engineAResult).takeValue();
+    laige::Result<laige::Engine, laige::ErrorCode> engineBResult =
+        laige::Engine::create(configB);
+    if (engineBResult.isError()) {
+      std::fprintf(stderr, "laige-replay: engineB: %s\n",
+                   laige::errorText(engineBResult.error()));
+      engineA.shutdown();
+      return 2;
+    }
+    laige::Engine engineB = std::move(engineBResult).takeValue();
+    laige::World& worldA = *engineA.world();
+    laige::World& worldB = *engineB.world();
+
+    // The replay identity, per log (ADR 0002): a mismatch is a
+    // REJECTED diff — never a silent divergence. The report names
+    // every failing log with every differing field (actionable,
+    // LOG-002 shape). Both are checked so one report covers both.
+    bool identityMismatch = false;
+    identityMismatch |=
+        reportIdentityMismatch(stderr, "logA", logA, worldA, configA);
+    identityMismatch |=
+        reportIdentityMismatch(stderr, "logB", logB, worldB, configB);
+    if (identityMismatch) {
+      engineA.shutdown();
+      engineB.shutdown();
+      return 2;
+    }
+
+    // The diff driver (M1-DET-05): identity + determinism checked,
+    // lock-step tick walk, the first divergence + the bounded state
+    // diff at that tick.
+    const laige::Result<laige::ReplayDiffResult, laige::ErrorCode> diff =
+        laige::diffReplays(logA, logB, worldA, worldB, configA, configB,
+                           diffEntries);
+    if (diff.isError()) {
+      std::fprintf(stderr, "laige-replay: diff: %s\n",
+                   laige::errorText(diff.error()));
+      engineA.shutdown();
+      engineB.shutdown();
+      return 2;
+    }
+    const laige::ReplayDiffResult& result = diff.value();
+
+    // The structured report: stdout ONLY (the stable M1-DET-05 report
+    // grammar, docs/api/replay.md — machine-greppable for CI and the
+    // editor replay viewer, M5-ED-15).
+    std::printf("replay_diff result=%s\n",
+                result.identical ? "identical"
+                : result.lengthDivergence ? "length_divergence"
+                                          : "divergent");
+    std::printf("frames_a=%llu\n",
+                static_cast<unsigned long long>(result.framesA));
+    std::printf("frames_b=%llu\n",
+                static_cast<unsigned long long>(result.framesB));
+    std::printf("first_divergent_tick=%llu\n",
+                static_cast<unsigned long long>(
+                    result.firstDivergentTick));
+    std::printf("length_divergence=%s\n",
+                result.lengthDivergence ? "true" : "false");
+    std::printf("full_state_divergent=%s\n",
+                result.fullStateDivergent ? "true" : "false");
+    std::printf("differing_items=%u\n", result.differingItems);
+    std::printf("reported_items=%u\n",
+                static_cast<unsigned>(result.entries.size()));
+    for (const laige::World::StateDiffItem& item : result.entries) {
+      std::printf("item slot=%u component=%u presence=%s a=%s b=%s\n",
+                  static_cast<unsigned>(item.slot),
+                  static_cast<unsigned>(item.componentId),
+                  item.componentId == 0
+                      ? (item.presentInA ? "a_only" : "b_only")
+                      : (item.presentInA && item.presentInB
+                            ? "both"
+                            : (item.presentInA ? "a_only" : "b_only")),
+                  formatHexBytes(item.bytesA, item.size).c_str(),
+                  formatHexBytes(item.bytesB, item.size).c_str());
+    }
+    std::fflush(stdout);
+
+    // The human summary: stderr (stdout carries the report only).
+    if (result.identical) {
+      std::fprintf(stderr,
+                   "laige-replay: replays identical over %llu ticks "
+                   "(component state)\n",
+                   static_cast<unsigned long long>(result.framesA + 1));
+    } else if (result.lengthDivergence) {
+      std::fprintf(stderr,
+                   "laige-replay: length divergence: replay A has %llu "
+                   "frames, replay B has %llu — first tick only one "
+                   "replay has: %llu\n",
+                   static_cast<unsigned long long>(result.framesA),
+                   static_cast<unsigned long long>(result.framesB),
+                   static_cast<unsigned long long>(
+                       result.firstDivergentTick));
+    } else {
+      std::fprintf(stderr,
+                   "laige-replay: first divergence at tick %llu — %u "
+                   "differing state items, %u reported (stdout)\n",
+                   static_cast<unsigned long long>(
+                       result.firstDivergentTick),
+                   result.differingItems,
+                   static_cast<unsigned>(result.entries.size()));
+    }
+    if (result.fullStateDivergent) {
+      // Never silent (CORE-008): the component state may be identical
+      // while the PRNG draw position diverged (different seeds).
+      std::fprintf(stderr,
+                   "laige-replay: note: the PRNG substream state "
+                   "diverged (different seeds/inputs) even where the "
+                   "component state matches (full_state_divergent=true)\n");
+    }
+
+    // The ordered shutdown (CONC-006), both engines.
+    engineA.shutdown();
+    engineB.shutdown();
+    return result.identical ? 0 : 1;
+  }
+
   // The log (M1-DET-02 format; the bounded read + the structural
   // validation are loadReplay's).
   const laige::Result<laige::ReplayLog, laige::ErrorCode> log =
@@ -308,37 +627,8 @@ int main(int argc, char** argv) {
   // The replay identity (ADR 0002): a mismatch is a REJECTED replay —
   // never a silent divergence. The report names every differing field
   // with both sides' values (actionable, LOG-002 shape).
-  const laige::ReplayIdentityDiff diff =
-      laige::replayIdentityDiff(log.value(), world, config.value());
-  if (!diff.empty()) {
-    const laige::ReplayIdentity recorded = log.value().identity;
-    const laige::ReplayIdentity expected =
-        laige::makeReplayIdentity(world, config.value());
-    char a[17], b[17];
-    std::fprintf(stderr,
-                 "laige-replay: replay identity mismatch — the log was "
-                 "recorded under a different identity; a mismatch is a "
-                 "rejected replay, never a silent divergence (ADR "
-                 "0002)\n");
-    reportIdentityField(stderr, "seed", diff.seed,
-                        (formatHex16(a, recorded.seed), a),
-                        (formatHex16(b, expected.seed), b));
-    reportIdentityField(stderr, "tick_rate_hz", diff.tickRateHz,
-                        (std::to_string(recorded.tickRateHz)).c_str(),
-                        (std::to_string(expected.tickRateHz)).c_str());
-    reportIdentityField(stderr, "component_schema_hash",
-                        diff.componentSchemaHash,
-                        (formatHex16(a, recorded.componentSchemaHash), a),
-                        (formatHex16(b, expected.componentSchemaHash), b));
-    reportIdentityField(stderr, "math_backend_id", diff.mathBackendId,
-                        (std::to_string(recorded.mathBackendId)).c_str(),
-                        (std::to_string(expected.mathBackendId)).c_str());
-    reportIdentityField(stderr, "config_hash", diff.configHash,
-                        (formatHex16(a, recorded.configHash), a),
-                        (formatHex16(b, expected.configHash), b));
-    std::fprintf(stderr,
-                 "laige-replay: re-record the log or pass the config "
-                 "(and registrations) that produced it\n");
+  if (reportIdentityMismatch(stderr, "the log", log.value(), world,
+                             config.value())) {
     engine.shutdown();
     return 2;
   }

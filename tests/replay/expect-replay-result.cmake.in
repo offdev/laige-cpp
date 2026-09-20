@@ -21,6 +21,7 @@ cmake_minimum_required(VERSION 3.16)
 # --- Inputs (substituted at configure time) ------------------------------
 set(_test_name "@TEST_NAME@")
 set(_setup_cmd "@SETUP_CMD@")
+set(_setup2_cmd "@SETUP2_CMD@")
 set(_cmd "@CMD@")
 set(_cmd2 "@SECOND_CMD@")
 set(_expect_exit "@EXPECT_EXIT@")
@@ -39,6 +40,7 @@ function(expand_vars var)
   string(REPLACE "<RUN>" "$ENV{LAIGE_RUN}" _s "${_s}")
   string(REPLACE "<FIXTURE>" "$ENV{LAIGE_FIXTURE}" _s "${_s}")
   string(REPLACE "<WRONGSEED>" "$ENV{LAIGE_WRONGSEED}" _s "${_s}")
+  string(REPLACE "<DIFFBUDGET>" "$ENV{LAIGE_DIFFBUDGET}" _s "${_s}")
   string(REPLACE "<OUT>" "$ENV{LAIGE_OUT_DIR}" _s "${_s}")
   set(${var} "${_s}" PARENT_SCOPE)
 endfunction()
@@ -71,6 +73,19 @@ if(NOT _setup_cmd STREQUAL "")
     message(FATAL_ERROR "@TEST_NAME@: setup step failed [rc=${_setup_rc}]\n"
                         "--- setup stdout ---\n${_setup_out}\n"
                         "--- setup stderr ---\n${_setup_err}")
+  endif()
+endif()
+
+# --- The optional second setup step (a second recorded scenario) ----------
+# (the diff tests record two logs: the first under one identity, the
+# second under another)
+if(NOT _setup2_cmd STREQUAL "")
+  expand_vars(_setup2_cmd)
+  run_cmd("${_setup2_cmd}" _setup2_out _setup2_err _setup2_rc)
+  if(NOT _setup2_rc EQUAL 0)
+    message(FATAL_ERROR "@TEST_NAME@: setup2 step failed [rc=${_setup2_rc}]\n"
+                        "--- setup2 stdout ---\n${_setup2_out}\n"
+                        "--- setup2 stderr ---\n${_setup2_err}")
   endif()
 endif()
 

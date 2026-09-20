@@ -65,10 +65,17 @@
 # the live state; the public contract lives in include/laige/sim/
 # entity.h) and the replay EXECUTION half in replay.cpp
 # (replayIdentityDiff + runReplay; the public types and contract live
-# in include/laige/sim/replay.h).
+# in include/laige/sim/replay.h). M1-DET-05 adds replay_diff.cpp: the
+# replay DIFF (diffReplays — the identity-checked lock-step tick walk
+# that aligns two replays on World::componentStateHash (state_hash.cpp,
+# the canonical steps 1-4 shared with stateHash) and reports the first
+# divergent tick plus the bounded state diff (World::stateDiff —
+# entity.h); the public types and contract live in include/laige/sim/
+# replay_diff.h).
 set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
                      systems.cpp system_timing.cpp game_loop.cpp
-                     engine.cpp replay.cpp state_hash.cpp)
+                     engine.cpp replay.cpp state_hash.cpp
+                     replay_diff.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})

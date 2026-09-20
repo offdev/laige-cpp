@@ -292,6 +292,75 @@ known-answer vector, capacity independence, tick/handle sensitivity,
 component and archetype sensitivity, convergence equality, PRNG
 sensitivity, and the zero-allocation proof).
 
+## The component-state hash and the state diff (`componentStateHash`, `stateDiff`, M1-DET-05)
+
+```cpp
+std::uint64_t World::componentStateHash(std::uint64_t tick) const noexcept;
+
+struct StateDiffItem {
+  std::uint16_t slot;          // the entity slot (the slot id, not the
+                               // handle: slots are world-local)
+  std::uint32_t componentId;   // 0 = an entity-presence difference
+                               // (component 0 is reserved for it)
+  std::uint32_t size;          // the component's sizeof (0 for a
+                               // presence item)
+  bool presentInA, presentInB; // per side
+  const std::uint8_t* bytesA, *bytesB;  // non-owning views into the
+                               // world's component columns (null on
+                               // the absent side; presence items: both
+                               // null)
+};
+template <typename F>
+[[nodiscard]] std::uint32_t stateDiff(const World& other,
+                                      std::uint32_t maxItems,
+                                      F&& fn) const noexcept;
+```
+
+- **`componentStateHash(tick)`** — the `stateHash` canonical stream
+  **minus the final step**: tick → live count → live `(slot,
+  generation)` pairs → per non-empty archetype `(ids, row count, raw
+  component bytes)`. The per-system PRNG substream state is excluded
+  ON PURPOSE: it is a pure function of (master seed, draws), and the
+  seed is a replay-identity field — two different-seed replays of the
+  same inputs diverge in substream state from tick 0 while their
+  components may match for hundreds of ticks. The replay DIFF
+  (`diffReplays`, [api/replay.md](replay.md)) aligns ticks on
+  `componentStateHash` so that the first reported divergence is the
+  first real *component* divergence, not tick 0; it still tracks the
+  full `stateHash` per tick and reports it honestly
+  (`ReplayDiffResult::fullStateDivergent`). Like `stateHash`, it is a
+  pure function of the live state, a cold path, `O(capacity + live
+  component bytes + kMaxArchetypes²)`, no allocation, `const`.
+- **`stateDiff(other, maxItems, fn)`** — the bounded per-(entity,
+  component) comparison of two worlds' live state:
+
+  - **Canonical order** — slots ascending; per slot, an
+    entity-presence item (`componentId == 0`) before the slot's
+    component items; components ascending in the UNION of the two
+    worlds' component sets (a component present on only one side is
+    reported for that slot — `presentInA`/`presentInB` + the absent
+    side's `bytes` null). Both-present components are compared by raw
+    bytes (a difference only when the bytes differ).
+  - **Bounded report, exact count** — `fn` is invoked for the first
+    `maxItems` differences; the return value is the TOTAL difference
+    count regardless of `maxItems` (`0` = count only). The callback's
+    argument is valid until the callback returns (the item's byte
+    views point into the worlds' columns and stay valid until the
+    next mutation of the involved entities — non-owning, PERF-005).
+  - **Precondition: identical component registries** — the same types
+    in the same registration order (the diff driver's replay-identity
+    check enforces it; a mismatch is a debug assert — CPP-012,
+    unreachable through `diffReplays`).
+  - **Performance (DOC-004):** `O(capacity + Σ live component bytes)`
+    (one two-pointer merge per live slot), the report bounded by
+    `maxItems`; no allocation, `const`, cold path.
+
+Verified by `ctest -R replay_diff` (the `StateDiff.*` + `ReplayDiff.*`
+suites: the diff contract above, the tick-37 replay-diff integration
+scenario, and the `diffReplays` driver — the identity/determinism
+rejections, the lock-step walk, the bounded report at the first
+divergence, the length divergence, and the draw-path KAT).
+
 ## Usage (performant pattern)
 
 ```cpp
@@ -360,3 +429,8 @@ if (!world.isValid(handle)) { /* stale — drop it, log if unexpected */ }
   hash ("The deterministic state hash" section above); the replay
   execution half and the `laige-replay` runner live in
   [api/replay.md](replay.md); suite `ctest -R replay_replay`.
+- **M1-DET-05 (done):** `World::componentStateHash` + `World::stateDiff`
+  ("The component-state hash and the state diff" section above) — the
+  replay diff's tick-alignment key and bounded comparison; the
+  `diffReplays` driver and `laige-replay --diff` live in
+  [api/replay.md](replay.md); suite `ctest -R replay_diff`.
