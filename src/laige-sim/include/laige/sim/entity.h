@@ -250,6 +250,7 @@
 
 #pragma once
 
+#include <cassert>  // stateDiff's registry-match precondition (CPP-012)
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -507,6 +508,45 @@ class World {
   // budget, and the warn counters (GuardrailStats). O(1), no
   // allocation, no side effects.
   [[nodiscard]] GuardrailStats guardrailStats() const noexcept;
+
+  // One (entity, component) state difference between two worlds
+  // (World::stateDiff, M1-DET-05; the full contract in
+  // include/laige/sim/replay_diff.h and docs/api/replay.md). A plain
+  // value: the two byte pointers are NON-OWNING views into the
+  // worlds' component columns — valid until the next mutation of the
+  // involved entities' components (the get<T> pointer contract,
+  // PERF-005). The item describes one difference only:
+  //
+  //   componentId == 0   an entity-presence difference: the slot's
+  //                      entity is live in exactly one world
+  //                      (presentInA/presentInB say which; the size
+  //                      and byte fields are 0/null).
+  //   componentId > 0, both present
+  //                      the component's bytes differ (same size —
+  //                      the registry-match precondition); both byte
+  //                      fields are valid.
+  //   componentId > 0, one side only
+  //                      the component is attached in exactly one
+  //                      world; that side's byte field is valid, the
+  //                      other's is null.
+  struct StateDiffItem {
+    // The entity slot id (the handle's id half; the cross-world
+    // identity — generations are per-world state).
+    std::uint16_t slot{};
+    // The component id (identical in both worlds — the registry-match
+    // precondition); 0 for an entity-presence difference.
+    std::uint32_t componentId{};
+    // The component's byte size (0 for a presence difference).
+    std::uint32_t size{};
+    // The slot's entity is live in `this` world.
+    bool presentInA{};
+    // The slot's entity is live in `other` (the stateDiff argument).
+    bool presentInB{};
+    // The component bytes in `this` world (nullptr when absent).
+    const std::uint8_t* bytesA{};
+    // The component bytes in `other` (nullptr when absent).
+    const std::uint8_t* bytesB{};
+  };
 
   // -----------------------------------------------------------------
   // Component registry (M1-ECS-02; full contract in component.h)
@@ -768,6 +808,69 @@ class World {
   // allocation.
   [[nodiscard]] std::uint64_t stateHash(std::uint64_t tick) const noexcept;
 
+  // -------------------------------------------------------------
+  // Replay diff state access (M1-DET-05; full contract in
+  // include/laige/sim/replay_diff.h and docs/api/replay.md)
+  // -------------------------------------------------------------
+
+  // The component-state part of the state hash: the canonical
+  // encoding's steps 1-4 (the tick, the live entity count and
+  // handles, the archetype assignment, and every live component's
+  // bytes in the canonical order — preamble "Canonical encoding")
+  // with the PRNG substream state (step 5) EXCLUDED. Same scope,
+  // complexity, and allocation contract as stateHash; a pure
+  // function of the state; no allocation, no side effects, no
+  // logging; `const`. COLD path — the replay diff driver
+  // (replay_diff.h diffReplays) calls it once per aligned tick; the
+  // engine's per-tick hot path never does.
+  //
+  // WHY A SEPARATE HASH: the replay diff aligns two replays on THIS
+  // hash, not stateHash. The substream state is a pure function of
+  // the master seed (a replay-identity field a diff legitimately
+  // varies — different seeds, different input frames from M3 on)
+  // plus the draws so far: two different-seed replays diverge in the
+  // substream from tick 0 WITHOUT any component-state difference, so
+  // aligning on stateHash would report tick 0 for every different-
+  // seed diff and hide the first real component divergence (the
+  // FR-11.3 use case). The diff driver separately reports whether
+  // any compared tick's FULL state hash differed (the result's
+  // fullStateDivergent flag — never silent, CORE-008).
+  // @budget O(capacity + live component bytes + kMaxArchetypes²); no
+  // allocation.
+  [[nodiscard]] std::uint64_t componentStateHash(std::uint64_t tick) const noexcept;
+
+  // Compare this world's live state against `other`'s, invoking
+  // `fn(const StateDiffItem&)` once per difference in canonical
+  // order — live slots ascending, and per live slot: the presence
+  // item (when exactly one world has the entity live) before the
+  // component items, which walk the UNION of the two worlds'
+  // component sets in ascending component-id order — and returns the
+  // TOTAL number of differences (which may exceed `maxItems`: the
+  // callback is invoked for the first `maxItems` differences only —
+  // the bounded report, replay_diff.h).
+  //
+  // PRECONDITION (the caller's invariant): the two worlds have
+  // IDENTICAL component registries (same count, same id order, same
+  // sizes) — diffReplays enforces it through the replay-identity
+  // check (replay_diff.h); a violation is a debug assert (CPP-012:
+  // a programmer invariant, not a recoverable runtime failure).
+  //
+  // Pure read: `const`, no allocation beyond the callback's own
+  // work, no logging, no side effects; it does NOT register with the
+  // M1-ECS-04 iteration-legality guard (the stateHash precedent — a
+  // cold-path const read, not a query). The callback must not
+  // re-enter World mutation or iteration on either world.
+  //
+  // Entity identity across worlds is the SLOT id (Entity handles are
+  // per-world — the entity.h caveat); generations and dead-slot
+  // state are not compared (stateHash scope). A slot beyond one
+  // world's capacity is "not present" in that world.
+  // @budget O(max(capacityA, capacityB) × (components per entity +
+  // component bytes)); cold path.
+  template <typename F>
+  [[nodiscard]] std::uint32_t
+  stateDiff(const World& other, std::uint32_t maxItems, F&& fn) const noexcept;
+
   // Destroy every live entity (shutdown path, CONC-006). Every handle
   // becomes stale; the capacity is unchanged and the world is
   // immediately reusable. O(capacity + detached rows * row-stride),
@@ -943,6 +1046,17 @@ class World {
   // runSystems per system per tick (defined in system_timing.cpp).
   void checkSystemBudget(std::uint32_t id, double measuredMs) noexcept;  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured run time never enters sim state, hashes, or replays (M1-SYS-03, ARCH-009)
 
+  // M1-DET-05: feed the canonical stream steps 1-4 (stateHash preamble
+  // "Canonical encoding": the tick, the live count, the live handles,
+  // the archetype-assigned component bytes) into a RUNNING FNV-1a 64
+  // state (`h` is the state in and out — the state hash's whole state
+  // is one u64). Shared by stateHash (steps 1-4, then step 5's
+  // substream state) and componentStateHash (steps 1-4 only — the
+  // replay diff's tick alignment, replay_diff.h). Defined in
+  // state_hash.cpp next to both (the shared encoding is maintained in
+  // one place).
+  void feedStateSteps1to4(std::uint64_t& h, std::uint64_t tick) const noexcept;
+
   // M1-ECS-04 query helpers: compile-time recursion over the listed
   // components (N ≤ 32 — the M1 bound). Recursion, not a fold: the
   // per-index component TYPE must reach a template argument, which a
@@ -1116,6 +1230,121 @@ class World {
   // allocation only — PERF-003).
   std::unique_ptr<detail::SystemTimingRecord[]> systemTiming_;
 };
+
+// ---------------------------------------------------------------------------
+// Replay diff state access (M1-DET-05). Header-defined: it is a
+// template, so it must be visible to every translation unit that
+// compares two worlds' state. Full contract in
+// include/laige/sim/replay_diff.h and docs/api/replay.md.
+// ---------------------------------------------------------------------------
+
+template <typename F>
+std::uint32_t
+World::stateDiff(const World& other, std::uint32_t maxItems, F&& fn) const noexcept {
+  // The caller's invariant: identical component registries (the
+  // diff driver's replay-identity check enforces it —
+  // replay_diff.h). Debug assert; a violation is a programmer bug
+  // (CPP-012), unreachable through diffReplays.
+  const std::uint32_t count = componentCount_;
+  assert(other.componentCount_ == count &&
+         "stateDiff requires identical component registries "
+         "(replay_diff.h)");
+  for (std::uint32_t id = 1; id <= count; ++id) {
+    assert(components_[id - 1].size == other.components_[id - 1].size &&
+           "stateDiff requires identical component sizes (replay_diff.h)");
+  }
+  std::uint32_t total = 0;
+  std::uint32_t reported = 0;
+  // The union of the two slot spaces: a slot beyond a world's
+  // capacity is simply "not present" there.
+  const std::uint32_t capMax =
+      capacity_ > other.capacity_ ? capacity_ : other.capacity_;
+  // A sentinel id above every real id (kMaxComponentTypes): the
+  // two-pointer merge below compares (next A id, next B id).
+  constexpr std::uint32_t kSentinelId = kMaxComponentTypes + 1;
+  for (std::uint32_t slot = 0; slot < capMax; ++slot) {
+    const bool liveA = slot < capacity_ && alive_[slot] != 0;
+    const bool liveB = slot < other.capacity_ && other.alive_[slot] != 0;
+    if (liveA != liveB) {
+      // Entity-presence difference: the slot's entity is live in
+      // exactly one world (the componentId-0 item).
+      if (reported < maxItems) {
+        StateDiffItem item;
+        item.slot = static_cast<std::uint16_t>(slot);
+        item.presentInA = liveA;
+        item.presentInB = liveB;
+        fn(item);
+        ++reported;
+      }
+      ++total;
+      continue;
+    }
+    if (!liveA) continue;  // both dead (or both out of range)
+    // Both live: walk the UNION of the two component sets in
+    // ascending id order (both signatures are sorted ascending —
+    // archetype.h). The consumed signature index IS the column
+    // index (the columns sit in signature order).
+    const std::uint32_t archAId = archetypeOf_[slot];
+    const std::uint32_t archBId = other.archetypeOf_[slot];
+    const detail::ArchetypeRecord* recA =
+        archAId != 0 ? &archetypes_[archAId - 1] : nullptr;
+    const detail::ArchetypeRecord* recB =
+        archBId != 0 ? &other.archetypes_[archBId - 1] : nullptr;
+    const std::uint32_t sigCountA = recA != nullptr ? recA->sigCount : 0;
+    const std::uint32_t sigCountB = recB != nullptr ? recB->sigCount : 0;
+    const std::uint32_t rowA = rowOf_[slot];
+    const std::uint32_t rowB = other.rowOf_[slot];
+    std::uint32_t ia = 0;
+    std::uint32_t ib = 0;
+    while (ia < sigCountA || ib < sigCountB) {
+      const std::uint32_t idA = ia < sigCountA ? recA->sig[ia] : kSentinelId;
+      const std::uint32_t idB = ib < sigCountB ? recB->sig[ib] : kSentinelId;
+      const std::uint32_t id = idA < idB ? idA : idB;
+      const bool inA = idA == id;
+      const bool inB = idB == id;
+      if (inA) ++ia;
+      if (inB) ++ib;
+      StateDiffItem item;
+      item.slot = static_cast<std::uint16_t>(slot);
+      item.componentId = id;
+      item.presentInA = inA;
+      item.presentInB = inB;
+      const detail::ArchetypeColumn* colA =
+          inA ? &recA->columns[ia - 1] : nullptr;
+      const detail::ArchetypeColumn* colB =
+          inB ? &recB->columns[ib - 1] : nullptr;
+      if (inA && inB) {
+        // Present in both: a difference only when the raw bytes
+        // differ (same size — the registry invariant above).
+        item.size = colA->size;
+        item.bytesA = reinterpret_cast<const std::uint8_t*>(
+            colA->base + static_cast<std::size_t>(rowA) * colA->size);
+        item.bytesB = reinterpret_cast<const std::uint8_t*>(
+            colB->base + static_cast<std::size_t>(rowB) * colB->size);
+        if (std::memcmp(item.bytesA, item.bytesB, item.size) == 0) {
+          continue;  // identical bytes: not a difference
+        }
+      } else {
+        // Present in exactly one world: carry that side's bytes.
+        const detail::ArchetypeColumn& col = inA ? *colA : *colB;
+        item.size = col.size;
+        if (inA) {
+          item.bytesA = reinterpret_cast<const std::uint8_t*>(
+              colA->base + static_cast<std::size_t>(rowA) * colA->size);
+        } else {
+          item.bytesB = reinterpret_cast<const std::uint8_t*>(
+              colB->base + static_cast<std::size_t>(rowB) * colB->size);
+        }
+      }
+      if (reported < maxItems) {
+        fn(item);
+        ++reported;
+      }
+      ++total;
+    }
+  }
+  return total;
+}
 
 // Component registration (M1-ECS-02). Header-defined: it is a template,
 // so it must be visible to every translation unit that registers a

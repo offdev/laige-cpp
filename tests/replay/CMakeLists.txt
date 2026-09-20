@@ -1,4 +1,4 @@
-# laige-replay CTest suite (M1-DET-03).
+# laige-replay CTest suite (M1-DET-03 + M1-DET-05).
 #
 # The tool is tested end to end against a recorded run of the engine's
 # built-in scenario (`laige-run --headless ... --replay` — the M1-DET-02
@@ -10,6 +10,15 @@
 # malformed-baseline behavior, and the identity-mismatch rejection
 # (ADR 0002: a mismatch is a rejected replay, never a silent
 # divergence).
+#
+# The diff mode (M1-DET-05, `laige-replay --diff`): the diff tests
+# record two scenario logs (the template's SETUP/SETUP2 steps) and
+# assert the structured stdout report grammar + the exit codes
+# (0 identical, 1 divergent/length-divergent, 2 usage/identity/IO) —
+# replay_diff_identical (two 16-tick recordings, same fixture),
+# replay_diff_length (16 vs 10 ticks), replay_diff_identity (a
+# budget-128 config against a budget-64 log), and replay_diff_usage
+# (--diff with one log path).
 #
 # Each test is a generated `cmake -P` check script
 # (expect-replay-result.cmake.in, the tests/api + tests/detcheck
@@ -24,25 +33,28 @@ set(LAIGE_REPLAY_TEST_ENV
     "LAIGE_RUN=$<TARGET_FILE:laige-run>"
     "LAIGE_FIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/replay_smoke.json"
     "LAIGE_WRONGSEED=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/replay_smoke_wrongseed.json"
+    "LAIGE_DIFFBUDGET=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/replay_smoke_budget128.json"
     "LAIGE_OUT_DIR=${CMAKE_CURRENT_BINARY_DIR}")
 
-# laige_replay_test(name [SETUP s] [CMD c] [SECOND_CMD c] [WRITE_OUT p]
-#                   [DERIVE mode] [DERIVED_PATH p] [EXPECT_EXIT n]
-#                   [EXPECT_LINES n] [EXPECT_IDENTICAL bool]
-#                   [PERTURB_TICK n] [CHECK_OUT regex]* [CHECK_ERR regex]*)
+# laige_replay_test(name [SETUP s] [SETUP2 s] [CMD c] [SECOND_CMD c]
+#                   [WRITE_OUT p] [DERIVE mode] [DERIVED_PATH p]
+#                   [EXPECT_EXIT n] [EXPECT_LINES n] [EXPECT_IDENTICAL
+#                   bool] [PERTURB_TICK n] [CHECK_OUT regex]*
+#                   [CHECK_ERR regex]*)
 # Builds one generated check script; CMD/SECOND_CMD may reference
-# <REPLAY> <RUN> <FIXTURE> <DERIVED baseline> <OUT> (expanded at run
-# time from the environment).
+# <REPLAY> <RUN> <FIXTURE> <DIFFBUDGET> <DERIVED baseline> <OUT>
+# (expanded at run time from the environment).
 function(laige_replay_test name)
-  set(oneValueArgs SETUP CMD SECOND_CMD WRITE_OUT DERIVE DERIVED_PATH
-                   EXPECT_EXIT EXPECT_LINES EXPECT_IDENTICAL
-                   PERTURB_TICK)
+  set(oneValueArgs SETUP SETUP2 CMD SECOND_CMD WRITE_OUT DERIVE
+                   DERIVED_PATH EXPECT_EXIT EXPECT_LINES
+                   EXPECT_IDENTICAL PERTURB_TICK)
   set(multiValueArgs CHECK_OUT CHECK_ERR)
   cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}"
                         ${ARGN})
   # The template's @VAR@ names (configure_file @ONLY scope).
   set(TEST_NAME "${name}")
   set(SETUP_CMD "${ARG_SETUP}")
+  set(SETUP2_CMD "${ARG_SETUP2}")
   set(CMD "${ARG_CMD}")
   set(SECOND_CMD "${ARG_SECOND_CMD}")
   set(WRITE_OUT "${ARG_WRITE_OUT}")
@@ -185,3 +197,62 @@ laige_replay_test(replay_log_missing
   CMD "<REPLAY> --log <OUT>/does_not_exist.log --config <FIXTURE>"
   EXPECT_EXIT 2
   CHECK_ERR "laige-replay: log:")
+
+# ---------------------------------------------------------------------------
+# The diff mode (M1-DET-05): `laige-replay --diff <logA> <logB>`.
+# Each test records its scenario log(s) via the template's SETUP/SETUP2
+# steps (laige-run --headless ... --replay, the engine's built-in
+# registrations) and asserts the structured stdout report grammar +
+# the exit codes (0 identical, 1 divergent/length, 2 identity/usage/IO).
+# ---------------------------------------------------------------------------
+
+# The shared 16-tick recording (the diff fixture runs).
+set(DIFF_RECORD_16
+    "<RUN> --headless <FIXTURE> --ticks 16 --replay <OUT>/diff_16.log")
+set(DIFF_RECORD_10
+    "<RUN> --headless <FIXTURE> --ticks 10 --replay <OUT>/diff_10.log")
+
+# 10) identical: two 16-tick recordings of the SAME fixture (same
+#     seed 42) -> the component state is bit-identical over all 16
+#     ticks: exit 0, result=identical, zero differing items, and the
+#     full state (PRNG substreams) also matches (same seed).
+laige_replay_test(replay_diff_identical
+  SETUP "${DIFF_RECORD_16}"
+  SETUP2 "<RUN> --headless <FIXTURE> --ticks 16 --replay <OUT>/diff_16_b.log"
+  CMD "<REPLAY> --diff <OUT>/diff_16.log <OUT>/diff_16_b.log --config <FIXTURE>"
+  EXPECT_EXIT 0
+  CHECK_OUT "replay_diff result=identical" "frames_a=16" "frames_b=16"
+            "first_divergent_tick=0" "full_state_divergent=false"
+            "differing_items=0" "reported_items=0"
+  CHECK_ERR "replays identical over 17 ticks")
+
+# 11) length divergence: a 16-tick log vs a 10-tick log (same fixture):
+#     the shared ticks match, but the frame counts differ -> exit 1,
+#     result=length_divergence, first tick only one replay has is 11
+#     (0-based: the 11th completed tick), zero differing items.
+laige_replay_test(replay_diff_length
+  SETUP "${DIFF_RECORD_16}"
+  SETUP2 "${DIFF_RECORD_10}"
+  CMD "<REPLAY> --diff <OUT>/diff_16.log <OUT>/diff_10.log --config <FIXTURE>"
+  EXPECT_EXIT 1
+  CHECK_OUT "replay_diff result=length_divergence" "frames_a=16"
+            "frames_b=10" "first_divergent_tick=11"
+            "length_divergence=true" "differing_items=0"
+  CHECK_ERR "length divergence: replay A has 16 frames, replay B has 10")
+
+# 12) identity mismatch (ADR 0002): a 16-tick log recorded under the
+#     budget-64 fixture, diffed against ITSELF under the budget-128
+#     config (same seed 42): the config_hash differs -> the diff is
+#     REJECTED (never a silent divergence) — exit 2, the report names
+#     the config_hash field.
+laige_replay_test(replay_diff_identity
+  SETUP "${DIFF_RECORD_16}"
+  CMD "<REPLAY> --diff <OUT>/diff_16.log <OUT>/diff_16.log --config <DIFFBUDGET>"
+  EXPECT_EXIT 2
+  CHECK_ERR "replay identity mismatch" "config_hash" "DIFFERS")
+
+# 13) usage error: --diff with a single log path (no second) -> exit 2.
+laige_replay_test(replay_diff_usage
+  CMD "<REPLAY> --diff <OUT>/diff_16.log"
+  EXPECT_EXIT 2
+  CHECK_ERR "--diff needs two log paths")

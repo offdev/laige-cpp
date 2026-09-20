@@ -64,18 +64,27 @@ int compareSig(const std::uint32_t* a, std::uint16_t countA,
 
 }  // namespace
 
-std::uint64_t World::stateHash(std::uint64_t tick) const noexcept {
-  Fnv1a64 h;
+// The canonical stream steps 1-4 (entity.h "Canonical encoding"): the
+// tick, the live count, the live handles, and the archetype-assigned
+// component bytes — shared by stateHash (steps 1-4, then step 5's
+// PRNG substream state) and componentStateHash (steps 1-4 only — the
+// replay diff's tick alignment, replay_diff.h). One shared
+// implementation keeps the canonical encoding maintained in exactly
+// one place (CORE-006). The FNV state is a single u64, so the helper
+// takes it in and out by reference.
+void World::feedStateSteps1to4(std::uint64_t& h, std::uint64_t tick) const noexcept {
   // Step 1: the completed tick count.
-  h.word(tick);
+  Fnv1a64 stream;
+  stream.h = h;
+  stream.word(tick);
   // Step 2: the live entity count.
-  h.word(inUse_);
+  stream.word(inUse_);
   // Step 3: the live handles, ascending slot order (dead slots and
   // their generations are history — entity.h scope).
   for (std::uint32_t s = 0; s < capacity_; ++s) {
     if (alive_[s] != 0) {
-      h.word(static_cast<std::uint64_t>(s));
-      h.word(static_cast<std::uint64_t>(generations_[s]));
+      stream.word(static_cast<std::uint64_t>(s));
+      stream.word(static_cast<std::uint64_t>(generations_[s]));
     }
   }
   // Step 4: per distinct live component set (every NON-EMPTY
@@ -105,23 +114,31 @@ std::uint64_t World::stateHash(std::uint64_t tick) const noexcept {
   }
   for (std::uint32_t i = 0; i < nonEmpty; ++i) {
     const detail::ArchetypeRecord& arch = archetypes_[order[i]];
-    h.word(arch.sigCount);
+    stream.word(arch.sigCount);
     for (std::uint16_t c = 0; c < arch.sigCount; ++c) {
-      h.word(arch.sig[c]);
+      stream.word(arch.sig[c]);
     }
-    h.word(arch.size);
+    stream.word(arch.size);
     // The raw component bytes: rows in ascending slot order (the
     // dense-id row order, archetype.h invariant I2), columns in
     // signature order.
     for (std::uint32_t row = 0; row < arch.size; ++row) {
       for (std::uint16_t c = 0; c < arch.sigCount; ++c) {
         const detail::ArchetypeColumn& col = arch.columns[c];
-        h.bytes(reinterpret_cast<const std::uint8_t*>(
-                    col.base + static_cast<std::size_t>(row) * col.size),
-                col.size);
+        stream.bytes(reinterpret_cast<const std::uint8_t*>(
+                         col.base + static_cast<std::size_t>(row) * col.size),
+                     col.size);
       }
     }
   }
+  h = stream.h;
+}
+
+std::uint64_t World::stateHash(std::uint64_t tick) const noexcept {
+  Fnv1a64 h;
+  // Steps 1-4 (shared with componentStateHash — see
+  // feedStateSteps1to4 above).
+  feedStateSteps1to4(h.h, tick);
   // Step 5: the per-system PRNG state, ascending system id (the draw
   // position is the replay state — PRD §10.3; systems without a
   // substream hash their absence, not nothing).
@@ -138,6 +155,18 @@ std::uint64_t World::stateHash(std::uint64_t tick) const noexcept {
     }
   }
   return h.h;
+}
+
+// The component-state part of the state hash (steps 1-4 only): the
+// replay diff's tick alignment (replay_diff.h — the PRNG substream
+// state is excluded: it is a function of the master seed, a replay-
+// identity field the diff legitimately varies, and a different-seed
+// replay would otherwise diverge at tick 0 without any component-
+// state difference).
+std::uint64_t World::componentStateHash(std::uint64_t tick) const noexcept {
+  std::uint64_t h = kFnvOffsetBasis;
+  feedStateSteps1to4(h, tick);
+  return h;
 }
 
 }  // namespace laige

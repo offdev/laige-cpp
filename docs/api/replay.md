@@ -1,15 +1,22 @@
-# Replay recording and execution (`ReplayRecorder`, `runReplay`, M1-DET-02/03)
+# Replay recording, execution, and diff (`ReplayRecorder`, `runReplay`, `diffReplays`, M1-DET-02/03/05)
 
-The M1 replay system in both halves: the **recording** (M1-DET-02;
+The M1 replay system in its three halves: the **recording** (M1-DET-02;
 PRD FR-1.4, FR-11.3, PRD Appendix A — replay = input log + seed,
 ADR 0002, ARCH-007, SCALE-005) — a **versioned replay log format**
 plus the `ReplayRecorder` (the atomic, size-bounded writer), the
 `parseReplay`/`loadReplay` readers, and the replay-identity hashes —
-and the **execution** (M1-DET-03): `World::stateHash` (the
+the **execution** (M1-DET-03): `World::stateHash` (the
 deterministic state hash), `runReplay` (the identity-checked,
 tick-by-tick re-run that produces the per-tick hash stream), and the
 `laige-replay` runner that prints the stream and compares it against a
-baseline. The engine records one frame per completed tick
+baseline — and the **diff** (M1-DET-05; FR-11.3): `World::stateDiff`
+(the bounded per-(entity, component) comparison),
+`World::componentStateHash` (the state hash without the PRNG substream
+state — the diff's tick-alignment key), `diffReplays` (replay two logs
+in lock step, align by tick, report the first divergent tick + the
+bounded state diff), and `laige-replay --diff <logA> <logB> --config
+<cfg>` — the editor replay viewer's (M5-ED-15) report source. The
+engine records one frame per completed tick
 (`Engine::startReplayRecording`), `laige-run --replay <path>` wires the
 flag that M1-HEAD-01 stubbed, and `laige-replay --log <log> --config
 <cfg> [--expect <baseline>]` closes the loop.
@@ -357,6 +364,157 @@ laige-replay --log LOG --config CONFIG.json [--expect BASELINE]
   `hello --log` wires this; M1-DET-04's detcheck `--run-a/--run-b`
   compares two scenarios' hash streams).
 
+## The diff mode (`diffReplays`, `World::stateDiff`, M1-DET-05)
+
+```cpp
+struct ReplayDiffResult {
+  bool identical;             // every aligned tick matched (and equal
+                              // frame counts)
+  std::uint64_t firstDivergentTick;  // the first divergent completed
+                              // tick (0 = the initial state; in the
+                              // identical case: 0, a documented
+                              // placeholder)
+  bool lengthDivergence;      // the frame counts differ (no shared-
+                              // tick divergence before the shorter log
+                              // ends; firstDivergentTick = the first
+                              // tick only one replay has)
+  bool fullStateDivergent;    // the FULL state hashes (PRNG substream
+                              // state included) differed on some
+                              // aligned tick — the honest PRNG report
+  std::uint64_t framesA, framesB;
+  std::uint32_t differingItems;  // the EXACT difference count at the
+                              // first divergence (unbounded)
+  std::vector<World::StateDiffItem> entries;  // the BOUNDED report
+};
+Result<ReplayDiffResult, ErrorCode> diffReplays(const ReplayLog& logA,
+    const ReplayLog& logB, World& worldA, World& worldB,
+    const EngineConfig& configA, const EngineConfig& configB,
+    std::uint32_t maxEntries = kReplayDiffDefaultEntries) noexcept;
+```
+
+Replay both logs **in lock step** on two caller-provided worlds and
+report where they first differ (FR-11.3: "diff two replays by
+frame/state"). The steps, in order:
+
+1. **Identity check, per log** — each log against THAT log's own
+   `(world, config)` (`replayIdentityDiff`, the M1-DET-03 check). Both
+   logs are checked before the error is returned, so one report names
+   every failing log (each with a `replay/diff_identity_mismatch` warn
+   listing the differing fields and both sides' values). A mismatch is
+   a **rejected diff** — `InvalidArgument`, never a silent divergence
+   (CORE-008, ADR 0002).
+2. **Determinism check, per config** — a config with determinism
+   disabled is a rejected diff (`replay/diff_determinism_disabled`
+   warn, `InvalidArgument`) — the M1-DET-03 precedent.
+3. **Lock-step tick walk** — `scheduleSystems` once per world, then one
+   `beginFrame(); runSystems();` per completed tick on BOTH worlds,
+   aligned over `min(framesA, framesB)` ticks (the recorded frame bytes
+   are opaque in M1 — no input system consumes them yet, M3-INPUT-03).
+4. **Tick alignment on the component-state hash** — each aligned tick
+   compares `worldA.componentStateHash(tick)` against
+   `worldB.componentStateHash(tick)`: the canonical state-hash stream
+   (entity.md) **minus the per-system PRNG substream state**. The
+   substream state is a pure function of the (master seed, draws) —
+   the seed is a replay-identity field the diff legitimately varies
+   (two different-seed replays of the same inputs diverge in
+   substream state from tick 0 while their components may not differ
+   for hundreds of ticks), so aligning on the full `stateHash` would
+   report tick 0 and hide the first real component divergence. The
+   full `stateHash` is still compared at every aligned tick and feeds
+   the `fullStateDivergent` flag (never silent — CORE-008).
+5. **Bounded state diff at the first divergence** — `worldA
+   .stateDiff(worldB, maxEntries, fn)` (entity.md) reports the exact
+   difference count and the first `maxEntries` differences in
+   canonical order (slots ascending; an entity-presence item —
+   `componentId == 0` — before the slot's component items; components
+   ascending in the union of the two worlds' sets). Both worlds sit at
+   the divergent tick's state (the walk stopped there), so the item
+   `bytesA`/`bytesB` views are valid until the next mutation of the
+   involved entities (non-owning, PERF-005).
+
+`maxEntries`: `0` = count only (`entries` empty, `differingItems`
+exact); `1 .. kMaxReplayDiffEntries` (64) = the report bound; a value
+above 64 is **clamped** to it (a report beyond 64 items is a full
+dump — the bounded-report scope, CORE-003). The default is
+`kReplayDiffDefaultEntries` (16).
+
+**Result field table:**
+
+| field | identical | divergent | length divergence |
+|---|---|---|---|
+| `identical` | `true` | `false` | `false` |
+| `firstDivergentTick` | `0` (placeholder) | the first divergent completed tick | the first tick only one replay has (`alignedTicks + 1`) |
+| `lengthDivergence` | `false` | `false` | `true` |
+| `fullStateDivergent` | `false` | as observed (often `true` — different seeds) | as observed over the shared ticks |
+| `differingItems` / `entries` | `0` / empty | exact / bounded (at the divergence tick) | `0` / empty (no shared state at that tick) |
+
+**Performance (PERF-002/003):** per tick, exactly two normal engine
+ticks plus two state hashes and (on a matching tick) no diff work.
+The state-diff pass runs ONCE, only at the first divergence:
+`O(capacity + Σ component bytes)` with the report bounded by
+`maxEntries` items; no allocation beyond the bounded `entries`
+vector. Cold path (development tooling), never in the run hot path.
+
+**Misuse warnings:**
+
+- **Fresh, identically-registered worlds** — `worldA`/`worldB` must
+  carry the SAME component registrations (in the same order) as each
+  log's recording: the identity check enforces the schema hash, and
+  `stateDiff`'s registry match is a debug assert (CPP-012). The
+  worlds must start at the initial state the logs were recorded
+  from — the diff drives ticks from scratch, exactly as `runReplay`.
+- **Scenario logs need the scenario binary** — a log recorded with
+  game-scenario registrations (e.g. `hello --replay`) is
+  schema-incompatible with this binary's built-in registrations, and
+  the identity check rejects it: diff scenario logs from the
+  scenario's own binary (the same constraint as M1-DET-03's
+  `--log`), or use `diffReplays` directly with matching worlds.
+- **The entries' byte views die with the worlds** — read
+  `result.entries[*].bytesA/bytesB` before the worlds are destroyed or
+  the involved entities mutated (non-owning views, PERF-005).
+
+### `laige-replay --diff` (the CLI)
+
+```
+laige-replay --diff LOG_A LOG_B --config CONFIG.json [--entries N]
+```
+
+- **The per-log config** is `CONFIG.json` with THAT log's header seed
+  (`config.seed := log.identity.seed` for each side — the seed is the
+  identity field the diff legitimately varies; the other fields are
+  identity-checked and must match the recording).
+- **stdout is the report only** — stable, machine-greppable grammar
+  (the editor replay viewer's source, M5-ED-15; CI fragments):
+
+  ```
+  replay_diff result=<identical|divergent|length_divergence>
+  frames_a=<n>
+  frames_b=<n>
+  first_divergent_tick=<n>
+  length_divergence=<true|false>
+  full_state_divergent=<true|false>
+  differing_items=<n>
+  reported_items=<n>
+  item slot=<s> component=<c> presence=<both|a_only|b_only> a=<hex|-> b=<hex|->
+  ```
+
+  one `item` line per reported difference, in the canonical order;
+  `component 0` = an entity-presence difference; `a=`/`b=` are the
+  component bytes in lowercase hex, `-` where that side is absent.
+- **stderr is human summary + diagnostics** (the identity-mismatch
+  report, the PRNG note when `full_state_divergent=true`, usage
+  errors) — never on stdout.
+- **Exit codes:** `0` — identical; `1` — divergent (the first
+  divergence tick + the bounded diff are reported) or length-
+  divergent (the first tick only one replay has); `2` — usage error
+  (`--diff` needs two log paths; `--entries` needs an integer in
+  `0..64`; `--config` required; `--diff` mutually exclusive with
+  `--log`/`--expect`), config/log I/O error, identity mismatch, or a
+  failed diff run.
+- **`--entries N`** — the report bound (library semantics: `0` =
+  count only, `>64` rejected at the CLI — the clamping is the library
+  API's job).
+
 ## Performance (PERF-002/003, LOG-003)
 
 - **Disabled** — one null check per tick in the engine's onTick hook;
@@ -418,20 +576,42 @@ laige-replay --log LOG --config CONFIG.json [--expect BASELINE]
   determinism-disabled rejection, and an engine round trip (record
   under `run_headless`, replay through two fresh engines, world-level
   twin state comparison).
+- `ctest -R replay_diff` — the M1-DET-05 Verify (the `StateDiff.*` +
+  `ReplayDiff.*` suites in `tests/laige-sim/replay_diff_tests.cpp`):
+  the state-diff contract (identical worlds report nothing; component
+  byte differences with the canonical slot/component order; entity-
+  and component-presence items; the bounded report vs the exact
+  count), the component-state hash's PRNG-excluded scope, and the diff
+  driver — the **tick-37 integration scenario** (two different-seed
+  replays whose first component divergence lands at tick 37 report
+  tick 37 + the diverged component, the machine-greppable
+  `replay-diff-37` line), the tick-0 initial-state divergence, the
+  length divergence, the identical case, the identity-mismatch
+  rejection (both logs named, per field), the determinism-disabled
+  rejection, and the draw-path KAT against an independent
+  `laige::Prng`.
 - `ctest -R "^replay_"` — the `laige-replay` runner's CTest entries
   (`tests/replay/`, one generated check script per case): the smoke
   stream contract (N+1 lines, tick sequence, 16-hex hashes), the
   double-run determinism, `--expect` match / perturbed (divergence at
   the right tick) / truncated (length report) / malformed (line
   report) / identity mismatch (field report) / usage error / missing
-  log — exit codes 0/1/2 asserted per case.
+  log, and the diff mode — `replay_diff_identical` (two 16-tick
+  recordings, same fixture: `result=identical`, exit 0),
+  `replay_diff_length` (16 vs 10 ticks: `result=length_divergence`,
+  `first_divergent_tick=11`, exit 1), `replay_diff_identity` (a
+  budget-128 config against a budget-64 log: the `config_hash
+  DIFFERS` report, exit 2), and `replay_diff_usage` (`--diff` with one
+  log path, exit 2) — the stdout report grammar fragments asserted
+  per case.
 - `ctest -R fuzz_replay_parse` — the parser's malformed-input surface
   under the bounded-every-commit fuzz gate (1000 deterministic inputs;
   the corpus includes a valid v1 log as a mutate/truncate base; TEST-005,
   NFR-8.7).
 - The include-graph lint and the API manifest (`laige-api.json`)
-  cover the new public declarations (`stateHash`, `replayIdentityDiff`,
-  `runReplay`; regenerated in this change).
+  cover the new public declarations (`stateHash`,
+  `componentStateHash`, `stateDiff`, `replayIdentityDiff`,
+  `runReplay`, `diffReplays`; regenerated in this change).
 
 ## Related
 
