@@ -579,6 +579,13 @@ Result<EngineConfig, ErrorCode> applyConfigOverride(
 // Emits the hot_reload_rejected ERROR for one changed sim-affecting
 // key and returns the failure Status (the caller's config and the
 // reloader's baseline are untouched — restart to apply, FR-1.5).
+// Debug-only (NDEBUG-guarded like the message constants it emits): the
+// Release poll/create paths return early and never reach this helper,
+// so compiling it out of Release keeps both trees warning-free
+// (the unguarded function would name a constant the header does not
+// declare under NDEBUG — an error — and be -Wunused-function if
+// declared).
+#ifndef NDEBUG
 Status rejectSimKey(const char* key, const log::Field& oldField,
                     const log::Field& newField) noexcept {
   LAIGE_LOG_ERROR(kConfigSubsystem, "hot_reload_rejected",
@@ -586,6 +593,7 @@ Status rejectSimKey(const char* key, const log::Field& oldField,
                   laige::log::field("key", key), oldField, newField);
   return ErrorCode::InvalidArgument;
 }
+#endif
 
 Result<ConfigHotReloader, ErrorCode> ConfigHotReloader::create(
     std::string_view path) noexcept {
