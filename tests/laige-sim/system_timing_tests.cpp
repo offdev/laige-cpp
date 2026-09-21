@@ -15,6 +15,12 @@
 //   - the events follow the NFR-13.3 5-field message grammar
 //     ({code} | {what} | {why} | {fix} | {doc_anchor})
 //   - the warn's rolling p99 field carries the window's p99
+//   - the threshold assertions are preemption-tolerant: shared-
+//     runner deschedules can only STRETCH a measured run (never
+//     shorten it), so the over-budget tests branch on the measured
+//     time instead of assuming the nominal margin held (the
+//     2026-09-21 macOS arm64 flake stretched the 6.5 ms burn past
+//     the 15 ms critical threshold)
 //   - the queries validate ids (invalid id / no-systems world /
 //     moved-from world)
 //   - the timing state travels with the world on move
@@ -291,9 +297,16 @@ void runTick(World& w, const SystemSchedule& sched) {
 TEST(SystemTiming, HealthyTicksLogNothingAndTrackStats) {
   MemorySink* mem = installCaptureSink();
   World w = makeWorld();
+  // Budget 100 ms: the success-path silence asserted below is a
+  // LOG-003 property of runs that STAY UNDER budget — and shared-
+  // runner preemption can only stretch a microsecond noop tick. A
+  // 100 ms deschedule spike on one such tick is the shared-runner
+  // noise floor this repo treats as negligible (the archetype
+  // churn's kChurnMaxNsPerRowShifted comment), so the budget carries
+  // the slack a 1 ms budget could not.
   ASSERT_TRUE(w
                   .registerSystem(makeDef("STNoop", &STNoop,
-                                           laige::fpx16_16::fromInt32(1)),
+                                           laige::fpx16_16::fromInt32(100)),
                                    Io<STTag, Access::Read>{})
                   .ok());
   SystemSchedule sched;
@@ -311,14 +324,18 @@ TEST(SystemTiming, HealthyTicksLogNothingAndTrackStats) {
   EXPECT_EQ(st.value().warns, 0u);
   EXPECT_EQ(st.value().errors, 0u);
   // A noop system on an empty world runs in microseconds — well
-  // under its 1 ms budget, with margin for a slow machine. The lower
-  // bound is >= 0.0, not > 0.0: a run shorter than the platform's
-  // steady_clock tick measures as exactly 0.0 ms (the start and end
-  // reads land on the same tick), and that sub-resolution reading is
-  // a legitimate value, not a failure (the tracked-state check is
-  // the runs counter above; lastMs is a diagnostic).
+  // under its 100 ms budget. The lower bound is >= 0.0, not > 0.0:
+  // a run shorter than the platform's steady_clock tick measures as
+  // exactly 0.0 ms (the start and end reads land on the same tick),
+  // and that sub-resolution reading is a legitimate value, not a
+  // failure (the tracked-state check is the runs counter above;
+  // lastMs is a diagnostic). The upper bound is the budget, not the
+  // microsecond expectation: a preemption-stretched run is a
+  // legitimate over-budget value, not a failure of the tracked
+  // state (and would carry its own budget_overrun event, which the
+  // silence assertion above rejects).
   EXPECT_GE(st.value().lastMs, 0.0);
-  EXPECT_LT(st.value().lastMs, 1.0);
+  EXPECT_LT(st.value().lastMs, 100.0);
 
   const laige::Histogram* win = w.systemTimingWindow(SystemId{1});
   ASSERT_TRUE(win != nullptr);
@@ -336,8 +353,16 @@ TEST(SystemTiming, HealthyTicksLogNothingAndTrackStats) {
 TEST(SystemTiming, OverBudgetSystemWarnsAtTheDocumentedMultiplier) {
   MemorySink* mem = installCaptureSink();
   World w = makeWorld();
-  // Budget 5 ms, burn ~6.5 ms: over 1× (warn) but under 3× (15 ms —
-  // the margin holds even under preemption).
+  // Budget 5 ms, burn ~6.5 ms: over 1× (warn) but nominally under 3×
+  // (15 ms). Shared-runner preemption can only STRETCH the busy-wait
+  // run (it can finish late, never early), so each tick's measured
+  // time is either nominal (under 15 ms: the warn only) or stretched
+  // (15 ms or more: the warn plus the documented same-tick critical).
+  // Both branches are consistent executions of the documented
+  // multipliers — the assertions branch on the measured time, so the
+  // test is immune to the preemption that stretched the first run
+  // past 3× in the 2026-09-21 macOS arm64 CI run (two events, not
+  // one, failed the old exact-count assertion there).
   ASSERT_TRUE(w
                   .registerSystem(makeDef("STBurn", &STBurn,
                                            laige::fpx16_16::fromInt32(5)),
@@ -345,45 +370,95 @@ TEST(SystemTiming, OverBudgetSystemWarnsAtTheDocumentedMultiplier) {
                   .ok());
   SystemSchedule sched;
   ASSERT_TRUE(w.scheduleSystems(sched).ok());
+
   stBurnMs = 6.5;
   runTick(w, sched);
-
-  // Exactly one event: the warn (the error threshold was not reached).
-  ASSERT_EQ(mem->entries.size(), 1u);
-  const auto& e = mem->entries[0];
-  EXPECT_EQ(e.event, "budget_overrun");
-  EXPECT_EQ(e.subsystem, "system");
-  EXPECT_EQ(e.severity, laige::log::Severity::Warn);
-  EXPECT_STREQ(fieldValue(e, "system"), "STBurn");
-  EXPECT_STREQ(fieldValue(e, "id"), "1");
-  EXPECT_DOUBLE_EQ(fieldMs(e, "budget_ms"), 5.0);
-  const double measured = fieldMs(e, "measured_ms");
-  EXPECT_GE(measured, 6.0);
-  EXPECT_LT(measured, 15.0);
-  // The rolling p99: the window holds exactly this one sample.
-  EXPECT_NEAR(fieldMs(e, "p99_ms"), measured, 1.0);
-  EXPECT_STREQ(fieldValue(e, "window_samples"), "1");
-
   auto st = w.systemTimingStats(SystemId{1});
   ASSERT_TRUE(st.ok());
   EXPECT_EQ(st.value().runs, 1u);
+  // The 1× rule always holds: the burn floor (~6.5 ms) exceeds the
+  // budget, and preemption only stretches the run — the warn always
+  // fires.
   EXPECT_EQ(st.value().warns, 1u);
-  EXPECT_EQ(st.value().errors, 0u);
+  const bool firstCritical = st.value().lastMs >= 15.0;
+  EXPECT_EQ(st.value().errors, firstCritical ? 1u : 0u);
 
-  // The next over-budget tick: the counter keeps counting, but the
-  // event is rate-limited (LOG-004) — no new entry.
+  if (firstCritical) {
+    // Stretched past 3×: the documented same-tick order — the warn
+    // first, the critical after (the sibling CriticallyOverBudget
+    // test pins that order unconditionally).
+    ASSERT_EQ(mem->entries.size(), 2u);
+    EXPECT_EQ(mem->entries[0].event, "budget_overrun");
+    EXPECT_EQ(mem->entries[0].severity, laige::log::Severity::Warn);
+    EXPECT_EQ(mem->entries[1].event, "budget_critical");
+    EXPECT_EQ(mem->entries[1].severity, laige::log::Severity::Error);
+    EXPECT_GE(fieldMs(mem->entries[1], "measured_ms"), 15.0);
+  } else {
+    // Nominal: exactly one entry — the warn, with the documented
+    // fields.
+    ASSERT_EQ(mem->entries.size(), 1u);
+    const auto& e = mem->entries[0];
+    EXPECT_EQ(e.event, "budget_overrun");
+    EXPECT_EQ(e.subsystem, "system");
+    EXPECT_EQ(e.severity, laige::log::Severity::Warn);
+    EXPECT_STREQ(fieldValue(e, "system"), "STBurn");
+    EXPECT_STREQ(fieldValue(e, "id"), "1");
+    EXPECT_DOUBLE_EQ(fieldMs(e, "budget_ms"), 5.0);
+    const double measured = fieldMs(e, "measured_ms");
+    EXPECT_GE(measured, 6.0);
+    EXPECT_LT(measured, 15.0);
+    // The rolling p99: the window holds exactly this one sample.
+    EXPECT_NEAR(fieldMs(e, "p99_ms"), measured, 1.0);
+    EXPECT_STREQ(fieldValue(e, "window_samples"), "1");
+  }
+
+  // The next over-budget tick: the counters keep counting. The
+  // overrun repeat is rate-limited (LOG-004) — no new entry. A
+  // stretched second tick adds its critical: logged as the first
+  // breach of its class, suppressed as a repeat after one.
   stBurnMs = 6.5;
   runTick(w, sched);
-  EXPECT_EQ(mem->entries.size(), 1u);
   auto st2 = w.systemTimingStats(SystemId{1});
   ASSERT_TRUE(st2.ok());
+  EXPECT_EQ(st2.value().runs, 2u);
   EXPECT_EQ(st2.value().warns, 2u);
+  const bool secondCritical = st2.value().lastMs >= 15.0;
+  EXPECT_EQ(st2.value().errors,
+            (firstCritical ? 1u : 0u) + (secondCritical ? 1u : 0u));
+  // One overrun entry always; the critical entry appears iff some
+  // tick was the first (logged) breach of its class.
+  EXPECT_EQ(mem->entries.size(),
+            1u + (firstCritical ? 1u : 0u) +
+            (!firstCritical && secondCritical ? 1u : 0u));
 
-  // Shutdown: the suppressed repeat is summarized (rate_limited).
+  // Shutdown: one rate_limited summary per suppressed class — the
+  // overrun always (the second tick's repeat), the critical only
+  // when both ticks were stretched (the second is the suppressed
+  // repeat of the first's logged event).
   laige::log::Logger::instance().shutdown();
-  ASSERT_EQ(mem->entries.size(), 2u);
-  EXPECT_EQ(mem->entries[1].event, "rate_limited");
-  EXPECT_STREQ(fieldValue(mem->entries[1], "suppressed"), "1");
+  ASSERT_EQ(mem->entries.size(),
+            2u + (firstCritical ? 1u : 0u) +
+            (!firstCritical && secondCritical ? 1u : 0u) +
+            (firstCritical && secondCritical ? 1u : 0u));
+  EXPECT_EQ(countEvents(*mem, "rate_limited"),
+            1u + (firstCritical && secondCritical ? 1u : 0u));
+  const MemorySink::Entry* overrunSummary = nullptr;
+  const MemorySink::Entry* criticalSummary = nullptr;
+  for (const auto& e : mem->entries) {
+    if (e.event != "rate_limited") continue;
+    if (std::strcmp(fieldValue(e, "event"), "budget_overrun") == 0)
+      overrunSummary = &e;
+    if (std::strcmp(fieldValue(e, "event"), "budget_critical") == 0)
+      criticalSummary = &e;
+  }
+  ASSERT_TRUE(overrunSummary != nullptr);
+  EXPECT_STREQ(fieldValue(*overrunSummary, "suppressed"), "1");
+  if (firstCritical && secondCritical) {
+    ASSERT_TRUE(criticalSummary != nullptr);
+    EXPECT_STREQ(fieldValue(*criticalSummary, "suppressed"), "1");
+  } else {
+    EXPECT_TRUE(criticalSummary == nullptr);
+  }
   sink = nullptr;
 }
 
@@ -503,12 +578,19 @@ TEST(SystemTiming, EventsFollowTheErrorGrammar) {
   // message text).
   MemorySink* mem = installCaptureSink();
   World w = makeWorld();
-  // Two systems, one burn amount (6.5 ms): the first sits over its
-  // 5 ms budget (warn only), the second over its 2 ms budget by
-  // 3× or more (6.5 >= 6 — the error event too, plus its own warn).
+  // Two systems, one burn amount (6.5 ms), both over their 2 ms
+  // budgets by 3× or more (6.5 >= 6 — both event classes fire on
+  // EVERY tick, whatever preemption stretches the runs; a warn-only
+  // system would make the event sequence depend on whether
+  // preemption stretched its run past the 3× threshold — the flake
+  // the OverBudget test's branch removes). The first system (the
+  // registration/schedule order) logs the window's first overrun and
+  // first critical; the second system's repeats of both classes are
+  // rate-limited per (subsystem, event, severity) (LOG-004) and
+  // summarized at shutdown.
   ASSERT_TRUE(w
                   .registerSystem(makeDef("STBurnWarn", &STBurn,
-                                           laige::fpx16_16::fromInt32(5)),
+                                           laige::fpx16_16::fromInt32(2)),
                                    Io<STTag, Access::Read>{})
                   .ok());
   ASSERT_TRUE(w
@@ -521,17 +603,20 @@ TEST(SystemTiming, EventsFollowTheErrorGrammar) {
   stBurnMs = 6.5;
   runTick(w, sched);
 
-  // The tick emits two events: system 1's warn, then system 2's
-  // error. System 2's own warn is the SECOND budget_overrun in this
-  // 60 s rate window — rate-limited per (subsystem, event, severity)
-  // (LOG-004) and summarized at shutdown.
+  // The tick emits exactly two events, in the documented order:
+  // system 1's warn, then system 1's critical. System 2's warn (the
+  // second budget_overrun in this 60 s rate window) and system 2's
+  // critical (the second budget_critical) are rate-limited and
+  // summarized at shutdown.
   EXPECT_EQ(countEvents(*mem, "budget_overrun"), 1u);
   EXPECT_EQ(countEvents(*mem, "budget_critical"), 1u);
   ASSERT_EQ(mem->entries.size(), 2u);
   EXPECT_EQ(mem->entries[0].event, "budget_overrun");
+  EXPECT_EQ(mem->entries[0].severity, laige::log::Severity::Warn);
   EXPECT_STREQ(fieldValue(mem->entries[0], "system"), "STBurnWarn");
   EXPECT_EQ(mem->entries[1].event, "budget_critical");
-  EXPECT_STREQ(fieldValue(mem->entries[1], "system"), "STBurnCrit");
+  EXPECT_EQ(mem->entries[1].severity, laige::log::Severity::Error);
+  EXPECT_STREQ(fieldValue(mem->entries[1], "system"), "STBurnWarn");
 
   for (const auto& e : mem->entries) {
     // Split the message on " | ": exactly 5 fields, none empty.
@@ -555,12 +640,25 @@ TEST(SystemTiming, EventsFollowTheErrorGrammar) {
     EXPECT_EQ(fields[4], "docs/api/system_timing.md");
   }
 
-  // The suppressed second warn is summarized at shutdown.
+  // Shutdown: one rate_limited summary per suppressed class — system
+  // 2's overrun repeat and system 2's critical repeat, each counting
+  // exactly one suppressed event.
   laige::log::Logger::instance().shutdown();
-  ASSERT_EQ(mem->entries.size(), 3u);
-  EXPECT_EQ(mem->entries[2].event, "rate_limited");
-  EXPECT_STREQ(fieldValue(mem->entries[2], "suppressed"), "1");
-  EXPECT_STREQ(fieldValue(mem->entries[2], "event"), "budget_overrun");
+  ASSERT_EQ(mem->entries.size(), 4u);
+  EXPECT_EQ(countEvents(*mem, "rate_limited"), 2u);
+  const MemorySink::Entry* overrunSummary = nullptr;
+  const MemorySink::Entry* criticalSummary = nullptr;
+  for (const auto& e : mem->entries) {
+    if (e.event != "rate_limited") continue;
+    if (std::strcmp(fieldValue(e, "event"), "budget_overrun") == 0)
+      overrunSummary = &e;
+    if (std::strcmp(fieldValue(e, "event"), "budget_critical") == 0)
+      criticalSummary = &e;
+  }
+  ASSERT_TRUE(overrunSummary != nullptr);
+  EXPECT_STREQ(fieldValue(*overrunSummary, "suppressed"), "1");
+  ASSERT_TRUE(criticalSummary != nullptr);
+  EXPECT_STREQ(fieldValue(*criticalSummary, "suppressed"), "1");
   sink = nullptr;
 }
 
@@ -638,16 +736,21 @@ TEST(SystemTiming, TimingStateTravelsWithMove) {
 TEST(SystemTiming, HealthyTicksAllocateNothing) {
   // The M1-ECS-03/07 pattern: the test-only operator-new counter
   // (non-sanitizer trees; the sanitizer trees prove it leak-free).
+  // The 100 ms budgets carry the same preemption slack as the
+  // HealthyTicksLogNothingAndTrackStats budget above (a 100 ms
+  // deschedule spike on a microsecond noop tick is the shared-runner
+  // noise floor; a stretched run would log a budget_overrun, which
+  // the silence assertion below rejects).
   MemorySink* mem = installCaptureSink();
   World w = makeWorld();
   ASSERT_TRUE(w
                   .registerSystem(makeDef("NoopA", &fnNoopA,
-                                           laige::fpx16_16::fromInt32(1)),
+                                           laige::fpx16_16::fromInt32(100)),
                                    Io<STTag, Access::Read>{})
                   .ok());
   ASSERT_TRUE(w
                   .registerSystem(makeDef("NoopB", &fnNoopB,
-                                           laige::fpx16_16::fromInt32(1)),
+                                           laige::fpx16_16::fromInt32(100)),
                                    Io<STTag, Access::Read>{})
                   .ok());
   SystemSchedule sched;
