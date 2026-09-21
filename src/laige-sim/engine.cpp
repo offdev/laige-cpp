@@ -1,12 +1,13 @@
 // laige-sim headless engine run (M1-HEAD-01; FR-1.6, ARCH-003,
 // AC-6.2, CONC-006) + the opt-in replay recording (M1-DET-02).
 //
-// Implementation of the Engine, EngineConfig, and parseEngineConfig
-// declared in include/laige/sim/engine.h — see that header for the
-// full contract (the lifecycle, the run contract, the ordered
-// shutdown, the provisional config surface, the determinism scope,
-// the replay recording, the performance notes) and docs/api/engine.md
-// for the API document and the laige-run CLI contract.
+// Implementation of the Engine declared in include/laige/sim/engine.h
+// — see that header for the full contract (the lifecycle, the run
+// contract, the ordered shutdown, the config surface (M1-CFG-01:
+// EngineConfig + the versioned schema live in laige/sim/config.h),
+// the determinism scope, the replay recording, the performance
+// notes) and docs/api/engine.md for the API document and the
+// laige-run CLI contract.
 //
 // Hot-path cost (per headless frame): one clock read, one bounded
 // GameLoop::frame() dispatch, one snapshot onRenderFrame, one sleep —
@@ -19,15 +20,12 @@
 #include "laige/sim/engine.h"  // the Engine contract (this header)
 
 #include <chrono>
-#include <cmath>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <string_view>
 #include <thread>
 #include <utility>
 
-#include "laige/json.h"
 #include "laige/logging.h"
 
 namespace laige {
@@ -38,9 +36,9 @@ namespace {
 // game_loop.cpp constant).
 inline constexpr std::int64_t kNanosecondsPerSecond = 1000000000LL;
 
-// The stable subsystem names (LOG-001).
+// The stable subsystem names (LOG-001). kConfigSubsystem is defined in
+// laige/sim/config.h (M1-CFG-01 owns the config surface).
 inline constexpr const char* kEngineSubsystem = "engine";
-inline constexpr const char* kConfigSubsystem = "config";
 inline constexpr const char* kReplaySubsystem = "replay";
 
 // The headless clock source (M1-LOOP-01): the monotonic steady_clock
@@ -52,67 +50,17 @@ std::int64_t steadyNowNs() noexcept {
       .count();
 }
 
+// The config-surface rejection messages (the config/<key>_invalid
+// events, the config/hot_reload_* events) live in laige/sim/config.h
+// (M1-CFG-01 owns the config surface — one text for one rejection,
+// LOG-002); Engine::create's tick-rate re-validation shares
+// kConfigTickRateInvalidMessage from there.
+//
 // NFR-13.3 5-field grammar, identical in every build ({code} |
 // {what} | {why} | {fix} | {doc_anchor}): the machine-parseable
 // message stays build-stable; the dynamic values are structured
 // fields, never message text (the system_timing.cpp precedent).
-inline constexpr const char* kNotAnObjectMessage =
-    "not_an_object | the engine config document is not a JSON object | "
-    "the headless config must be a top-level object | wrap the config "
-    "in a top-level object ({} for all defaults) | docs/api/engine.md";
-
-inline constexpr const char* kTickRateInvalidMessage =
-    "tick_rate_invalid | the configured tick_rate_hz is invalid | the "
-    "value must be an exact integer in the 20-120 Hz range | set "
-    "tick_rate_hz to a value in 20-120 (the default is 60) | "
-    "docs/api/engine.md";
-
-inline constexpr const char* kEntityBudgetInvalidMessage =
-    "entity_budget_invalid | the configured entity_budget is invalid | "
-    "the value must be an exact integer in 0-65536 (the 16-bit entity "
-    "id space) | set entity_budget to a value in 0-65536 (the "
-    "scene's declared budget, G-R3) | docs/api/engine.md";
-
-inline constexpr const char* kChurnBudgetInvalidMessage =
-    "churn_budget_invalid | the configured churn_per_frame_budget is "
-    "invalid | the value must be a non-negative exact integer | set "
-    "churn_per_frame_budget to a non-negative integer (the default is "
-    "256; 0 disables the G-R4 guardrail) | docs/api/engine.md";
-
-inline constexpr const char* kUnknownKeyMessage =
-    "unknown_key | the config key is not part of the M1-HEAD-01 config "
-    "surface | the key is not (yet) consumed by the headless run "
-    "(M1-CFG-01 lands the full declarative schema) | remove the key, "
-    "or wait for M1-CFG-01 | docs/api/engine.md";
-
-// M1-DET-01: the determinism config keys (seed, determinism.*).
-inline constexpr const char* kSeedInvalidMessage =
-    "seed_invalid | the configured seed is invalid | the value must be "
-    "an exact integer in 0-2^53 (the ADR 0003 JSON number bound: "
-    "doubles are exact to 2^53; the programmatic EngineConfig.seed "
-    "accepts the full 64 bits) | set seed to an integer in 0-2^53 "
-    "(the default is 0) | docs/api/engine.md";
-
-inline constexpr const char* kDeterminismInvalidMessage =
-    "determinism_invalid | the configured determinism block is invalid "
-    "| the block must be a JSON object ({} for all defaults); the "
-    "nested keys enabled (bool) and math (string) have their own "
-    "checks below | wrap the determinism block in an object | "
-    "docs/api/engine.md";
-
-inline constexpr const char* kDeterminismEnabledInvalidMessage =
-    "determinism_enabled_invalid | the configured determinism.enabled "
-    "is invalid | the value must be a JSON boolean (default true — "
-    "deterministic by default, S-7) | set determinism.enabled to true "
-    "or false | docs/api/engine.md";
-
-inline constexpr const char* kDeterminismMathInvalidMessage =
-    "determinism_math_invalid | the configured determinism.math is "
-    "invalid | the value must be the string \"fixed_point_16_16\" "
-    "(default) or \"float_pinned_32\" (the ADR 0002 backend ids) | "
-    "set determinism.math to one of the two backend ids | "
-    "docs/api/engine.md";
-
+//
 // M1-DET-02: the replay recording messages (NFR-13.3 5-field grammar;
 // the dynamic values are structured fields, never message text).
 #if defined(NDEBUG)
@@ -152,199 +100,7 @@ inline constexpr const char* kRecordAbortedMessage =
     "replay on disk); re-run the scenario with recording | "
     "docs/api/replay.md";
 
-// The JSON seed bound: the largest value a JSON number can hold
-// exactly (doubles are exact integers to 2^53 — ADR 0003). The
-// programmatic EngineConfig.seed has no such bound (full uint64).
-inline constexpr std::uint64_t kMaxJsonSeed = 1ull << 53;
-
-// True when `value` is a JSON number holding an exact unsigned integer
-// in [lo, hi] (hi must be <= 2^53, where doubles are exact — ADR 0003
-// number policy); stores the value in `out` on success. The double
-// here is the JSON number policy's storage type (ADR 0003: numbers
-// are parsed to double and must round-trip exactly), not simulation
-// math — see the exception markers.
-bool parseIntInRange(const JsonValue& value, std::uint32_t lo,
-                     std::uint32_t hi, std::uint32_t* out) noexcept {
-  if (!value.isNumber()) return false;
-  const double d = value.asNumber();  // LAIGE-DETERM-EXCEPTION: G-R8 JSON number policy: doubles store JSON numbers exactly only to 2^53 (ADR 0003); this is config parsing, not sim math
-  if (!std::isfinite(d) || d < 0.0 || d > static_cast<double>(hi) ||  // LAIGE-DETERM-EXCEPTION: G-R8 JSON number policy (ADR 0003); config parsing, not sim math
-      d != std::floor(d)) {
-    return false;
-  }
-  const std::uint64_t u = static_cast<std::uint64_t>(d);
-  if (u < lo) return false;
-  *out = static_cast<std::uint32_t>(u);
-  return true;
-}
-
-// The 64-bit twin for the seed key: an exact unsigned integer in
-// [lo, hi] (hi <= 2^53 — the ADR 0003 JSON bound, kMaxJsonSeed).
-// Same policy as parseIntInRange: config parsing, not sim math.
-bool parseUint64InRange(const JsonValue& value, std::uint64_t lo,
-                        std::uint64_t hi, std::uint64_t* out) noexcept {
-  if (!value.isNumber()) return false;
-  const double d = value.asNumber();  // LAIGE-DETERM-EXCEPTION: G-R8 JSON number policy (ADR 0003); config parsing, not sim math
-  if (!std::isfinite(d) || d < 0.0 || d > static_cast<double>(hi) ||  // LAIGE-DETERM-EXCEPTION: G-R8 JSON number policy (ADR 0003); config parsing, not sim math
-      d != std::floor(d)) {
-    return false;
-  }
-  const std::uint64_t u = static_cast<std::uint64_t>(d);
-  if (u < lo) return false;
-  *out = u;
-  return true;
-}
-
-// A stable machine-searchable name for a JsonValue's kind (the
-// `value_kind` field of the rejection warns; LOG-001).
-const char* jsonKindName(const JsonValue& value) noexcept {
-  switch (value.kind()) {
-    case JsonKind::Null: return "null";
-    case JsonKind::Bool: return "bool";
-    case JsonKind::Number: return "number";
-    case JsonKind::String: return "string";
-    case JsonKind::Array: return "array";
-    case JsonKind::Object: return "object";
-  }
-  return "unknown";
-}
-
 }  // namespace
-
-// ---------------------------------------------------------------------------
-// parseEngineConfig (the provisional M1-HEAD-01 config surface — the
-// keys, defaults, and rejection table are in engine.h)
-// ---------------------------------------------------------------------------
-
-Result<EngineConfig, ErrorCode> parseEngineConfig(const JsonValue& doc) noexcept {
-  if (!doc.isObject()) {
-    LAIGE_LOG_WARN(kConfigSubsystem, "not_an_object", kNotAnObjectMessage);
-    return ErrorCode::InvalidArgument;
-  }
-  EngineConfig config;
-  for (const auto& [key, value] : doc.asObject()) {
-    if (key == "tick_rate_hz") {
-      if (!parseIntInRange(value, kMinTickRateHz, kMaxTickRateHz,
-                           &config.tickRateHz)) {
-        if (value.isNumber()) {
-          LAIGE_LOG_WARN(kConfigSubsystem, "tick_rate_invalid",
-                         kTickRateInvalidMessage,
-                         laige::log::field("key", key),
-                         laige::log::field("value", value.asNumber()));
-        } else {
-          LAIGE_LOG_WARN(kConfigSubsystem, "tick_rate_invalid",
-                         kTickRateInvalidMessage,
-                         laige::log::field("key", key),
-                         laige::log::field("value_kind", jsonKindName(value)));
-        }
-        return ErrorCode::InvalidArgument;
-      }
-    } else if (key == "entity_budget") {
-      if (!parseIntInRange(value, 0, Entity::kMaxEntities,
-                           &config.entityCapacity)) {
-        if (value.isNumber()) {
-          LAIGE_LOG_WARN(kConfigSubsystem, "entity_budget_invalid",
-                         kEntityBudgetInvalidMessage,
-                         laige::log::field("key", key),
-                         laige::log::field("value", value.asNumber()));
-        } else {
-          LAIGE_LOG_WARN(kConfigSubsystem, "entity_budget_invalid",
-                         kEntityBudgetInvalidMessage,
-                         laige::log::field("key", key),
-                         laige::log::field("value_kind", jsonKindName(value)));
-        }
-        return ErrorCode::InvalidArgument;
-      }
-    } else if (key == "churn_per_frame_budget") {
-      const std::uint32_t kMaxUint32 =
-          std::numeric_limits<std::uint32_t>::max();
-      if (!parseIntInRange(value, 0, kMaxUint32, &config.churnPerFrameBudget)) {
-        if (value.isNumber()) {
-          LAIGE_LOG_WARN(kConfigSubsystem, "churn_budget_invalid",
-                         kChurnBudgetInvalidMessage,
-                         laige::log::field("key", key),
-                         laige::log::field("value", value.asNumber()));
-        } else {
-          LAIGE_LOG_WARN(kConfigSubsystem, "churn_budget_invalid",
-                         kChurnBudgetInvalidMessage,
-                         laige::log::field("key", key),
-                         laige::log::field("value_kind", jsonKindName(value)));
-        }
-        return ErrorCode::InvalidArgument;
-      }
-    } else if (key == "seed") {
-      std::uint64_t seed = 0;
-      if (!parseUint64InRange(value, 0, kMaxJsonSeed, &seed)) {
-        if (value.isNumber()) {
-          LAIGE_LOG_WARN(kConfigSubsystem, "seed_invalid",
-                         kSeedInvalidMessage,
-                         laige::log::field("key", key),
-                         laige::log::field("value", value.asNumber()));
-        } else {
-          LAIGE_LOG_WARN(kConfigSubsystem, "seed_invalid",
-                         kSeedInvalidMessage,
-                         laige::log::field("key", key),
-                         laige::log::field("value_kind", jsonKindName(value)));
-        }
-        return ErrorCode::InvalidArgument;
-      }
-      config.seed = seed;
-    } else if (key == "determinism") {
-      if (!value.isObject()) {
-        LAIGE_LOG_WARN(kConfigSubsystem, "determinism_invalid",
-                       kDeterminismInvalidMessage,
-                       laige::log::field("key", key),
-                       laige::log::field("value_kind", jsonKindName(value)));
-        return ErrorCode::InvalidArgument;
-      }
-      for (const auto& [dkey, dvalue] : value.asObject()) {
-        if (dkey == "enabled") {
-          if (!dvalue.isBool()) {
-            LAIGE_LOG_WARN(kConfigSubsystem,
-                           "determinism_enabled_invalid",
-                           kDeterminismEnabledInvalidMessage,
-                           laige::log::field("key", dkey),
-                           laige::log::field("value_kind",
-                                             jsonKindName(dvalue)));
-            return ErrorCode::InvalidArgument;
-          }
-          config.determinism.enabled = dvalue.asBool();
-        } else if (dkey == "math") {
-          if (!dvalue.isString()) {
-            LAIGE_LOG_WARN(kConfigSubsystem, "determinism_math_invalid",
-                           kDeterminismMathInvalidMessage,
-                           laige::log::field("key", dkey),
-                           laige::log::field("value_kind",
-                                             jsonKindName(dvalue)));
-            return ErrorCode::InvalidArgument;
-          }
-          const std::string_view m = dvalue.asString();
-          if (m == "fixed_point_16_16") {
-            config.determinism.math = SimMathBackend::FixedPoint16_16;
-          } else if (m == "float_pinned_32") {
-            config.determinism.math = SimMathBackend::FloatPinned32;
-          } else {
-            LAIGE_LOG_WARN(kConfigSubsystem, "determinism_math_invalid",
-                           kDeterminismMathInvalidMessage,
-                           laige::log::field("key", dkey),
-                           laige::log::field("value", std::string{m}));
-            return ErrorCode::InvalidArgument;
-          }
-        } else {
-          // Unknown nested key: WARN (forward-compat) and ignore — the
-          // M1-CFG-01 rule, applied inside the determinism block too.
-          LAIGE_LOG_WARN(kConfigSubsystem, "unknown_key", kUnknownKeyMessage,
-                         laige::log::field("key", dkey));
-        }
-      }
-    } else {
-      // Unknown key: WARN (forward-compat) and ignore — the M1-CFG-01
-      // rule, applied to the provisional surface (never silent).
-      LAIGE_LOG_WARN(kConfigSubsystem, "unknown_key", kUnknownKeyMessage,
-                     laige::log::field("key", key));
-    }
-  }
-  return config;
-}
 
 // ---------------------------------------------------------------------------
 // Engine setup
@@ -358,8 +114,11 @@ Result<Engine, ErrorCode> Engine::create(const EngineConfig& config) noexcept {
   // the single warn here, subsystem "config", is the config-surface
   // rejection).
   if (config.tickRateHz < kMinTickRateHz || config.tickRateHz > kMaxTickRateHz) {
+    // The config surface's rejection (M1-CFG-01: the message text
+    // lives in config.h with the rest of the config/<key>_invalid
+    // messages — one text for one rejection, LOG-002).
     LAIGE_LOG_WARN(kConfigSubsystem, "tick_rate_invalid",
-                   kTickRateInvalidMessage,
+                   kConfigTickRateInvalidMessage,
                    laige::log::field("tick_rate_hz", config.tickRateHz));
     return ErrorCode::InvalidArgument;
   }

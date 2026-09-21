@@ -568,7 +568,7 @@ laige::JsonValue parseDoc(const char* text) {
 
 TEST(DeterminismConfigParse, DefaultsAreDeterministicFixedPoint) {
   const laige::EngineConfig config =
-      laige::parseEngineConfig(parseDoc("{}")).value();
+      laige::parseEngineConfig(parseDoc(R"({"version":1})")).value();
   EXPECT_EQ(config.seed, 0u);
   EXPECT_TRUE(config.determinism.enabled);
   EXPECT_EQ(config.determinism.math, laige::SimMathBackend::FixedPoint16_16);
@@ -576,7 +576,7 @@ TEST(DeterminismConfigParse, DefaultsAreDeterministicFixedPoint) {
 
 TEST(DeterminismConfigParse, SeedAndDeterminismValid) {
   const laige::EngineConfig config = laige::parseEngineConfig(parseDoc(
-      R"({"seed":123,"determinism":{"enabled":false,"math":"float_pinned_32"}})"))
+      R"({"version":1,"seed":123,"determinism":{"enabled":false,"math":"float_pinned_32"}})"))
       .value();
   EXPECT_EQ(config.seed, 123u);
   EXPECT_FALSE(config.determinism.enabled);
@@ -586,7 +586,7 @@ TEST(DeterminismConfigParse, SeedAndDeterminismValid) {
 TEST(DeterminismConfigParse, SeedAtTheJsonBoundIsExact) {
   // 2^53 is the largest exact-integer double (ADR 0003): accepted.
   const laige::EngineConfig config =
-      laige::parseEngineConfig(parseDoc(R"({"seed":9007199254740992})"))
+      laige::parseEngineConfig(parseDoc(R"({"version":1,"seed":9007199254740992})"))
           .value();
   EXPECT_EQ(config.seed, 9007199254740992ull);
 }
@@ -599,10 +599,10 @@ TEST(DeterminismConfigParse, SeedRejections) {
   // 1.5 (non-integer), -1 (negative), and a non-number: all
   // rejected, one warn each, first-failure-wins.
   const char* badDocs[] = {
-      R"({"seed":9007199254740994})",  // 2^53 + 2
-      R"({"seed":1.5})",
-      R"({"seed":-1})",
-      R"({"seed":"x"})",
+      R"({"version":1,"seed":9007199254740994})",  // 2^53 + 2
+      R"({"version":1,"seed":1.5})",
+      R"({"version":1,"seed":-1})",
+      R"({"version":1,"seed":"x"})",
   };
   for (const char* doc : badDocs) {
     const laige::Result<laige::EngineConfig, laige::ErrorCode> r =
@@ -617,10 +617,10 @@ TEST(DeterminismConfigParse, SeedRejections) {
 TEST(DeterminismConfigParse, DeterminismRejections) {
   MemorySink* sink = installCaptureSink();
   const char* badDocs[] = {
-      R"({"determinism":true})",                       // not an object
-      R"({"determinism":{"enabled":"yes"}})",          // not a bool
-      R"({"determinism":{"math":"fpx16"}})",           // unknown backend id
-      R"({"determinism":{"math":3}})",                 // not a string
+      R"({"version":1,"determinism":true})",           // not an object
+      R"({"version":1,"determinism":{"enabled":"yes"}})",  // not a bool
+      R"({"version":1,"determinism":{"math":"fpx16"}})",      // unknown backend id
+      R"({"version":1,"determinism":{"math":3}})",      // not a string
   };
   for (const char* doc : badDocs) {
     const laige::Result<laige::EngineConfig, laige::ErrorCode> r =
@@ -640,7 +640,7 @@ TEST(DeterminismConfigParse, UnknownNestedKeyIsForwardCompat) {
   MemorySink* sink = installCaptureSink();
   const laige::Result<laige::EngineConfig, laige::ErrorCode> r =
       laige::parseEngineConfig(
-          parseDoc(R"({"determinism":{"unknown_future_key":1}})"));
+          parseDoc(R"({"version":1,"determinism":{"unknown_future_key":1}})"));
   ASSERT_TRUE(r.ok());
   EXPECT_EQ(countEvents(*sink, "unknown_key"), 1u);
   restoreLogger();
@@ -652,7 +652,7 @@ TEST(DeterminismConfigParse, FirstFailureWinsAcrossBlocks) {
   MemorySink* sink = installCaptureSink();
   const laige::Result<laige::EngineConfig, laige::ErrorCode> r =
       laige::parseEngineConfig(
-          parseDoc(R"({"seed":-1,"determinism":{"math":"nope"}})"));
+          parseDoc(R"({"version":1,"seed":-1,"determinism":{"math":"nope"}})"));
   ASSERT_TRUE(r.isError());
   EXPECT_EQ(r.error(), laige::ErrorCode::InvalidArgument);
   EXPECT_EQ(countEvents(*sink, "seed_invalid"), 1u);

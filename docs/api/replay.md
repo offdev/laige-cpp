@@ -126,9 +126,13 @@ no wall clock (ARCH-010):
   differently. O(types), stack-only (769 words max — no allocation).
 - **`configHash(const EngineConfig&)`** — over
   `[tag 1, tickRateHz, entityCapacity, churnPerFrameBudget, seed,
-  determinism.enabled, determinism.math]`. The tag word identifies this
-  provisional encoding; M1-CFG-01 refines the config schema and this
-  encoding with it, under the format's versioning.
+  determinism.enabled, determinism.math]`. The tag word identifies
+  this encoding. M1-CFG-01 grew the config schema (version, budgets,
+  camera, asset_roots), but the encoding covers **only the
+  simulation-affecting fields** — the declared presentation values
+  never touch simulation (ARCH-009) — so the encoding (tag 1) is
+  **unchanged** and every committed baseline/replay log stays valid
+  ([api/config.md](config.md)).
 - **`makeReplayIdentity(const World&, const EngineConfig&)`** —
   assembles the header's `ReplayIdentity` from the two hashes plus the
   config's seed/tick rate/backend.

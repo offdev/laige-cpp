@@ -215,7 +215,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 ## Configuration
 
-- [ ] **M1-CFG-01 · Declarative game config**
+- [x] **M1-CFG-01 · Declarative game config**
   - **Refs:** FR-1.5; PRD §7.1
   - **Depends:** M0-CORE-07, M1-LOOP-01
   - **Scope:**

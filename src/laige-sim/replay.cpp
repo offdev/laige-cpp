@@ -156,9 +156,13 @@ bool atomicReplace(const std::string& from, const std::string& to) {
 #endif
 }
 
-// The tag word of the provisional EngineConfig field encoding
-// (M1-HEAD-01 surface; M1-CFG-01 refines it — the tag identifies this
-// encoding in the hash word stream).
+// The tag word of the EngineConfig field encoding (the tag identifies
+// this encoding in the hash word stream). M1-CFG-01 grew the schema
+// (version, budgets, camera, asset_roots), but the encoding covers
+// ONLY the simulation-affecting fields — the declared presentation
+// values are presentation state, not replay identity (ARCH-009) — so
+// the encoding is UNCHANGED (tag 1) and every committed baseline
+// stays valid.
 inline constexpr std::uint64_t kConfigHashTag = 1;
 
 }  // namespace
@@ -552,9 +556,12 @@ std::uint64_t componentSchemaHash(const World& world) noexcept {
 }
 
 std::uint64_t configHash(const EngineConfig& config) noexcept {
-  // The provisional EngineConfig field encoding (tag word 1 — the
-  // M1-HEAD-01 surface; M1-CFG-01 refines the schema and this
-  // encoding with it, under the format's versioning).
+  // The EngineConfig field encoding (tag word 1): the simulation-
+  // affecting fields ONLY. M1-CFG-01's declared presentation fields
+  // (budgets, camera, asset_roots) are deliberately excluded — they
+  // never touch simulation (ARCH-009), so a replay recorded under one
+  // set of them replays bit-exact under another; the encoding (tag 1)
+  // therefore does not change with the final schema.
   std::uint64_t words[7];
   words[0] = kConfigHashTag;
   words[1] = config.tickRateHz;

@@ -12,7 +12,7 @@ order.
 | File | Role |
 |---|---|
 | `hello.laige` | The project manifest (provisional M1 format: `laige.project` v1 JSON. The asset-pipeline format it replaces is owned by M3-ASSET-01). |
-| `config.json` | The canonical sample config in the engine's declarative JSON surface (`laige-run`'s format, M1-HEAD-01). The values are identical to the config embedded in `hello.cpp` (see "Config" below). |
+| `config.json` | The canonical sample config in the engine's declarative JSON surface (the version 1 schema, M1-CFG-01 — `laige-run`'s format). The values are identical to the config embedded in `hello.cpp` (see "Config" below). |
 | `hello.cpp` | The game source. |
 | `hello-baseline.cpp` | The `--expect` baseline check (M1-DET-04) — separate TU so `hello.cpp` stays inside the PRD §9.4 line budget. |
 | `hello-fp32.cpp` | The `float_pinned_32` build variant (M1-DET-04, ADR 0002): defines the backend macros and includes `hello.cpp` — same game source, backend swapped by the build. |
@@ -102,10 +102,11 @@ backend field is `fixed_point_16_16` in `hello` and
 `LAIGE_HELLO_BACKEND_ID` macro, ADR 0002: the backend is part of the
 replay identity, so each binary's stream belongs to exactly one
 backend). `config.json` is the declarative record of the same values
-in the engine's JSON surface — it is what
-`laige-run --headless samples/hello/config.json` consumes and what the
-M1-DET-04 baseline tooling reads; the template binary keeps its CLI
-minimal (CORE-004) and does not re-read it.
+in the engine's JSON surface (the version 1 schema: `"version": 1`
+plus the same keys — [docs/api/config.md](../../docs/api/config.md))
+— it is what `laige-run --headless samples/hello/config.json`
+consumes and what the M1-DET-04 baseline tooling reads; the template
+binary keeps its CLI minimal (CORE-004) and does not re-read it.
 
 ## Replay
 

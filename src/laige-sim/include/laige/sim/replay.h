@@ -32,7 +32,9 @@
 //   loadReplay        The file reader (bounded read + parseReplay).
 //   componentSchemaHash
 //                     The component registry's deterministic hash.
-//   configHash        The provisional EngineConfig's deterministic hash.
+//   configHash        The EngineConfig's deterministic hash (the
+//                     simulation-affecting fields only — M1-CFG-01's
+//                     declared presentation fields are excluded).
 //   makeReplayIdentity
 //                     The full identity from (world, config).
 //   ReplayIdentityDiff
@@ -118,11 +120,11 @@
 //                        1 = fp32_pinned — ADR 0002: the backend id is
 //                        part of replay identity; cross-backend
 //                        replays are not bit-exact and not supported)
-//   configHash           FNV-1a 64 over the provisional EngineConfig's
-//                        canonical field encoding (tag word 1 — the
-//                        M1-HEAD-01 surface; M1-CFG-01 refines the
-//                        schema, and with it this encoding, under the
-//                        format's versioning)
+//   configHash           FNV-1a 64 over the EngineConfig's canonical
+//                        field encoding (tag word 1 — the
+//                        simulation-affecting fields only; M1-CFG-01's
+//                        declared presentation fields are excluded, so
+//                        the encoding is unchanged by the final schema)
 //
 // Both hashes are pure-integer FNV-1a over u64 word streams,
 // big-endian byte order per word (the house hash convention —
@@ -295,7 +297,8 @@ struct ReplayIdentity {
   // The laige::SimMathBackend value (0 = FixedPoint16_16, 1 =
   // FloatPinned32 — ADR 0002's backend ids).
   std::uint32_t mathBackendId{};
-  // FNV-1a 64 over the provisional EngineConfig field encoding.
+  // FNV-1a 64 over the EngineConfig's simulation-affecting field
+  // encoding (M1-CFG-01's presentation fields are excluded).
   std::uint64_t configHash{};
 };
 
@@ -460,11 +463,14 @@ loadReplay(std::string_view path,
 // @budget O(componentCount); no allocation.
 [[nodiscard]] std::uint64_t componentSchemaHash(const World& world) noexcept;
 
-// FNV-1a 64 over the provisional EngineConfig's canonical field
-// encoding (tag word 1 — the M1-HEAD-01 surface: tickRateHz,
+// FNV-1a 64 over the EngineConfig's canonical field encoding (tag
+// word 1 — the simulation-affecting fields: tickRateHz,
 // entityCapacity, churnPerFrameBudget, seed, determinism.enabled,
-// determinism.math). M1-CFG-01 refines the schema, and this encoding
-// with it (under the format's versioning). O(1), no allocation.
+// determinism.math). M1-CFG-01's declared presentation fields
+// (budgets, camera, asset_roots) are deliberately excluded — they
+// never touch simulation — so the encoding is unchanged by the final
+// schema and every committed baseline stays valid. O(1), no
+// allocation.
 // @budget O(1); no allocation.
 [[nodiscard]] std::uint64_t configHash(const EngineConfig& config) noexcept;
 

@@ -150,10 +150,13 @@ the standard ctest suite in every P0 job (and both sanitizer trees):
   per-system PRNG substreams match `Prng::deriveSubstream` exactly and
   are independent; `deterministic == false` yields `SystemContext.rng ==
   nullptr`; the engine selects the configured SimMath backend (built-in
-  component + presentation snapshot); and the provisional `seed` /
-  `determinism` config keys (defaults, valid values, the rejection
-  table). The machine-greppable `determinism-tick-stream` line lands in
-  the ctest output.
+  component + presentation snapshot); and the `seed` / `determinism`
+  config keys (defaults, valid values, the rejection table — the
+  version 1 schema's determinism block, M1-CFG-01). The
+  machine-greppable `determinism-tick-stream` line lands in the ctest
+  output. (The full config schema — version gate, budgets, camera,
+  asset roots, overrides, hot reload — is `ctest -R config`,
+  `tests/laige-sim/game_config_tests.cpp`.)
 - **`ctest -R trait_compile`** — the G-R8 trait compile-checks
   (`tests/laige-sim/compile_fail/`, generated `cmake -P` check scripts):
   one positive fixture (a marked determinism-safe component compiles)
