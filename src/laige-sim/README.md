@@ -159,6 +159,17 @@ and [tests/replay](../tests/replay) (CTest entries `replay_smoke`,
 `replay_deterministic`, `replay_expect_*`,
 `replay_identity_mismatch`, `replay_usage_error`,
 `replay_log_missing`).
-The profiler, PRNG state introspection
-(M1-DET-03), the detcheck matrix (M1-DET-04), and the remaining M1
-steps land next; physics, input, and animation in M3.
+M1-PROF-01 landed the always-on profiler counters (FR-11.1) —
+`Profiler` (the tick/frame rolling windows, the render/network
+counter fields, the cold snapshot), the `GameLoop` per-completed-tick
+timing hook (`Options::profiler`), the `Engine` frame timing +
+per-run report (`startProfileReport` / `profileStats()` /
+`profileReportStatus()`), the text/JSON report surface +
+`laige-run --prof-out`, and the measured ≤1% enabled cost (CTest
+entry `profiler`; API contract in
+[docs/api/profiler.md](../docs/api/profiler.md); baseline in
+[docs/benchmarks/baselines/m1-profiler-cost.md](../docs/benchmarks/baselines/m1-profiler-cost.md)).
+The per-frame budget report over the per-system windows
+(M1-PROF-02), the editor overlay surface (M2), PRNG state
+introspection (M1-DET-03), the detcheck matrix (M1-DET-04), and the
+remaining M1 steps land next; physics, input, and animation in M3.

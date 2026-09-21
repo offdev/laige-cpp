@@ -3,17 +3,26 @@
 Engine tools and CI scripts, each landing with its roadmap step:
 
 - `laige-run` — the headless run binary (M1-HEAD-01, in `tools/run`):
-  `laige-run --headless CONFIG.json [--ticks N] [--replay LOG]` —
-  config → world → systems → loop, the bounded run (default 0 = the
-  server form), and the ordered idempotent shutdown. Exit codes:
-  `0` ok · `1` engine run failure · `2` usage/IO/config error; one
-  machine-greppable summary line on stdout (`laige-run headless
-  ticks=… status=…`). `--replay` records the run (M1-DET-02:
-  opt-in, debug builds only, atomic publish, 128 MiB default cap).
-  Full contract in
-  [docs/api/engine.md](../docs/api/engine.md) and
-  [docs/api/replay.md](../docs/api/replay.md); the `laige_run_smoke`
-  CTest entry (1000 ticks @ 60 Hz, every P0 OS job) is its CI form.
+  `laige-run --headless CONFIG.json [--ticks N] [--replay LOG]
+  [--prof-out REPORT]` — config → world → systems → loop, the
+  bounded run (default 0 = the server form), and the ordered
+  idempotent shutdown. Exit codes: `0` ok · `1` engine run failure ·
+  `2` usage/IO/config/profile-report-write error; one machine-
+  greppable summary line on stdout (`laige-run headless ticks=…
+  status=…`) followed by the profiler's one-line summary
+  (`laige-run profile: ticks=… tick_ms: … sim_allocs=…`, always
+  printed — M1-PROF-01). `--replay` records the run (M1-DET-02:
+  opt-in, debug builds only, atomic publish, 128 MiB default cap);
+  `--prof-out` writes the run's profile report (M1-PROF-01, FR-11.1
+  file export: the version-1 JSON schema — counters, tick/frame time
+  windows, world fields, per-system timings — at run end, EVERY
+  build; a write failure does not fail the run — it exits `2` with
+  the run status `ok`). Full contract in
+  [docs/api/engine.md](../docs/api/engine.md),
+  [docs/api/replay.md](../docs/api/replay.md), and
+  [docs/api/profiler.md](../docs/api/profiler.md); the
+  `laige_run_smoke` CTest entry (1000 ticks @ 60 Hz, every P0 OS
+  job) is its CI form.
 - `laige-fuzz` — deterministic bounded fuzz runner (minimal form from
   M0-CORE-07, in `tools/fuzz`: the `json_parse` and `replay_parse`
   targets (M1-DET-02 added the replay log parser), `--runs`/`--seed`,

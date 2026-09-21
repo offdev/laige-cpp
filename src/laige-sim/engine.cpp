@@ -15,7 +15,13 @@
 // LOG-003; the per-frame breakdown in engine.h "Performance").
 // Replay recording (M1-DET-02, opt-in debug builds only) adds one
 // bounded stdio write per completed tick when enabled, and one null
-// check per completed tick when disabled.
+// check per completed tick when disabled. The always-on profiler
+// (M1-PROF-01, enabled by default) adds two steady_clock reads + one
+// O(1) ring write per frame and two clock reads + one ring write per
+// completed tick (the GameLoop's runOneTick) — no allocation; the
+// disabled state pays one branch each (the measured enabled cost is
+// bounded at 1% of a 10k-entity tick — the m1-profiler-cost
+// baseline).
 
 #include "laige/sim/engine.h"  // the Engine contract (this header)
 
@@ -26,6 +32,7 @@
 #include <thread>
 #include <utility>
 
+#include "laige/budget_harness.h"  // TimeIt (the per-frame timing, M1-PROF-01)
 #include "laige/logging.h"
 
 namespace laige {
@@ -100,6 +107,35 @@ inline constexpr const char* kRecordAbortedMessage =
     "replay on disk); re-run the scenario with recording | "
     "docs/api/replay.md";
 
+// M1-PROF-01: the profile report messages (NFR-13.3 5-field grammar;
+// the dynamic values are structured fields, never message text).
+inline constexpr const char* kReportAlreadyStartedMessage =
+    "report_already_started | startProfileReport was called twice | "
+    "one engine writes at most one profile report per run | call "
+    "startProfileReport once, after all registration and before "
+    "run_headless | docs/api/engine.md";
+
+inline constexpr const char* kReportPathInvalidMessage =
+    "report_path_invalid | the requested profile report path is empty "
+    "| the report needs a file path to write to at the end of the run "
+    "| pass a non-empty path (laige-run --prof-out <path>) | "
+    "docs/api/engine.md";
+
+inline constexpr const char* kReportWriteFailedMessage =
+    "report_write_failed | the per-run profile report could not be "
+    "written to its final path | the file could not be created or "
+    "fully written (disk full, bad path, read-only filesystem) | "
+    "check the path and disk space and re-run; the run itself "
+    "completed (the report is diagnostics and never gates the "
+    "simulation) | docs/api/engine.md";
+
+inline constexpr const char* kReportAbortedMessage =
+    "report_aborted | the profile report ended without finalization | "
+    "the engine was shut down before the run that should have written "
+    "it (or the run never started) | no report was written (diagnostics "
+    "only — nothing to clean up); re-run the scenario with "
+    "startProfileReport | docs/api/engine.md";
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -139,6 +175,10 @@ Result<Engine, ErrorCode> Engine::create(const EngineConfig& config) noexcept {
   }
   Engine engine;
   engine.world_ = std::make_unique<World>(std::move(worldResult).takeValue());
+  // M1-PROF-01: the always-on profiler (one object + its two fixed
+  // window storages — the engine's setup, not the run's: the run's
+  // own setup allocation count is unchanged, engine.h "Performance").
+  engine.profiler_ = std::make_unique<Profiler>(Profiler::Options{});
   // The engine's built-ins always register FIRST (stable
   // registration order for the deterministic ComponentTypeIds,
   // ARCH-010; the game's components follow through world()). M1-DET-01:
@@ -230,6 +270,10 @@ Status Engine::run_headless(std::uint64_t maxTicks,
   // failure).
   Status runStatus = world_->scheduleSystems(schedule_);
   if (runStatus.ok()) {
+    // The engine's always-on profiler is handed to the loop as a
+    // NON-OWNING view (the per-completed-tick time feed — game_loop.h
+    // Options::profiler; the profiler outlives the loop: it is
+    // released in the shutdown AFTER the loop, the header preamble).
     Result<GameLoop, ErrorCode> loopResult =
         GameLoop::create(*world_, schedule_,
                          GameLoop::Options{
@@ -237,7 +281,8 @@ Status Engine::run_headless(std::uint64_t maxTicks,
                              frameBudgetTicks,
                              nullptr,               // default headless clock
                              &Engine::onTickHook,   // the M1-LOOP-02 hook
-                             this});
+                             this,
+                             profiler_.get()});     // the M1-PROF-01 feed
     if (loopResult.ok()) {
       loop_ = std::make_unique<GameLoop>(std::move(loopResult).takeValue());
       // The first frame establishes the loop's start reference and
@@ -302,6 +347,36 @@ Status Engine::run_headless(std::uint64_t maxTicks,
       runStatus = finishStatus;
     }
   }
+  // M1-PROF-01: the per-run profile snapshot + the opt-in report,
+  // both BEFORE the shutdown (the world-pulled fields' source — the
+  // world — is still live). The snapshot is captured on EVERY path
+  // (success, failed frame, failed start alike — the per-run summary
+  // describes what actually happened). The report is finalized on
+  // every path too, when started: a zero-tick run writes a
+  // zero-tick report (CORE-008: no silent omission). A write failure
+  // does NOT fail the run (diagnostics never gate the simulation):
+  // it is sticky (profileReportStatus_) and logged, and the caller
+  // decides (laige-run maps it to exit 2).
+  lastProfile_ = profiler_->snapshot(*world_);
+  if (!profileReportPath_.empty()) {
+    profileReportFinalized_ = true;
+    const Result<std::uint64_t, ErrorCode> report =
+        writeProfile(*profiler_, *world_, profileReportPath_,
+                     ProfileFormat::Json);
+    if (report.ok()) {
+      LAIGE_LOG_INFO("profiler", "report_written",
+                     "Per-run profile report written",
+                     laige::log::field("path", profileReportPath_),
+                     laige::log::field("bytes", report.value()));
+    } else {
+      profileReportStatus_ = Status(report.error());
+      LAIGE_LOG_ERROR("profiler", "report_write_failed",
+                      kReportWriteFailedMessage,
+                      laige::log::field("path", profileReportPath_),
+                      laige::log::field("error",
+                                        laige::errorName(report.error())));
+    }
+  }
   // The loop's accounting BEFORE it is destroyed in shutdown (the
   // profiler feed; zeros when the loop never existed).
   lastStats_ = (loop_ != nullptr) ? loop_->stats() : GameLoopStats{};
@@ -327,6 +402,13 @@ Status Engine::run_headless(std::uint64_t maxTicks,
 Status Engine::runFrames(std::uint64_t maxTicks) noexcept {
   const std::int64_t startNs = loop_->startReferenceNs();
   const std::int64_t rate = static_cast<std::int64_t>(loop_->tickRateHz());
+  // M1-PROF-01: the frame-time feed. The frame time covers the frame's
+  // sim work plus the presentation refresh, EXCLUDING the pacing sleep
+  // (the profiler.h contract). A failed frame is not recorded (the
+  // frame did not complete). Profiler null or disabled: one branch,
+  // nothing else (DBG-004).
+  Profiler* prof = profiler_.get();
+  const bool timing = (prof != nullptr) && prof->enabled();
   for (;;) {
     // M1-DET-02: a replay-recording failure stops the run (at most
     // one frame's worth of ticks runs after the failing write — the
@@ -334,16 +416,27 @@ Status Engine::runFrames(std::uint64_t maxTicks) noexcept {
     if (replayFail_.isError()) return replayFail_;
     if (maxTicks != 0 && loop_->currentTick() >= maxTicks) break;
     const std::int64_t now = steadyNowNs();
-    const Status frameStatus = loop_->frame();
-    if (frameStatus.isError()) return frameStatus;
-    if (replayFail_.isError()) return replayFail_;
-    // The frame's clock reading goes to the presentation state
-    // (presentation.h wiring: the engine reads the frame clock once
-    // per frame and passes it to the snapshot). The snapshot exists
-    // before runFrames runs (created in run_headless) — the guard is
-    // the never-crash contract (CORE-008).
-    if (snapshot_.hasSnapshot()) {
-      snapshot_.onRenderFrame(snapshot_.context, now);
+    if (timing) {
+      const TimeIt timer;
+      const Status frameStatus = loop_->frame();
+      if (frameStatus.isError()) return frameStatus;
+      if (replayFail_.isError()) return replayFail_;
+      // The frame's clock reading goes to the presentation state
+      // (presentation.h wiring: the engine reads the frame clock once
+      // per frame and passes it to the snapshot). The snapshot exists
+      // before runFrames runs (created in run_headless) — the guard is
+      // the never-crash contract (CORE-008).
+      if (snapshot_.hasSnapshot()) {
+        snapshot_.onRenderFrame(snapshot_.context, now);
+      }
+      prof->recordFrame(timer.elapsedMs());
+    } else {
+      const Status frameStatus = loop_->frame();
+      if (frameStatus.isError()) return frameStatus;
+      if (replayFail_.isError()) return replayFail_;
+      if (snapshot_.hasSnapshot()) {
+        snapshot_.onRenderFrame(snapshot_.context, now);
+      }
     }
     if (maxTicks != 0 && loop_->currentTick() >= maxTicks) {
       break;  // no sleep after the final tick (a bounded run ends)
@@ -402,10 +495,27 @@ void Engine::shutdown() noexcept {
   }
   // 3. pools: the presentation record table, then the world's backing
   //    storage (the per-slot tables, the archetype table and column
-  //    blocks, the type-key index). The snapshot is released BEFORE
-  //    the world: it holds a non-owning world view.
+  //    blocks, the type-key index), then the profiler (M1-PROF-01).
+  //    The snapshot is released BEFORE the world: it holds a
+  //    non-owning world view. The profiler holds no world reference
+  //    (it pulls cold) and is released after the world.
   snapshot_.reset();
   world_.reset();
+  // M1-PROF-01: a STARTED report that was never finalized (a pre-run
+  // teardown, or a run that ended before the finalization — neither
+  // is reachable for a completed run_headless, which always
+  // finalizes) is abandoned: the structured warn makes it visible
+  // (CORE-008: never silent). The report is diagnostics, so there is
+  // no file to clean up — the write happens only at run end.
+  if (!profileReportPath_.empty() && !profileReportFinalized_) {
+    LAIGE_LOG_WARN("profiler", "report_aborted", kReportAbortedMessage,
+                   laige::log::field("path", profileReportPath_));
+    // Aborting finalizes the report's lifecycle (profileReportActive()
+    // goes false): the report was started but never written — the
+    // warn above carries the state.
+    profileReportFinalized_ = true;
+  }
+  profiler_.reset();
   // 4. logging: the facade's controlled shutdown (the rate-limit
   //    summaries drain, the sink flushes, the facade retires —
   //    LOG-007; idempotent).
@@ -424,6 +534,50 @@ const EngineConfig& Engine::config() const noexcept { return config_; }
 bool Engine::isShutDown() const noexcept { return shutDown_; }
 
 GameLoopStats Engine::stats() const noexcept { return lastStats_; }
+
+const Profiler* Engine::profiler() const noexcept {
+  return profiler_.get();  // nullptr after shutdown (released member)
+}
+
+ProfilerStats Engine::profileStats() const noexcept { return lastProfile_; }
+
+Status Engine::profileReportStatus() const noexcept {
+  return profileReportStatus_;
+}
+
+bool Engine::profileReportActive() const noexcept {
+  return !profileReportPath_.empty() && !profileReportFinalized_;
+}
+
+// ---------------------------------------------------------------------------
+// The profile report (M1-PROF-01; the contract in engine.h "The
+// profiler" and docs/api/profiler.md)
+// ---------------------------------------------------------------------------
+
+Status Engine::startProfileReport(std::string_view path) noexcept {
+  // The report is diagnostics, not replay state: EVERY build (no
+  // NDEBUG gate — unlike startReplayRecording).
+  // A stopped engine (shutdown or moved-from) is a no-op failure
+  // without logging (the stopped-state precedent).
+  if (shutDown_ || world_ == nullptr) {
+    return Status(ErrorCode::InvalidArgument);
+  }
+  if (path.empty()) {
+    LAIGE_LOG_WARN("profiler", "report_path_invalid",
+                   kReportPathInvalidMessage);
+    return Status(ErrorCode::InvalidArgument);
+  }
+  if (!profileReportPath_.empty()) {
+    LAIGE_LOG_WARN("profiler", "report_already_started",
+                   kReportAlreadyStartedMessage);
+    return Status(ErrorCode::InvalidArgument);
+  }
+  profileReportPath_ = std::string(path);
+  LAIGE_LOG_INFO("profiler", "report_started",
+                 "Profile report requested (written at run end, JSON)",
+                 laige::log::field("path", profileReportPath_));
+  return Status{};
+}
 
 // ---------------------------------------------------------------------------
 // Replay recording (M1-DET-02; the contract in engine.h "Replay
@@ -497,14 +651,22 @@ Engine::Engine(Engine&& other) noexcept
       schedule_(other.schedule_),
       config_(other.config_),
       lastStats_(other.lastStats_),
+      profiler_(std::move(other.profiler_)),
+      lastProfile_(other.lastProfile_),
       replayRecorder_(std::move(other.replayRecorder_)),
       replayFail_(other.replayFail_),
+      profileReportPath_(std::move(other.profileReportPath_)),
+      profileReportStatus_(other.profileReportStatus_),
+      profileReportFinalized_(other.profileReportFinalized_),
       shutDown_(other.shutDown_) {
   // The source becomes a STOPPED engine (the GameLoop moved-out
   // precedent): nothing left to release, nothing to flush. Its
   // recording (if any) is TRANSFERRED, not abandoned — the world it
   // recorded is the same moved world (the recorder's identity still
-  // describes it).
+  // describes it); the same for a started (unfinalized) profile
+  // report: it travels with the engine and is finalized — or
+  // abandoned with the report_aborted warn — by the destination's
+  // run/shutdown.
   other.shutDown_ = true;
 }
 
@@ -521,8 +683,13 @@ Engine& Engine::operator=(Engine&& other) noexcept {
     schedule_ = other.schedule_;
     config_ = other.config_;
     lastStats_ = other.lastStats_;
+    profiler_ = std::move(other.profiler_);
+    lastProfile_ = other.lastProfile_;
     replayRecorder_ = std::move(other.replayRecorder_);
     replayFail_ = other.replayFail_;
+    profileReportPath_ = std::move(other.profileReportPath_);
+    profileReportStatus_ = other.profileReportStatus_;
+    profileReportFinalized_ = other.profileReportFinalized_;
     shutDown_ = other.shutDown_;
     other.shutDown_ = true;
   }

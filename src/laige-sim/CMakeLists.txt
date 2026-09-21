@@ -76,11 +76,17 @@
 # the canonical steps 1-4 shared with stateHash) and reports the first
 # divergent tick plus the bounded state diff (World::stateDiff —
 # entity.h); the public types and contract live in include/laige/sim/
-# replay_diff.h).
+# replay_diff.h). M1-PROF-01 adds profiler.cpp: the always-on profiler
+# counters (Profiler — the tick/frame rolling windows, the render/
+# network counter fields, the snapshot, the text/JSON report format +
+# write; the public types and contract live in
+# include/laige/sim/profiler.h) plus the GameLoop Options::profiler
+# per-tick timing hook and the Engine's frame timing + per-run report
+# finalization (game_loop.cpp, engine.cpp).
 set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
                      systems.cpp system_timing.cpp game_loop.cpp
                      engine.cpp config.cpp replay.cpp state_hash.cpp
-                     replay_diff.cpp)
+                     replay_diff.cpp profiler.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})

@@ -10,6 +10,7 @@
 // Usage (docs/api/engine.md, the "laige-run" section):
 //
 //   laige-run --headless <config.json> [--ticks N] [--replay <log>]
+//               [--prof-out <report>]
 //
 //   --headless <config.json>  run the engine headless with the given
 //                             JSON config (required; the windowed mode
@@ -30,20 +31,40 @@
 //                             at <log> only when the run succeeds.
 //                             Size limit: kDefaultReplaySizeLimit
 //                             (128 MiB)
+//   --prof-out <report>       PROFILE REPORT (M1-PROF-01, FR-11.1
+//                             file export): write the run's profile
+//                             report (the version 1 JSON schema —
+//                             laige/sim/profiler.h: the always-on
+//                             counters, the tick/frame time windows,
+//                             the world's entity/alloc fields, and
+//                             every system's M1-SYS-03 timing window)
+//                             at <report>, at the end of the run.
+//                             EVERY build (diagnostics, not replay
+//                             state). A write failure does not fail
+//                             the run — it is reported on stderr and
+//                             the exit code becomes 2.
 //
 // Exit codes (documented, stable for CI grepping):
 //   0  the run completed (the requested ticks reached; the summary
 //      line carries the loop accounting)
 //   1  the engine run reported a failure Status (a failed frame —
 //      the engine still shut down, CONC-006)
-//   2  usage, IO, config-parse, or engine-create error (the message
-//      carries the NFR-13.3 5-field error text where one applies)
+//   2  usage, IO, config-parse, engine-create, or profile-report
+//      write error (the message carries the NFR-13.3 5-field error
+//      text where one applies)
 //
 // The one-line summary goes to stdout (machine-greppable, detcheck
 // precedent):
 //
 //   laige-run headless ticks=<T> dropped_ticks=<D>
 //               dropped_frames=<F> status=ok|<codeId>
+//
+// followed by the profiler's one-line summary (M1-PROF-01, FR-11.1
+// "exposed in the CLI") — the counters, the two time windows' stats,
+// and the world-pulled fields:
+//
+//   laige-run profile: ticks=<T> frames=<F> tick_ms: n=… min=… …
+//               frame_ms: n=… … entities_alive=… entities_total=… …
 //
 // Headless invariants (ARCH-003, verified by the include-graph lint
 // — NFR-8.11): this binary and everything it links (laige-sim,
@@ -73,7 +94,7 @@ namespace {
 void printUsage(std::FILE* out) {
   std::fprintf(out,
       "Usage: laige-run --headless <config.json> [--ticks N] "
-      "[--replay <log>]\n"
+      "[--replay <log>] [--prof-out <report>]\n"
       "\n"
       "  --headless <config.json>  run the engine headless with the "
       "given\n"
@@ -93,10 +114,18 @@ void printUsage(std::FILE* out) {
       "                            when the run succeeds; the size\n"
       "                            limit is kDefaultReplaySizeLimit,\n"
       "                            128 MiB)\n"
+      "  --prof-out <report>       write the run's profile report\n"
+      "                            (the version 1 JSON schema: the\n"
+      "                            counters, the tick/frame time\n"
+      "                            windows, the world fields, and the\n"
+      "                            per-system timings) at <report>, at\n"
+      "                            the end of the run (M1-PROF-01; EVERY\n"
+      "                            build; a write failure exits 2 — the\n"
+      "                            run itself completes)\n"
       "  --help, -h                this help\n"
       "\n"
-      "Exit codes: 0 = ok, 1 = engine run failure, 2 = usage / IO / "
-      "config error.\n");
+      "Exit codes: 0 = ok, 1 = engine run failure, 2 = usage / IO /\n"
+      "config / profile-report-write error.\n");
 }
 
 // True when `text` parses as an unsigned 64-bit decimal integer
@@ -121,6 +150,7 @@ int main(int argc, char** argv) {
   std::string configPath;
   std::uint64_t maxTicks = 0;
   std::string replayPath;
+  std::string profOutPath;
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -146,6 +176,13 @@ int main(int argc, char** argv) {
         return 2;
       }
       replayPath = argv[++i];
+    } else if (arg == "--prof-out") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "laige-run: --prof-out needs a report path\n");
+        printUsage(stderr);
+        return 2;
+      }
+      profOutPath = argv[++i];
     } else if (arg == "--help" || arg == "-h") {
       printUsage(stdout);
       return 0;
@@ -196,6 +233,19 @@ int main(int argc, char** argv) {
       return 2;
     }
   }
+  // Profile report (M1-PROF-01, FR-11.1 file export): opt-in, EVERY
+  // build (diagnostics, not replay state). The report is written at
+  // the end of the run (engine.h "The profiler"); a start failure is
+  // an exit-2 usage error (the run did not happen).
+  if (!profOutPath.empty()) {
+    const laige::Status reportStatus =
+        engine.startProfileReport(profOutPath);
+    if (reportStatus.isError()) {
+      std::fprintf(stderr, "laige-run: prof-out: %s\n",
+                   laige::errorText(reportStatus.error()));
+      return 2;
+    }
+  }
   // The frame budget (the run_headless contract, engine.h): a bounded
   // run uses budget 1 — each frame runs AT MOST one tick, so the run
   // lands EXACTLY on maxTicks under any cadence (a late frame drops
@@ -221,8 +271,31 @@ int main(int argc, char** argv) {
                static_cast<unsigned long long>(stats.droppedTicks),
                static_cast<unsigned long long>(stats.droppedFrames),
                runStatus.ok() ? "ok" : laige::errorName(runStatus.error()));
+  // The profiler's one-line summary (M1-PROF-01, FR-11.1 "exposed in
+  // the CLI"): the counters, the two time windows' stats, and the
+  // world-pulled fields — from the engine's cached per-run snapshot
+  // (the world is released in the shutdown; engine.h "The
+  // profiler").
+  std::fprintf(stdout, "%s\n",
+               laige::formatProfileSummaryLine(engine.profileStats())
+                   .c_str());
   // The run always ends in the ordered shutdown (CONC-006); this
   // second call exercises the idempotency (the M1-HEAD-01 test).
   engine.shutdown();
-  return runStatus.ok() ? 0 : 1;
+  // A profile-report write failure is an IO-class error (exit 2) when
+  // the run itself completed; a failed run stays exit 1 (the report
+  // error, if any, is surfaced on stderr for visibility).
+  if (!runStatus.ok()) {
+    if (!engine.profileReportStatus().ok()) {
+      std::fprintf(stderr, "laige-run: prof-out: %s\n",
+                   laige::errorText(engine.profileReportStatus().error()));
+    }
+    return 1;
+  }
+  if (!engine.profileReportStatus().ok()) {
+    std::fprintf(stderr, "laige-run: prof-out: %s\n",
+                 laige::errorText(engine.profileReportStatus().error()));
+    return 2;
+  }
+  return 0;
 }
