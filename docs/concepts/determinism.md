@@ -175,9 +175,10 @@ Disabling determinism is an escape hatch for non-deterministic
 prototypes, not a different math policy: the same SimMath ops, the same
 storage rules — only the PRNG and the replay promise are switched off.
 
-## The config surface (provisional)
+## The config surface (M1-CFG-01: the final versioned schema)
 
-`EngineConfig` (laige/sim/engine.h) carries the two keys:
+`EngineConfig` (laige/sim/config.h — moved there by M1-CFG-01)
+carries the two keys:
 
 ```cpp
 struct EngineConfig {
@@ -186,20 +187,28 @@ struct EngineConfig {
   std::uint32_t churnPerFrameBudget{...};
   std::uint64_t seed{laige::kDefaultSimulationSeed};      // 0..2^64-1 (programmatic)
   DeterminismConfig determinism{};                        // {enabled, math}
+  BudgetsConfig budgets{};                                // M1-CFG-01 declared values
+  CameraConfig camera{};                                  // M1-CFG-01 declared values
+  std::vector<std::string> assetRoots{};                 // M1-CFG-01 declared values
 };
 ```
 
 - `DeterminismConfig { bool enabled{true}; SimMathBackend math{FixedPoint16_16}; }`
   with `SimMathBackend::FixedPoint16_16` (id `fixed_point_16_16`, the
   default) and `SimMathBackend::FloatPinned32` (id `float_pinned_32`).
-- The JSON surface is **provisional** (M1-HEAD-01): `parseEngineConfig`
-  accepts `{"seed": 0..2^53, "determinism": {"enabled": bool,
-  "math": "fixed_point_16_16"|"float_pinned_32"}}`. The seed is bounded
-  to `2^53` in JSON because ADR 0003 stores numbers as doubles (exact to
-  2^53); the programmatic `EngineConfig.seed` is the full `uint64_t`.
-  Unknown nested keys warn (`config/unknown_key`) and are ignored — the
-  forward-compat rule. **M1-CFG-01 owns the final config schema**; these
-  keys land on the provisional surface until then.
+- The JSON surface is the **version 1 schema** (M1-CFG-01,
+  `laige::parseEngineConfig` / `laige::loadGameConfig` — see
+  [api/config.md](../api/config.md)): `{"version": 1, "seed": 0..2^53,
+  "determinism": {"enabled": bool,
+  "math": "fixed_point_16_16"|"float_pinned_32"}, ...}`. The seed is
+  bounded to `2^53` in JSON because ADR 0003 stores numbers as doubles
+  (exact to 2^53); the programmatic `EngineConfig.seed` is the full
+  `uint64_t`. Unknown keys (any level) warn (`config/unknown_key`)
+  and are ignored — the forward-compat rule. Both the seed and the
+  determinism block are simulation-affecting: they are part of the
+  replay identity's `configHash` and are hot-reload-refused (the
+  declared presentation values — budgets, camera, asset_roots — are
+  not).
 - The engine selects the backend once at init (compile-time dispatch,
   ADR 0002): it registers the matching built-in component
   (`Position2DFpx16` or `Position2DFp32`) first and builds the

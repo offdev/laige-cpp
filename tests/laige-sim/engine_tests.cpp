@@ -9,9 +9,9 @@
 //   - run_headless completes the requested ticks exactly under a
 //     healthy cadence (frame budget 1: one tick per frame, no drops)
 //     and reports the loop accounting (the profiler feed)
-//   - the provisional config surface: defaults, the rejection table
-//     (wrong type, non-integer, out of range), first-failure-wins,
-//     unknown-key forward-compat warn (M1-CFG-01's rule)
+//   - the config surface (M1-CFG-01): the versioned schema loader, the
+//     rejection table, and the hot reloader live in
+//     game_config_tests.cpp (the CTest entry `game_config`)
 //   - a stopped engine (post-run / moved-from) fails without logging
 //     (the stopped-state precedent)
 //   - no GPU/window symbols: guaranteed by the include-graph lint
@@ -36,7 +36,6 @@
 
 #include "gtest/gtest.h"
 #include "laige/errors.h"
-#include "laige/json.h"
 #include "laige/logging.h"
 #include "laige/result.h"
 #include "laige/sim/engine.h"
@@ -149,16 +148,6 @@ std::size_t countEvents(const MemorySink& sink, std::string_view event) {
   return n;
 }
 
-// Parses a JSON document from a literal (test cold path).
-laige::JsonValue parseDoc(const char* text) {
-  const laige::Result<laige::JsonValue> r = laige::parseJson(text);
-  if (r.isError()) {
-    ADD_FAILURE() << "test fixture JSON failed to parse: " << text;
-    abort();
-  }
-  return r.value();
-}
-
 // Creates an engine, failing the test loudly on a setup error (the
 // test configs below are all valid — a failure here is a bug in the
 // test or the engine, never a scenario).
@@ -233,115 +222,6 @@ TEST(EngineCreate, EntityBudgetAboveHandleSpaceRejected) {
   ASSERT_TRUE(result.isError());
   EXPECT_EQ(result.error(), laige::ErrorCode::InvalidArgument);
   EXPECT_EQ(sink->entries.size(), 0u);  // the World::create precedent: no warn
-  restoreLogger();
-}
-
-// ---------------------------------------------------------------------------
-// parseEngineConfig (the provisional M1-HEAD-01 config surface)
-// ---------------------------------------------------------------------------
-
-TEST(EngineConfigParse, EmptyDocumentIsAllDefaults) {
-  const laige::EngineConfig config =
-      laige::parseEngineConfig(parseDoc("{}")).value();
-  EXPECT_EQ(config.tickRateHz, laige::kDefaultTickRateHz);
-  EXPECT_EQ(config.entityCapacity, 0u);
-  EXPECT_EQ(config.churnPerFrameBudget, laige::kDefaultChurnPerFrameBudget);
-}
-
-TEST(EngineConfigParse, FullValidDocument) {
-  const laige::EngineConfig config =
-      laige::parseEngineConfig(parseDoc(
-          R"({"tick_rate_hz":120,"entity_budget":65536,"churn_per_frame_budget":0})"))
-          .value();
-  EXPECT_EQ(config.tickRateHz, 120u);
-  EXPECT_EQ(config.entityCapacity, 65536u);
-  EXPECT_EQ(config.churnPerFrameBudget, 0u);
-}
-
-TEST(EngineConfigParse, TickRateRejects) {
-  for (const char* bad : {"19", "121", "60.5", R"("60")", "true"}) {
-    const laige::Result<laige::EngineConfig, laige::ErrorCode> result =
-        laige::parseEngineConfig(parseDoc(std::string("{\"tick_rate_hz\":")
-                                                .append(bad)
-                                                .append("}")
-                                                .c_str()));
-    ASSERT_TRUE(result.isError());
-    EXPECT_EQ(result.error(), laige::ErrorCode::InvalidArgument);
-  }
-  // The inclusive boundaries are accepted.
-  for (const char* good : {"20", "120"}) {
-    const laige::Result<laige::EngineConfig, laige::ErrorCode> result =
-        laige::parseEngineConfig(parseDoc(std::string("{\"tick_rate_hz\":")
-                                                .append(good)
-                                                .append("}")
-                                                .c_str()));
-    ASSERT_TRUE(result.ok());
-  }
-}
-
-TEST(EngineConfigParse, EntityBudgetRejects) {
-  for (const char* bad : {"-1", "65537", "65536.5", R"("100")"}) {
-    const laige::Result<laige::EngineConfig, laige::ErrorCode> result =
-        laige::parseEngineConfig(parseDoc(std::string("{\"entity_budget\":")
-                                                .append(bad)
-                                                .append("}")
-                                                .c_str()));
-    ASSERT_TRUE(result.isError());
-    EXPECT_EQ(result.error(), laige::ErrorCode::InvalidArgument);
-  }
-  const laige::EngineConfig config =
-      laige::parseEngineConfig(parseDoc(R"({"entity_budget":65536})"))
-          .value();
-  EXPECT_EQ(config.entityCapacity, 65536u);
-}
-
-TEST(EngineConfigParse, ChurnBudgetRejects) {
-  for (const char* bad : {"-1", R"("10")", "10.5"}) {
-    const laige::Result<laige::EngineConfig, laige::ErrorCode> result =
-        laige::parseEngineConfig(parseDoc(std::string(
-                                      "{\"churn_per_frame_budget\":")
-                                      .append(bad)
-                                      .append("}")
-                                      .c_str()));
-    ASSERT_TRUE(result.isError());
-    EXPECT_EQ(result.error(), laige::ErrorCode::InvalidArgument);
-  }
-  const laige::EngineConfig config =
-      laige::parseEngineConfig(
-          parseDoc(R"({"churn_per_frame_budget":4294967295})"))
-          .value();
-  EXPECT_EQ(config.churnPerFrameBudget, 4294967295u);
-}
-
-TEST(EngineConfigParse, NotAnObjectRejected) {
-  for (const char* doc : {"[]", "42", R"("config")", "null"}) {
-    const laige::Result<laige::EngineConfig, laige::ErrorCode> result =
-        laige::parseEngineConfig(parseDoc(doc));
-    ASSERT_TRUE(result.isError());
-    EXPECT_EQ(result.error(), laige::ErrorCode::InvalidArgument);
-  }
-}
-
-TEST(EngineConfigParse, UnknownKeyWarnsAndIsIgnored) {
-  MemorySink* sink = installCaptureSink();
-  const laige::Result<laige::EngineConfig, laige::ErrorCode> result =
-      laige::parseEngineConfig(
-          parseDoc(R"({"tick_rate_hz":60,"camera":{"zoom":1}})"));
-  ASSERT_TRUE(result.ok());
-  EXPECT_EQ(result.value().tickRateHz, 60u);
-  EXPECT_EQ(countEvents(*sink, "unknown_key"), 1u);
-  restoreLogger();
-}
-
-TEST(EngineConfigParse, FirstFailureWins) {
-  MemorySink* sink = installCaptureSink();
-  const laige::Result<laige::EngineConfig, laige::ErrorCode> result =
-      laige::parseEngineConfig(
-          parseDoc(R"({"tick_rate_hz":999,"entity_budget":-5})"));
-  ASSERT_TRUE(result.isError());
-  EXPECT_EQ(result.error(), laige::ErrorCode::InvalidArgument);
-  EXPECT_EQ(countEvents(*sink, "tick_rate_invalid"), 1u);
-  EXPECT_EQ(countEvents(*sink, "entity_budget_invalid"), 0u);
   restoreLogger();
 }
 

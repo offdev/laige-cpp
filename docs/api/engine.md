@@ -9,10 +9,14 @@ it down cleanly. It is the first full-stack surface of the engine and
 the CI smoke-test target (`laige-run --headless`, this repo's `tools/run`).
 
 Public header: `src/laige-sim/include/laige/sim/engine.h` (`Engine`,
-`EngineConfig`, `parseEngineConfig`, the range constants, the full
-contract); implementation: `src/laige-sim/engine.cpp`. CLI:
-`tools/run/laige-run.cpp` (target `laige-run`). Unit suite:
-`ctest -R engine` (`tests/laige-sim/engine_tests.cpp`); smoke test:
+the range constants, the full contract); implementation:
+`src/laige-sim/engine.cpp`. The config surface (`EngineConfig`,
+`loadGameConfig`, the override merge, the hot reloader) is
+`src/laige-sim/include/laige/sim/config.h` — see
+[api/config.md](config.md). CLI: `tools/run/laige-run.cpp` (target
+`laige-run`). Unit suite: `ctest -R engine`
+(`tests/laige-sim/engine_tests.cpp`) and `ctest -R config`
+(`tests/laige-sim/game_config_tests.cpp`); smoke test:
 `ctest -R laige_run_smoke` (every P0 OS job, 1000 ticks @ 60 Hz).
 
 ```cpp
@@ -68,69 +72,41 @@ leaks the world; the explicit call is the documented teardown (it
 retires the logging facade, which `Logger::init` re-arms for a later
 engine in the process).
 
-## The config surface (provisional)
+## The config surface (M1-CFG-01: the final versioned schema)
 
-`EngineConfig{tickRateHz, entityCapacity, churnPerFrameBudget, seed,
-determinism}` and `parseEngineConfig(const JsonValue&)` are the
-**provisional** config surface for M1-HEAD-01. M1-CFG-01 owns the final
-versioned config schema (PRD §10, ARCH-007: persistent data MUST be
-versioned); when M1-CFG-01 lands, the JSON parse moves behind its
-versioned reader and this surface is folded into it. The provisional
-keys:
+`EngineConfig` and the JSON/file loaders now live in
+[api/config.md](config.md) (`laige/sim/config.h`): the **version 1**
+declarative schema (the REQUIRED `version` key, ARCH-007), the
+`tick_rate_hz` / `entity_budget` / `churn_per_frame_budget` / `seed`
+/ `determinism` keys, and the declared presentation blocks
+(`budgets`, `camera`, `asset_roots` — stored now, consumed in M2).
+The provisional M1-HEAD-01 surface was folded into it: the five
+original `EngineConfig` members keep their order (existing aggregate
+initializers compile unchanged), the provisional JSON keys carried
+over, and the migration from a provisional document is adding
+`"version": 1`.
 
-| key | type | range | default |
-|---|---|---|---|
-| `tick_rate_hz` | exact integer | 20–120 | `kDefaultTickRateHz` (60) |
-| `entity_budget` | exact integer | 0–65536 | `0` (an empty scene — a valid world that creates no entities; entity creation on it fails `BudgetExhausted`) |
-| `churn_per_frame_budget` | exact integer | 0–4294967295 | `kDefaultChurnPerFrameBudget` (256) |
-| `seed` | exact integer | 0–2^53 (JSON) / 0–2^64−1 (struct) | `kDefaultSimulationSeed` (0) |
-| `determinism` | object (below) | — | `{enabled: true, math: "fixed_point_16_16"}` |
+What the engine consumes directly:
 
-The `determinism` object (M1-DET-01; see
-[concepts/determinism.md](../concepts/determinism.md) for the scope
-and [api/determinism.md](determinism.md) for the types):
-
-| nested key | type | range | default |
-|---|---|---|---|
-| `determinism.enabled` | bool | — | `true` |
-| `determinism.math` | string | `"fixed_point_16_16"` \| `"float_pinned_32"` | `"fixed_point_16_16"` |
-
+- `Engine::create(config)` re-validates the typed config's tick rate
+  (the config surface's rejection, `config/tick_rate_invalid`,
+  subsystem `config`) — the struct is public, so a hand-built
+  out-of-range config is rejected identically.
 - The **seed is part of replay identity** (ADR 0002) and is logged on
-  `engine/run_started`. In JSON it is bounded to `2^53` because ADR
-  0003 stores numbers as doubles (exact to 2^53); the programmatic
-  `EngineConfig.seed` is the full `uint64_t`. A seed above the JSON
-  bound, a non-integer, or a negative is rejected
-  (`config/seed_invalid`).
-- `enabled` selects deterministic mode (per-system PRNG substreams,
-  the replay promise); `false` is the documented escape hatch
-  (no substreams, `SystemContext.rng == nullptr`). `math` selects the
-  SimMath backend the engine registers (the built-in component and the
-  presentation snapshot).
+  `engine/run_started`; `determinism.enabled` selects deterministic
+  mode and `determinism.math` the SimMath backend the engine
+  registers (see [concepts/determinism.md](../concepts/determinism.md)
+  for the scope and [api/determinism.md](determinism.md) for the
+  types).
+- The replay identity's `configHash` covers only the
+  simulation-affecting fields — the declared presentation values
+  (budgets/camera/asset roots) are excluded, so the hash encoding is
+  unchanged by the final schema ([api/replay.md](replay.md)).
 
-- **Unknown keys** are ignored with one rate-limited
-  `config/unknown_key` warn per key (forward-compatible with
-  M1-CFG-01's additions; LOG-004).
-- **Rejections** (first failure wins, one rate-limited warn each):
-  `config/not_an_object` (document is not a JSON object),
-  `config/tick_rate_invalid` (absent/out of range/non-integer),
-  `config/entity_budget_invalid`, `config/churn_budget_invalid`,
-  `config/seed_invalid` (non-integer / out of range / above the 2^53
-  JSON bound / wrong type), `config/determinism_invalid` (not an
-  object), `config/determinism_enabled_invalid` (not a bool),
-  `config/determinism_math_invalid` (not one of the two backend ids) —
-  each maps to `ErrorCode::InvalidArgument` (NFR-13.3 grammar:
-  `{codeId}|{what}|{why}|{fix}|{docAnchor}`, see `errors.md`). An
-  **unknown key inside `determinism`** is not a rejection: it warns
-  (`config/unknown_key`) and is ignored, like the top-level unknown-key
-  rule (forward-compat with M1-CFG-01).
-- `Engine::create` re-validates the `EngineConfig` struct itself (the
-  struct is public; the JSON path is not the only constructor), so a
-  hand-built out-of-range config is rejected identically.
-
-`parseEngineConfig` is a cold path (O(document keys); it allocates
-only for the warn fields when a key is rejected) and is the only
-place the JSON document is read — the `EngineConfig` struct is the
-value the engine consumes.
+The full key table, the versioning rules, the rejection table, the
+`loadGameConfig` file loader, the `EngineConfigOverride` merge, and
+the debug-only `ConfigHotReloader` are in
+[api/config.md](config.md).
 
 ## The run contract (`run_headless`)
 

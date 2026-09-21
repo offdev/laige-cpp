@@ -85,8 +85,7 @@ class-template pattern, ADR 0002) (`include/laige/sim/presentation.h`
 [docs/api/presentation.md](../docs/api/presentation.md), tests under
 [tests/laige-sim](../tests/laige-sim), CTest entry `presentation`).
 M1-HEAD-01 landed the headless engine run — `Engine`
-(config → world → systems → loop: `EngineConfig` + the provisional
-`parseEngineConfig` JSON surface, `run_headless(maxTicks)` the
+(config → world → systems → loop: `run_headless(maxTicks)` the
 bounded + server run forms, the ordered idempotent CONC-006
 shutdown, the presentation snapshot wiring on the configured SimMath
 backend) plus the `laige-run` binary (`--headless`/`--ticks`/
@@ -94,6 +93,20 @@ backend) plus the `laige-run` binary (`--headless`/`--ticks`/
 (`include/laige/sim/engine.h`, `engine.cpp`, `tools/run`; API
 contract in [docs/api/engine.md](../docs/api/engine.md), tests under
 [tests/laige-sim](../tests/laige-sim), CTest entry `engine`).
+M1-CFG-01 landed the declarative game config — the version 1
+`config.json` schema (`EngineConfig` + `BudgetsConfig` +
+`CameraConfig`, the REQUIRED `version` key, the budgets/camera/
+asset_roots declared blocks), `parseEngineConfig`/`loadGameConfig`
+(the bounded file read + schema validation), the
+`EngineConfigOverride`/`applyConfigOverride` merge, and the
+debug-build-only `ConfigHotReloader` (hot reload of non-simulation
+keys; sim-affecting changes are refused with
+`config/hot_reload_rejected`) — folded in from the provisional
+M1-HEAD-01 surface; `EngineConfig` moved to
+`include/laige/sim/config.h` (the five original members keep their
+order); API contract in
+[docs/api/config.md](../docs/api/config.md), tests under
+[tests/laige-sim](../tests/laige-sim) (CTest entry `game_config`).
 M1-DET-01 landed deterministic mode — the SimMath-only sim
 guarantee (the G-R8 compile-time trait
 `include/laige/sim/determinism.h`: `SimMathBackend`,
@@ -101,8 +114,9 @@ guarantee (the G-R8 compile-time trait
 `LAIGE_DETERMINISM_SAFE`, enforced by a `static_assert` in
 `World::registerSystem`), the per-system PRNG substreams
 (`World::Options.seed`/`deterministic`, `SystemContext.rng`), the
-`seed`/`determinism` keys on the provisional config surface + the
-backend selection at engine init (built-in component + snapshot), and
+`seed`/`determinism` keys on the config surface (final: the
+version 1 schema, M1-CFG-01) + the backend selection at engine init
+(built-in component + snapshot), and
 the sim-source determinism scan (`tools/laige-determinism-lint`, the
 `determinism-lint` CI job) with same-line
 `LAIGE-DETERM-EXCEPTION` markers as the documented false-positive

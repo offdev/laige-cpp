@@ -3,9 +3,9 @@
 // FR-1.6 / AC-6.2: the entire engine (except presentation) runs
 // without a window/GPU — required for servers, CI, and replay
 // tooling. This binary is the M1 entry point for the headless form:
-// it loads the declarative config (JSON — the provisional M1-HEAD-01
-// config surface; M1-CFG-01 owns the full schema), builds the
-// Engine, and runs it for the requested number of ticks.
+// it loads the declarative config (the version 1 JSON schema —
+// M1-CFG-01: laige/sim/config.h, loadGameConfig), builds the Engine,
+// and runs it for the requested number of ticks.
 //
 // Usage (docs/api/engine.md, the "laige-run" section):
 //
@@ -56,30 +56,19 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
-#include <cstring>
-#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
 
-#if defined(_MSC_VER)
-#include <share.h>  // _SH_DENYNO: plain-fopen sharing for the _fsopen below
-#endif
-
 #include "laige/errors.h"
-#include "laige/json.h"
 #include "laige/logging.h"
 #include "laige/result.h"
+#include "laige/sim/config.h"
 #include "laige/sim/engine.h"
 #include "laige/sim/game_loop.h"
 #include "laige/sim/replay.h"
 
 namespace {
-
-// The 1 MiB config-document bound (ADR 0003 / the JsonOptions
-// default): the read stops one byte past the bound so an oversized
-// file is a MalformedInput, not a truncated parse.
-inline constexpr std::size_t kMaxConfigBytes = 1u << 20;
 
 void printUsage(std::FILE* out) {
   std::fprintf(out,
@@ -123,54 +112,6 @@ bool parseTicks(std::string_view text, std::uint64_t* out) {
   if (errno == ERANGE || end == nullptr || *end != '\0') return false;
   *out = static_cast<std::uint64_t>(v);
   return true;
-}
-
-// Portable config-file open (CPP-009 compile-time platform boundary —
-// the logging.cpp precedent). MSVC's CRT deprecates plain `fopen`
-// (C4996, fatal under the engine's /WX policy); `fopen_s` cannot be
-// used here: it opens with the `_SH_SECURE` sharing mode, which denies
-// re-opening of the file (the windows-msvc CI runs of M0-CORE-02 read
-// back an empty file for exactly that reason). `_fsopen(path, mode,
-// _SH_DENYNO)` is the CRT's documented way to open with plain-`fopen`
-// sharing semantics, which every other supported compiler's `fopen`
-// provides.
-#if defined(_MSC_VER)
-inline std::FILE* openConfigFile(const char* path, const char* mode) {
-  return ::_fsopen(path, mode, _SH_DENYNO);
-}
-#else
-inline std::FILE* openConfigFile(const char* path, const char* mode) {
-  return std::fopen(path, mode);
-}
-#endif
-
-// Reads the config file into a bounded buffer (the 1 MiB ADR 0003
-// bound). Returns the error Status; on success the document is in
-// `out`.
-laige::Status readConfigFile(const std::string& path, std::string* out) {
-  std::FILE* file = openConfigFile(path.c_str(), "rb");
-  if (file == nullptr) {
-    return laige::ErrorCode::IoError;
-  }
-  out->clear();
-  char chunk[8192];
-  for (;;) {
-    const std::size_t n = std::fread(chunk, 1, sizeof(chunk), file);
-    if (n == 0) {
-      if (std::ferror(file)) {
-        std::fclose(file);
-        return laige::ErrorCode::IoError;
-      }
-      break;  // clean EOF
-    }
-    out->append(chunk, n);
-    if (out->size() > kMaxConfigBytes) {
-      std::fclose(file);
-      return laige::ErrorCode::MalformedInput;
-    }
-  }
-  std::fclose(file);
-  return laige::Status{};
 }
 
 }  // namespace
@@ -222,22 +163,11 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  std::string document;
-  const laige::Status readStatus = readConfigFile(configPath, &document);
-  if (readStatus.isError()) {
-    std::fprintf(stderr, "laige-run: config: %s\n",
-                 laige::errorText(readStatus.error()));
-    return 2;
-  }
-  const laige::Result<laige::JsonValue> parsed =
-      laige::parseJson(document);
-  if (parsed.isError()) {
-    std::fprintf(stderr, "laige-run: config: %s\n",
-                 laige::errorText(parsed.error()));
-    return 2;
-  }
+  // The version 1 declarative config (M1-CFG-01): bounded read +
+  // parse + version gate + schema validation in one cold call; the
+  // rejection events are the config/* events of laige/sim/config.h.
   const laige::Result<laige::EngineConfig, laige::ErrorCode> config =
-      laige::parseEngineConfig(parsed.value());
+      laige::loadGameConfig(configPath);
   if (config.isError()) {
     std::fprintf(stderr, "laige-run: config: %s\n",
                  laige::errorText(config.error()));

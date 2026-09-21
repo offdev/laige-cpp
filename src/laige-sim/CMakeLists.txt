@@ -51,8 +51,13 @@
 # run_headless/shutdown — config -> world -> systems -> loop, the
 # presentation onTick wiring this step owns, and the ordered CONC-006
 # shutdown; the public types and contract live in
-# include/laige/sim/engine.h) plus the provisional JSON config surface
-# (parseEngineConfig — M1-CFG-01 owns the full declarative schema).
+# include/laige/sim/engine.h). M1-CFG-01 adds config.cpp +
+# include/laige/sim/config.h: the final versioned declarative config
+# schema (EngineConfig — moved from engine.h — plus the version gate,
+# the budgets/camera/asset_roots blocks, parseEngineConfig,
+# loadGameConfig, the EngineConfigOverride merge, and the
+# debug-only ConfigHotReloader — the provisional JSON config surface
+# in engine.cpp is folded into it).
 # M1-DET-02 adds replay.cpp: the replay recording (ReplayRecorder —
 # the versioned log format, the atomic temp+rename writer, the
 # parseReplay/loadReplay readers, and the replay-identity hashes; the
@@ -74,7 +79,7 @@
 # replay_diff.h).
 set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
                      systems.cpp system_timing.cpp game_loop.cpp
-                     engine.cpp replay.cpp state_hash.cpp
+                     engine.cpp config.cpp replay.cpp state_hash.cpp
                      replay_diff.cpp)
 
 if(LAIGE_BUILD_SHARED)

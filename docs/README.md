@@ -13,6 +13,11 @@ enforcement; M1-LOOP-01: the fixed-timestep game loop core;
 M1-LOOP-02: the per-tick presentation snapshot + interpolation
 state; M1-HEAD-01: the headless engine run — `Engine`
 (config → world → systems → loop) and the `laige-run` binary;
+M1-CFG-01: the declarative game config — the version 1
+`config.json` schema (tick rate, budgets, camera defaults, asset
+roots, determinism block), `loadGameConfig`, the programmatic
+override merge, and the debug-only hot reload of non-simulation
+keys (`laige/sim/config.h`);
 M1-DET-01: deterministic mode — the SimMath-only sim guarantee
 (the G-R8 compile-time trait + the CI source scan), the per-system
 PRNG substreams, and the `seed`/`determinism` config keys;
@@ -112,9 +117,14 @@ still to land.
  - [Headless engine run](api/engine.md) — `laige::Engine`
   (config → world → systems → loop): `run_headless(maxTicks)` the
   bounded + server run forms, the ordered idempotent CONC-006
-  shutdown, the provisional config surface (now including the
-  `seed`/`determinism` keys, M1-DET-01), the backend selection at
-  init, and the `laige-run` CLI (M1-HEAD-01; `laige-sim` + `tools/run`).
+  shutdown, the backend selection at init, and the `laige-run`
+  CLI (M1-HEAD-01; `laige-sim` + `tools/run`).
+- [Declarative game config](api/config.md) — the version 1
+  `config.json` schema (the required `version` key, tick rate,
+  budgets, camera defaults, asset roots, the determinism block),
+  `EngineConfig`, `loadGameConfig`, the `EngineConfigOverride`
+  merge, and the debug-only `ConfigHotReloader` (M1-CFG-01;
+  `laige-sim`).
 - [Determinism-safe storage](api/determinism.md) — the G-R8
   compile-time trait: `SimMathBackend`, `DeterminismConfig`,
   `detail::IsDeterminismSafe<T>`, and
@@ -232,6 +242,7 @@ still to land.
   [game_loop.md](api/game_loop.md),
   [presentation.md](api/presentation.md),
   [engine.md](api/engine.md),
+  [config.md](api/config.md),
   [determinism.md](api/determinism.md),
   [replay.md](api/replay.md).)
 

@@ -8,12 +8,6 @@
 // (simulation is single-threaded); CONC-006 (ordered, testable,
 // idempotent shutdown). This header ships the headless engine run:
 //
-//   EngineConfig      The typed configuration the engine consumes
-//                     (tick rate, scene entity budget, the G-R4
-//                     per-frame churn budget).
-//   parseEngineConfig The JSON -> EngineConfig loader (the provisional
-//                     M1-HEAD-01 config surface; M1-CFG-01 owns the
-//                     full declarative config schema).
 //   Engine            The headless engine object: config -> world ->
 //                     systems -> loop. It owns the World, the
 //                     PresentationSnapshot, and the GameLoop; it runs
@@ -112,44 +106,27 @@
 // path), and after a failed run.
 //
 // ---------------------------------------------------------------------------
-// The config surface (PROVISIONAL — M1-CFG-01 owns the final schema)
+// The config surface (M1-CFG-01: the final versioned schema)
 // ---------------------------------------------------------------------------
 //
-// M1-CFG-01 (unchecked at this step's start) will land the full
-// declarative config.json: versioned schema, unknown-key handling,
-// budgets, camera defaults, asset roots, and the determinism block's
-// final placement (M1-DET-01 lands the seed and determinism keys on
-// this PROVISIONAL surface; M1-CFG-01 owns the final schema). Until
-// then, parseEngineConfig reads the SUBSET the headless run consumes,
-// from an unversioned top-level JSON object:
+// The declarative game config (FR-1.5) is owned by laige/sim/config.h:
+// EngineConfig (the typed configuration the engine consumes — moved
+// there by M1-CFG-01 from this header; the five M1-HEAD-01 members
+// keep their order), the version 1 JSON schema (the REQUIRED "version"
+// key, the tick rate, the scene/churn budgets, the seed, the
+// determinism block, the declared budgets/camera/asset_roots blocks),
+// parseEngineConfig (the versioned document loader), loadGameConfig
+// (the file loader), EngineConfigOverride + applyConfigOverride (the
+// programmatic override merge), and ConfigHotReloader (the
+// debug-build-only hot reload of non-simulation keys). This header
+// includes config.h; the full key table, the versioning rules, the
+// rejection table, and the hot-reload contract are in config.h and
+// docs/api/config.md.
 //
-//   "tick_rate_hz"            integer, 20..120   (default 60)
-//   "entity_budget"           integer, 0..65536  (default 0: no
-//                              entities — every World::create fails
-//                              with BudgetExhausted; set it to the
-//                              scene's declared budget, G-R3)
-//   "churn_per_frame_budget"  integer, >= 0      (default 256; 0
-//                              disables the G-R4 guardrail)
-//   "seed"                    integer, 0..2^53   (default 0 — the
-//                              ADR 0003 JSON bound: exact doubles to
-//                              2^53; the programmatic
-//                              EngineConfig.seed accepts the full
-//                              64 bits. M1-DET-01: the master
-//                              simulation seed, part of the replay
-//                              identity)
-//   "determinism"             object (default {})
-//     "enabled"               bool             (default true —
-//                              deterministic by default, S-7)
-//     "math"                  "fixed_point_16_16" | "float_pinned_32"
-//                              (default "fixed_point_16_16" — the
-//                              ADR 0002 backend ids)
-//
-// Missing keys take the defaults; unknown keys are WARNED (one
-// config/unknown_key per key, forward-compat) and ignored; a wrong
-// type, a non-integer, or an out-of-range value is one rate-limited
-// warn (subsystem "config") plus InvalidArgument (FR-12.3, never
-// silent). M1-CFG-01 replaces/extends this loader; the keys above are
-// expected to carry over into the versioned schema unchanged.
+// Engine::create re-validates the typed config's tick rate (the single
+// warn there is config/tick_rate_invalid, the config surface's
+// rejection — the JSON/file loaders emit the same event for the same
+// domain).
 //
 // ---------------------------------------------------------------------------
 // Built-in components and the determinism scope (ARCH-009/010)
@@ -291,6 +268,7 @@
 #include "laige/errors.h"
 #include "laige/fpx16_16.h"
 #include "laige/result.h"
+#include "laige/sim/config.h"         // EngineConfig, the version 1 schema (M1-CFG-01)
 #include "laige/sim/determinism.h"  // SimMathBackend, DeterminismConfig (M1-DET-01)
 #include "laige/sim/entity.h"       // World, kDefaultChurnPerFrameBudget
 #include "laige/sim/game_loop.h"    // GameLoop, GameLoopStats, tick-rate constants
@@ -298,85 +276,6 @@
 #include "laige/sim/replay.h"       // ReplayRecorder (M1-DET-02)
 
 namespace laige {
-
-class JsonValue;  // declared in laige/json.h; only a const reference is used
-
-// The default master simulation seed (M1-DET-01; CORE-005). 0 is a
-// valid master seed: the Prng's state is nonzero for every 64-bit
-// seed (the xorshift128+ state transform — laige/prng.h), so no
-// special invalid seed is needed.
-inline constexpr std::uint64_t kDefaultSimulationSeed = 0;
-
-// The typed headless-engine configuration (M1-HEAD-01; the provisional
-// config surface — see the header preamble "The config surface").
-// A plain value: the engine copies it into the EngineConfig echo read
-// back through config().
-struct EngineConfig {
-  // The simulation tick rate in HERTZ (FR-1.1: 20-120 validated at
-  // Engine::create; default kDefaultTickRateHz).
-  std::uint32_t tickRateHz{kDefaultTickRateHz};
-  // The declared scene budget (G-R3): the World's entity capacity.
-  // 0 = an empty scene (a valid world that creates no entities —
-  // entity creation on it fails with BudgetExhausted; the game
-  // declares its budget, the engine does not guess one).
-  std::uint32_t entityCapacity{0};
-  // The G-R4 per-frame component-churn budget (0 disables the
-  // guardrail; default kDefaultChurnPerFrameBudget).
-  std::uint32_t churnPerFrameBudget{kDefaultChurnPerFrameBudget};
-  // The master simulation seed (M1-DET-01; PRD §10.3: the seed is
-  // part of the replay identity). Every system's PRNG substream is
-  // derived from (seed, system id) — the Prng::deriveSubstream
-  // contract (laige/prng.h). Default kDefaultSimulationSeed (0 — a
-  // valid master seed: the Prng's state is nonzero for every 64-bit
-  // seed, prng.h). The programmatic path accepts the full 64 bits;
-  // the JSON config path is bounded to exact integers in 0..2^53
-  // (the ADR 0003 number policy — parseEngineConfig's documented
-  // limit).
-  std::uint64_t seed{kDefaultSimulationSeed};
-  // The determinism block (M1-DET-01; ADR 0002): the mode flag and
-  // the selected SimMath backend. See the header preamble "The
-  // config surface" for the JSON keys and "Built-in components and
-  // the determinism scope" for the semantics; the full promised
-  // scope is docs/concepts/determinism.md.
-  DeterminismConfig determinism{};
-};
-
-// Load the headless-engine configuration from a parsed JSON document
-// (the provisional M1-HEAD-01 config surface; M1-CFG-01 owns the full
-// declarative schema — see the header preamble for the keys, the
-// defaults, and the rejection table). The document must be a
-// top-level object; every accepted key is optional (defaults above).
-//
-//   document not an object        -> InvalidArgument + warn
-//                                     (config/not_an_object)
-//   "tick_rate_hz" not a number, not an exact integer, or outside
-//                               20..120                -> InvalidArgument + warn
-//                                     (config/tick_rate_invalid)
-//   "entity_budget" not a number, not an exact integer,
-//                               or outside 0..65536    -> InvalidArgument + warn
-//                                     (config/entity_budget_invalid)
-//   "churn_per_frame_budget" not a number, not an exact
-//                               integer, or < 0        -> InvalidArgument + warn
-//                                     (config/churn_budget_invalid)
-//   "seed" not a number, not an exact integer, or
-//                               outside 0..2^53        -> InvalidArgument + warn
-//                                     (config/seed_invalid)
-//   "determinism" not an object   -> InvalidArgument + warn
-//                                     (config/determinism_invalid)
-//   "determinism.enabled" not a   -> InvalidArgument + warn
-//       boolean                   (config/determinism_enabled_invalid)
-//   "determinism.math" not a      -> InvalidArgument + warn
-//       string, or not one of     (config/determinism_math_invalid)
-//       the two ADR 0002 ids
-//   unknown key (top-level or    -> Warn only (config/unknown_key,
-//       inside "determinism")     forward-compat — M1-CFG-01's
-//                                 rule); the key is ignored
-//
-// Cold path (config load); O(keys), allocates only for the warn
-// fields. First failure wins; on failure the config is not returned.
-// @budget O(document keys); cold path, warn fields allocate only when a key is rejected.
-[[nodiscard]] Result<EngineConfig, ErrorCode>
-parseEngineConfig(const JsonValue& doc) noexcept;
 
 namespace detail {
 

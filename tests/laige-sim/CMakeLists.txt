@@ -1,5 +1,5 @@
 # laige-sim tests (M1-ECS-01/02/03/04/05/06/07 + M1-SYS-01/02/03
-# + M1-LOOP-01/02 + M1-HEAD-01 + M1-DET-01/02/03):
+# + M1-LOOP-01/02 + M1-HEAD-01 + M1-CFG-01 + M1-DET-01/02/03):
 # entity handle + World entity storage, component type registry,
 # archetype SoA storage, query API + iteration legality,
 # deterministic iteration order, the ECS guardrails (G-R3/G-R4), the
@@ -14,8 +14,11 @@
 # prev/curr refresh, the anchored clamped alpha, sample_position),
 # and the headless engine run (config -> world -> systems -> loop,
 # the run_headless bounded run + loop accounting, the ordered
-# idempotent CONC-006 shutdown, the provisional config surface), and
-# the replay recording (M1-DET-02: the versioned log format's
+# idempotent CONC-006 shutdown), and the declarative game config
+# (M1-CFG-01: the version 1 schema loader's rejection table, the
+# file loader's bounded read, the programmatic override merge, and
+# the debug-only hot reload of non-simulation keys), and the replay
+# recording (M1-DET-02: the versioned log format's
 # round-trip + malformed-input behavior, the recorder's atomic
 # temp+rename + size limit, the replay-identity hashes, and the
 # engine's per-tick empty-frame recording + failure stop), and the
@@ -39,20 +42,20 @@
 # `component_registry`, `archetype`, `query`, `iter_order`,
 # `ecs_guardrails`, `ecs_stress`, `system_registry`, `scheduler`,
 # `system_timing`, `game_loop`, `presentation`, `engine`,
-# `determinism_mode`, `replay_record`, `replay_replay`, and
-# `replay_diff` entries
+# `game_config`, `determinism_mode`, `replay_record`, `replay_replay`,
+# and `replay_diff` entries
 # are the M1-ECS-01, M1-ECS-02, M1-ECS-03, M1-ECS-04, M1-ECS-05,
 # M1-ECS-06, M1-ECS-07, M1-SYS-01, M1-SYS-02, M1-SYS-03, M1-LOOP-01,
-# M1-LOOP-02, M1-HEAD-01, M1-DET-01, M1-DET-02, M1-DET-03, and
-# M1-DET-05 Verify commands (`ctest -R entity`, `ctest -R
+# M1-LOOP-02, M1-HEAD-01, M1-CFG-01, M1-DET-01, M1-DET-02, M1-DET-03,
+# and M1-DET-05 Verify commands (`ctest -R entity`, `ctest -R
 # component_registry`, `ctest -R archetype`, `ctest -R query`,
 # `ctest -R iter_order`, `ctest -R ecs_guardrails`, `ctest -R
 # ecs_stress`, `ctest -R system_registry`, `ctest -R scheduler`,
 # `ctest -R system_timing`, `ctest -R game_loop`, `ctest -R
-# presentation`, `ctest -R engine`, `ctest -R determinism_mode`,
-# `ctest -R replay_record`, `ctest -R replay_replay`, and
-# `ctest -R replay_diff`), selecting exactly the suites below from
-# the shared executable.
+# presentation`, `ctest -R engine`, `ctest -R game_config`,
+# `ctest -R determinism_mode`, `ctest -R replay_record`,
+# `ctest -R replay_replay`, and `ctest -R replay_diff`), selecting
+# exactly the suites below from the shared executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            archetype_tests.cpp query_tests.cpp
@@ -64,6 +67,7 @@ set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            game_loop_tests.cpp
                            presentation_tests.cpp
                            engine_tests.cpp
+                           game_config_tests.cpp
                            determinism_tests.cpp
                            replay_record_tests.cpp
                            replay_replay_tests.cpp
@@ -217,7 +221,16 @@ add_test(NAME presentation
 # the ctest output).
 add_test(NAME engine
          COMMAND laige-sim_tests
-         --gtest_filter=EngineCreate.*:EngineConfigParse.*:EngineRun.*:EngineShutdown.*)
+         --gtest_filter=EngineCreate.*:EngineRun.*:EngineShutdown.*)
+
+# M1-CFG-01: declarative game config (FR-1.5, ARCH-007). The step's
+# Verify command is `ctest -R config` (this `game_config` entry plus
+# laige-core's `config_json` parser suite); this entry selects exactly
+# the GameConfigParse / GameConfigFile / ConfigOverride /
+# ConfigHotReload suites from the shared laige-sim_tests executable.
+add_test(NAME game_config
+         COMMAND laige-sim_tests
+         --gtest_filter=GameConfigParse.*:GameConfigFile.*:ConfigOverride.*:ConfigHotReload.*)
 
 # M1-DET-01: deterministic mode + SimMath rules (ARCH-010, G-R8,
 # ADR 0002). The step's Verify command is `ctest -R determinism_mode`;
@@ -324,7 +337,8 @@ if(LAIGE_TSAN)
   # so ctest fails loudly on any TSan report.
   set_tests_properties(laige-sim_tests entity component_registry archetype
     query iter_order ecs_guardrails ecs_stress system_registry scheduler
-    system_timing game_loop presentation engine determinism_mode
+    system_timing game_loop presentation engine game_config
+    determinism_mode
     replay_record replay_replay replay_diff PROPERTIES
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()
