@@ -91,6 +91,9 @@ profiler-cost on_p50=0.557288 off_p50=0.555746 overhead_pct=0.277465
 
 Exit code: `0`.
 
+Commit: `a811297` (branch `m1-prof-01-profiler-core`, step
+M1-PROF-01).
+
 ## Interpretation
 
 The enabled profiler's steady-state cost (two `steady_clock` reads +
