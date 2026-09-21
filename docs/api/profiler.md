@@ -227,8 +227,14 @@ compressed into one greppable line.
   over 10k-entity ticks must stay within **1%** —
   [baselines/m1-profiler-cost.md](../benchmarks/baselines/m1-profiler-cost.md)
   (the `ProfilerCost.EnabledCostBoundedToOnePercent` test enforces
-  the bound on every tree and prints the machine-greppable
-  `profiler-cost` line; measured ≈ 0.17% on the canonical tree).
+  the bound on every **non-instrumented** tree and prints the
+  machine-greppable `profiler-cost` line; measured ≈ 0.28% on the
+  canonical tree — the gate's non-sanitizer scope is the
+  zero-allocation probe's precedent: sanitizer instrumentation
+  inflates the profiler's fixed per-tick cost disproportionately
+  (1.46% measured on the ASan tree, 2026-09-21), so it measures the
+  instrumentation, not the profiler; the CI linux-gcc and linux-clang
+  P0 jobs enforce it).
 - **Cold path:** `snapshot()` / `tickTime()` / `frameTime()` are
   O(n log n) over the stored window (no allocation — the
   `Histogram`'s pre-reserved scratch buffer); the report formatters
@@ -278,7 +284,11 @@ compressed into one greppable line.
   form), the record path's zero-allocation (non-sanitizer trees —
   the `profiler-zeroalloc` line), and the enabled-cost check
   (ON vs OFF over 10k-entity ticks, ≤ 1% — the `profiler-cost`
-  line).
+  line; **non-sanitizer trees only** — the `LAIGE_ALLOC_COUNTER`
+  gate, the zero-allocation probe's precedent: sanitizer
+  instrumentation inflates the profiler's fixed per-tick cost and
+  would measure the instrumentation, not the profiler; the CI
+  linux-gcc / linux-clang P0 jobs enforce the bound).
 - `ctest -R laige_run_smoke` — the CLI smoke (the byte-stable
   `status=ok` line; the profile summary line follows it).
 - The TSan job runs the `profiler` entry with
