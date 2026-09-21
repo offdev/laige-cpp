@@ -66,6 +66,7 @@ sequence).
 | `tickRateHz` | 20–120 Hz (`kMinTickRateHz`–`kMaxTickRateHz`) | `kDefaultTickRateHz` (60) | `loop/tick_rate_invalid` (field `tick_rate_hz`) |
 | `maxCatchUpTicks` | ≥ 1 | `kDefaultMaxCatchUpTicks` (5) | `loop/catchup_invalid` (field `max_catch_up`) |
 | `onTick` / `onTickContext` | a `noexcept` tick callback + context (see below) | `nullptr` / `nullptr` | — (no validation: the callback's contract is the caller's) |
+| `profiler` | a non-owning `laige::Profiler*` (M1-PROF-01; see the Profiler feed section) | `nullptr` | — (no validation: the profiler's lifetime is the caller's) |
 
 The clock source is `Options::nowNs` — a function returning
 nanoseconds on a monotonic epoch time base; `nullptr` uses the
@@ -185,10 +186,27 @@ authoritative.
 `GameLoop::stats()` returns the since-construction `GameLoopStats`
 snapshot (`frames`, `ticks`, `droppedTicks`, `droppedFrames`): a pure
 O(1) query, no allocation (the `World::stats()` /
-`SystemTimingStats` precedent). The tick-time percentiles
-(p50/p95/p99/mean/min/max over a rolling window) land with the
-profiler core (M1-PROF-01), which consumes this feed plus the
-per-system windows (M1-SYS-03).
+`SystemTimingStats` precedent).
+
+When `Options::profiler` is set (non-owning — the profiler must
+outlive the loop, the `onTickContext` lifetime contract),
+`runOneTick` times each tick's body (the frame's `beginFrame` + one
+`runSystems` dispatch) with the M0-CORE-08 `TimeIt` and hands the
+measured ms to `Profiler::recordTick` — **on success only**: a failed
+tick is not counted and not recorded (the tick-count contract,
+[api/profiler.md](profiler.md)). The frame-time feed is the engine's
+(engine.h "The profiler"); the loop records ticks only.
+
+- **Enabled profiler (attached):** two `steady_clock` reads per
+  completed tick + one O(1) ring write — no allocation. The measured
+  enabled cost is bounded at 1% of a 10k-entity tick
+  ([baselines/m1-profiler-cost.md](../benchmarks/baselines/m1-profiler-cost.md),
+  CORE-001, DBG-004).
+- **Profiler null or disabled:** one branch per tick, nothing else
+  (DBG-004: disabled instrumentation costs a branch).
+- **Determinism:** the measured sample is a wall-clock diagnostic
+  (ARCH-009) — it never enters the tick count, the state hash, or a
+  replay.
 
 ## Performance (DOC-004)
 
@@ -204,7 +222,12 @@ per-system windows (M1-SYS-03).
   (PRD §8.1; `budgets.json`) next to the `runSystems` dispatch cost,
   which M1-SYS-03 measures. The `onTick` hook, when set, adds one
   indirect call per completed tick (the snapshot's own cost is
-  presentation.md's — bounded, allocation-free).
+  presentation.md's — bounded, allocation-free). A profiler attached
+  and enabled (M1-PROF-01) adds two `steady_clock` reads + one O(1)
+  ring write per completed tick (the `runOneTick` `TimeIt`) — no
+  allocation; the measured enabled cost is bounded at 1% of a
+  10k-entity tick (the m1-profiler-cost baseline, CORE-001/DBG-004).
+  Profiler null or disabled: one branch per tick, nothing else.
 - **Cold path (overload):** one rate-limited `tick_dropped` warn with
   field construction — only while a frame exceeds the catch-up bound.
 - **Complexity:** `frame()` is O(maxCatchUpTicks × per-tick system
@@ -231,9 +254,15 @@ dereferenced off-thread.
   backward reading **below the start reference** asserts in debug
   builds and clamps to the start reference in release (the frame
   contributes no time — never undefined behavior).
-- **The world and the schedule must outlive the loop** (non-owning
-  views). Recomputing the schedule after a registration change
-  without recreating the loop leaves the old schedule stale —
+- **The world, the schedule, and (when set) the profiler must outlive
+  the loop** (non-owning views). A profiler that was disabled or
+  moved out mid-run is safe (records are no-ops — the Profiler's
+  stopped contract, [api/profiler.md](profiler.md)); a dangling
+  profiler pointer is a lifetime bug the engine's ownership rules
+  exist to prevent (the engine creates the profiler in
+  `Engine::create` and releases it in the ordered shutdown AFTER the
+  loop — engine.h). Recomputing the schedule after a registration
+  change without recreating the loop leaves the old schedule stale —
   `frame()` then fails every frame (`system/schedule_stale`).
 - **`maxCatchUpTicks` is not a rate knob**: it bounds per-frame work;
   it cannot make the simulation run faster.

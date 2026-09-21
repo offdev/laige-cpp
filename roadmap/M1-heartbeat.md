@@ -228,7 +228,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 ## Profiler & allocation guardrails
 
-- [ ] **M1-PROF-01 · Profiler core (cheap counters)**
+- [x] **M1-PROF-01 · Profiler core (cheap counters)**
   - **Refs:** FR-11.1, DBG-008; AGENTS §15.1
   - **Depends:** M1-SYS-03, M1-ECS-06
   - **Scope:**

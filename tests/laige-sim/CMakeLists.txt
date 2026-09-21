@@ -1,5 +1,6 @@
 # laige-sim tests (M1-ECS-01/02/03/04/05/06/07 + M1-SYS-01/02/03
-# + M1-LOOP-01/02 + M1-HEAD-01 + M1-CFG-01 + M1-DET-01/02/03):
+# + M1-LOOP-01/02 + M1-HEAD-01 + M1-CFG-01 + M1-DET-01/02/03
+# + M1-PROF-01):
 # entity handle + World entity storage, component type registry,
 # archetype SoA storage, query API + iteration legality,
 # deterministic iteration order, the ECS guardrails (G-R3/G-R4), the
@@ -34,7 +35,12 @@
 # identity/determinism rejections, the lock-step tick walk aligned on
 # the component-state hash, the first divergent tick + bounded state
 # diff, the length divergence, and the fullStateDivergent flag —
-# including the tick-37 integration scenario).
+# including the tick-37 integration scenario), and the always-on
+# profiler counters (M1-PROF-01: the counter model's exact percentiles,
+# rollover, and no-op-when-disabled, the cold world-pulled snapshot,
+# the GameLoop's per-completed-tick timing, the engine's per-run cache
+# + opt-in JSON report, the record path's zero-allocation, and the
+# enabled-cost check bounded at 1% of a 10k-entity tick).
 #
 # One executable per module (tests/README.md; docs/testing.md is the
 # source of truth): laige-sim_tests links the module under test plus
@@ -43,19 +49,20 @@
 # `ecs_guardrails`, `ecs_stress`, `system_registry`, `scheduler`,
 # `system_timing`, `game_loop`, `presentation`, `engine`,
 # `game_config`, `determinism_mode`, `replay_record`, `replay_replay`,
-# and `replay_diff` entries
+# `replay_diff`, and `profiler` entries
 # are the M1-ECS-01, M1-ECS-02, M1-ECS-03, M1-ECS-04, M1-ECS-05,
 # M1-ECS-06, M1-ECS-07, M1-SYS-01, M1-SYS-02, M1-SYS-03, M1-LOOP-01,
 # M1-LOOP-02, M1-HEAD-01, M1-CFG-01, M1-DET-01, M1-DET-02, M1-DET-03,
-# and M1-DET-05 Verify commands (`ctest -R entity`, `ctest -R
-# component_registry`, `ctest -R archetype`, `ctest -R query`,
-# `ctest -R iter_order`, `ctest -R ecs_guardrails`, `ctest -R
+# M1-DET-05, and M1-PROF-01 Verify commands (`ctest -R entity`,
+# `ctest -R component_registry`, `ctest -R archetype`, `ctest -R
+# query`, `ctest -R iter_order`, `ctest -R ecs_guardrails`, `ctest -R
 # ecs_stress`, `ctest -R system_registry`, `ctest -R scheduler`,
 # `ctest -R system_timing`, `ctest -R game_loop`, `ctest -R
 # presentation`, `ctest -R engine`, `ctest -R game_config`,
 # `ctest -R determinism_mode`, `ctest -R replay_record`,
-# `ctest -R replay_replay`, and `ctest -R replay_diff`), selecting
-# exactly the suites below from the shared executable.
+# `ctest -R replay_replay`, `ctest -R replay_diff`, and `ctest -R
+# profiler`), selecting exactly the suites below from the shared
+# executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            archetype_tests.cpp query_tests.cpp
@@ -71,7 +78,8 @@ set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            determinism_tests.cpp
                            replay_record_tests.cpp
                            replay_replay_tests.cpp
-                           replay_diff_tests.cpp)
+                           replay_diff_tests.cpp
+                           profiler_tests.cpp)
 # M1-ECS-03: the test-only allocation counter overrides the global
 # operator new/new[]; the sanitizer runtimes define their own
 # new/delete (strong symbols in the Clang/GCC TSan runtime archives,
@@ -275,6 +283,15 @@ add_test(NAME replay_diff
          COMMAND laige-sim_tests
          --gtest_filter=StateDiff.*:ReplayDiff.*)
 
+# M1-PROF-01: the always-on profiler counters (FR-11.1). The step's
+# Verify command is `ctest -R profiler`; this entry selects exactly
+# the Profiler* suites from the shared laige-sim_tests executable (the
+# machine-greppable profiler-zeroalloc / profiler-cost lines land in
+# the ctest output).
+add_test(NAME profiler
+         COMMAND laige-sim_tests
+         --gtest_filter=Profiler*)
+
 # M1-DET-01: the G-R8 trait compile-checks (the compile-time half of
 # the determinism guarantee). Each fixture is compiled (not linked,
 # not run) with the engine policy flags; the positive fixture must
@@ -339,6 +356,6 @@ if(LAIGE_TSAN)
     query iter_order ecs_guardrails ecs_stress system_registry scheduler
     system_timing game_loop presentation engine game_config
     determinism_mode
-    replay_record replay_replay replay_diff PROPERTIES
+    replay_record replay_replay replay_diff profiler PROPERTIES
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

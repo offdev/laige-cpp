@@ -7,6 +7,10 @@ into one owned object whose `run_headless(maxTicks)` starts the
 simulation, ticks it in real time at the configured rate, and shuts
 it down cleanly. It is the first full-stack surface of the engine and
 the CI smoke-test target (`laige-run --headless`, this repo's `tools/run`).
+It also owns the always-on profiler (M1-PROF-01, PRD FR-11.1 —
+[api/profiler.md](profiler.md)): the per-tick and per-frame time
+windows, the render/network counters, and the opt-in per-run profile
+report.
 
 Public header: `src/laige-sim/include/laige/sim/engine.h` (`Engine`,
 the range constants, the full contract); implementation:
@@ -42,7 +46,9 @@ const laige::Status status = engine.run_headless(10'000);
 1. **`Engine::create(config)`** — validates the config, creates the
    `World` (capacity = `entityCapacity`, churn budget =
    `churnPerFrameBudget`, seed = `seed`, deterministic mode =
-   `determinism.enabled`), and registers the built-in component
+   `determinism.enabled`), constructs the always-on profiler
+   (M1-PROF-01: one object + its two fixed window storages — engine
+   setup, not run setup), and registers the built-in component
    matching the configured SimMath backend **first** (ARCH-010:
    stable component-type ordering): `sim::Position2DFpx16` for
    `fpx16_16` (the ADR 0002 default) or `sim::Position2DFp32` for
@@ -61,11 +67,14 @@ const laige::Status status = engine.run_headless(10'000);
    mid-run is not an exception: the engine returns the failure `Status`
    and is already shut down.
 4. **`shutdown()`** — ordered and **idempotent**: loop → world clear →
-   snapshot → world release → logging flush (CONC-006). Calling it
-   after a finished run (or twice) is a safe no-op; `world()` reads
-   back `nullptr` and `run_headless` on a stopped engine returns
-   `InvalidArgument` without logging (the moved-out `GameLoop`
-   precedent, M1-LOOP-01).
+   snapshot → world release → profiler release → logging flush
+   (CONC-006). A profile report that was started but never finalized
+   (a pre-run teardown) is abandoned with the structured
+   `profiler/report_aborted` warn (no file to clean up — the write
+   happens only at run end). Calling it after a finished run (or
+   twice) is a safe no-op; `world()` reads back `nullptr` and
+   `run_headless` on a stopped engine returns `InvalidArgument`
+   without logging (the moved-out `GameLoop` precedent, M1-LOOP-01).
 
 The destructor calls `shutdown()`, so a forgotten shutdown never
 leaks the world; the explicit call is the documented teardown (it
@@ -197,6 +206,52 @@ state hash, [api/entity.md](entity.md)) and `runReplay` / the
 `laige-replay` runner ([api/replay.md](replay.md), "The execution
 half").
 
+## The profiler (M1-PROF-01)
+
+The engine owns exactly one always-on `Profiler`
+([api/profiler.md](profiler.md) for the full contract): created in
+`Engine::create`, handed to the `GameLoop` as a non-owning view
+(per-completed-tick timing), and driven for the frame-time feed by
+the engine's run loop (the frame's sim work + the presentation
+refresh, excluding the pacing sleep; the first frame — start
+reference, zero ticks — is not recorded). A failed frame is not
+recorded (the frame did not complete).
+
+```cpp
+const laige::Profiler* p = engine.profiler();  // nullptr after shutdown
+const laige::ProfilerStats s = engine.profileStats();  // the last run's cache
+
+// Opt-in per-run report (EVERY build — diagnostics, not replay state):
+const laige::Status r = engine.startProfileReport("/tmp/run.json");
+// written at the END of the run, version-1 JSON (profiler.md schema);
+// a write failure does NOT fail the run — it is sticky in
+// engine.profileReportStatus() and logged (profiler/report_write_failed)
+```
+
+- **When** — `startProfileReport` once, after all registration,
+  before `run_headless` (like `startReplayRecording`). A second call
+  fails `InvalidArgument` + `profiler/report_already_started`; an
+  empty path fails `profiler/report_path_invalid`; a stopped engine
+  fails silently.
+- **Finalization** — on **every** run path (success, failed frame,
+  failed start): the per-run summary describes what actually
+  happened (a zero-tick run writes a zero-tick report, CORE-008).
+  A pre-run shutdown abandons it with `profiler/report_aborted`.
+- **Accessors** — `profileStats()` is the run's cached snapshot
+  (the world is released in shutdown, so the CLI reads the cache);
+  `profileReportStatus()` / `profileReportActive()` are the
+  report's sticky outcome / lifecycle state.
+- **Cost** — enabled: two `steady_clock` reads + one O(1) ring write
+  per frame and per completed tick, no allocation; disabled
+  (`profiler()->setEnabled(false)`): one branch each. The measured
+  enabled cost is bounded at 1% of a 10k-entity tick —
+  [baselines/m1-profiler-cost.md](../benchmarks/baselines/m1-profiler-cost.md)
+  (CORE-001, DBG-004).
+- **Structured events** (subsystem `profiler`): `report_started`,
+  `report_written` (Info), `report_write_failed` (Error),
+  `report_aborted`, `report_already_started`, `report_path_invalid`
+  (Warn).
+
 ## Replay recording (M1-DET-02)
 
 The engine records replays **opt-in** (see
@@ -235,6 +290,7 @@ std::uint64_t Engine::replayBytesWritten() const noexcept;
 
 ```
 laige-run --headless CONFIG.json [--ticks N] [--replay LOG]
+          [--prof-out REPORT]
 ```
 
 - `--headless CONFIG` — required: the JSON config file (bounded read,
@@ -253,15 +309,33 @@ laige-run --headless CONFIG.json [--ticks N] [--replay LOG]
   clean run. A start or mid-run recording failure exits `2` (start)
   or `1` (mid-run — the `status=` line carries the error name) with
   no partial log at `LOG`.
+- `--prof-out REPORT` — **writes the run's profile report**
+  (M1-PROF-01, FR-11.1 file export): the version-1 JSON schema
+  ([api/profiler.md](profiler.md)) written at `REPORT` at the end of
+  the run. **Every build** (diagnostics, not replay state — no
+  debug-only gate). A start failure exits `2` (the run did not
+  happen); a write failure at run end does **not** fail the run —
+  the run completes (exit `0`), the report error is printed on
+  stderr, and the exit code becomes `2`.
 - `--help` / `-h` — usage, exit 0.
 
-**Exit codes:** `0` = the run completed; `1` = the engine run failed
-(the `Status`'s error name is printed on stderr); `2` = usage, file,
-or config error. On completion the run prints one machine-greppable
-summary line on stdout:
+**Exit codes:** `0` = the run completed (and the profile report, if
+requested, was written); `1` = the engine run failed (the `Status`'s
+error name is printed on stderr); `2` = usage, file, config, or
+profile-report-write error. On completion the run prints one
+machine-greppable summary line on stdout — **byte-stable, CI greps
+it** (`laige_run_smoke`'s `PASS_REGULAR_EXPRESSION "status=ok"`):
 
 ```
 laige-run headless ticks=1000 dropped_ticks=0 dropped_frames=0 status=ok
+```
+
+followed by the profiler's one-line summary (M1-PROF-01, FR-11.1
+"exposed in the CLI" — **always** printed, from the engine's cached
+per-run snapshot):
+
+```
+laige-run profile: ticks=1000 frames=1001 tick_ms: n=1000 min=... frame_ms: n=1001 ... entities_alive=... sim_allocs=... draw_calls=0 texture_binds=0 net_bytes=0
 ```
 
 The CLI then calls `engine.shutdown()` a second time — the
@@ -283,6 +357,19 @@ double-shutdown idempotency the step verifies — and exits.
   (`HeadlessFramePathAllocatesNothing`: the allocation count is
   identical for 1, 2, 3, and 10 ticks). The M1-ALLOC-01 pool
   accounting will supersede the probe once it exists.
+- **Profiler (M1-PROF-01, always-on by default):** the ENABLED frame
+  path adds two `steady_clock` reads (the `TimeIt` around the frame's
+  sim work + presentation refresh) and one O(1) ring write
+  (`Profiler::recordFrame`); the ENABLED tick path adds two clock
+  reads + one ring write per completed tick (the `GameLoop`'s
+  `runOneTick`). No allocation, no logging. DISABLED
+  (`profiler()->setEnabled(false)`): one branch each. The measured
+  enabled cost is bounded at **1% of a 10k-entity tick** —
+  [baselines/m1-profiler-cost.md](../benchmarks/baselines/m1-profiler-cost.md)
+  (CORE-001, DBG-004). The profiler's own setup (one object + two
+  fixed window storages) happens in `Engine::create`, not in the
+  run's setup path — the "exactly three one-shot allocations per run"
+  claim above stays true.
 - **Complexity** — `run_headless` is O(maxTicks × per-tick system
   work), bounded per frame by `frameBudgetTicks`. The drop path is
   cold: one rate-limited warn per overload frame (M1-LOOP-01).
@@ -315,6 +402,12 @@ double-shutdown idempotency the step verifies — and exits.
   a second start fails `InvalidArgument`, and `NDEBUG` builds reject
   the call by contract (see the Replay recording section above and
   [api/replay.md](replay.md)).
+- **Start the profile report once, after registration, before the
+  run** — a second `startProfileReport` fails `InvalidArgument`
+  (`profiler/report_already_started`); a report write failure does
+  NOT fail the run — it is sticky in `profileReportStatus()` (the
+  `laige-run` CLI maps it to exit 2). See the The profiler section
+  above and [api/profiler.md](profiler.md).
 
 ## Testing and CI
 
@@ -332,6 +425,13 @@ double-shutdown idempotency the step verifies — and exits.
   round trip, the malformed-input table, the recorder contract, the
   identity hashes, the engine's per-tick recording + failure stop);
   `ctest -R fuzz_replay_parse` covers the parser's fuzz surface.
+- `ctest -R profiler` — the M1-PROF-01 profiler suite (the counter
+  model's exact percentiles, rollover, and no-op-when-disabled, the
+  cold world-pulled snapshot, the `GameLoop`'s per-completed-tick
+  timing, the engine's per-run cache + opt-in JSON report, the record
+  path's zero-allocation, and the enabled-cost check bounded at 1% of
+  a 10k-entity tick — the machine-greppable `profiler-zeroalloc` /
+  `profiler-cost` lines land in the ctest output).
 - The include-graph lint (`tools/laige-include-lint`) guarantees the
   headless path carries no GPU/window symbols (ARCH-003): `laige-run`
   links only `laige-sim` → `laige-core`.

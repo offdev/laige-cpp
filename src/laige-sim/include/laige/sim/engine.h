@@ -26,8 +26,10 @@
 //   1. Engine::create(config)
 //        Validates the typed config, creates the World (the scene
 //        budget, churn budget, seed, and determinism mode from the
-//        config), and registers the built-in component matching the
-//        configured SimMath backend (Position2DFpx16 by default,
+//        config), constructs the always-on profiler (M1-PROF-01 —
+//        one object + its two fixed window storages, setup path), and
+//        registers the built-in component matching the configured
+//        SimMath backend (Position2DFpx16 by default,
 //        Position2DFp32 for float_pinned_32 — M1-DET-01) FIRST (the
 //        engine's built-ins always precede the game's components: a
 //        stable registration order for the deterministic
@@ -94,8 +96,13 @@
 //                the registries survive, entity.h).
 //   3. pools     the world's backing storage is released (per-slot
 //                tables, the archetype table and column blocks, the
-//                type-key index) and the presentation snapshot's
-//                per-slot record table is released.
+//                type-key index), the presentation snapshot's
+//                per-slot record table is released, and the profiler
+//                (M1-PROF-01) is released. A profile report that was
+//                started but never finalized (a pre-run teardown, or
+//                a run that failed before it could be written) is
+//                abandoned with the structured profiler/report_aborted
+//                warn (the replay/record_aborted precedent — CORE-008).
 //   4. logging   the logging facade's controlled shutdown: the
 //                pending rate-limit summaries drain, the sink
 //                flushes, and the facade retires (LOG-007).
@@ -195,6 +202,59 @@
 // (Warn — release builds only). The recorder itself logs nothing.
 //
 // ---------------------------------------------------------------------------
+// The profiler (M1-PROF-01; laige/sim/profiler.h)
+// ---------------------------------------------------------------------------
+//
+// The engine owns exactly one always-on Profiler (FR-11.1), created
+// in Engine::create and released in the ordered shutdown ("pools"
+// step — the profiler holds no world reference: it pulls the world's
+// entity / alloc / per-system data cold, on demand). It is ON by
+// default (Options::enabled); the measured cost of the enabled
+// instrumentation is bounded at 1% of a 10k-entity tick (the
+// m1-profiler-cost baseline, CORE-001/DBG-004).
+//
+// The engine wires the profiler's two time feeds:
+//
+//   - tick time: the GameLoop is created with Options::profiler =
+//     the engine's profiler (game_loop.h: per-completed-tick TimeIt,
+//     handed to Profiler::recordTick — a failed tick is not recorded)
+//   - frame time: runFrames times each frame's sim work plus the
+//     presentation refresh (excluding the pacing sleep) and hands it
+//     to Profiler::recordFrame; the first frame (start reference,
+//     zero ticks) is not a runFrames frame and is not recorded
+//
+// The per-run profile report (the CLI's --prof-out, FR-11.1 file
+// export) is opt-in and available in EVERY build (unlike replay
+// recording — the report is diagnostics, not replay state):
+//
+//   startProfileReport(path)  called after all registration and
+//     before run_headless (like startReplayRecording — one report per
+//     run). It stores the path; the report is written at the END of
+//     the run (JSON, version 1 schema — profiler.h / docs/api/
+//     profiler.md), from the live state (the profiler's counters,
+//     the world's entity/alloc fields, every system's M1-SYS-03
+//     window) before the shutdown.
+//
+//   run_headless  finalizes the report (when started) on EVERY path —
+//     success, failed frame, and failed start alike: the per-run
+//     summary describes what actually happened (a zero-tick run
+//     writes a zero-tick report). A write failure does NOT fail the
+//     run (diagnostics never gate the simulation — CORE-002's
+//     priority order): it is recorded in the sticky
+//     profileReportStatus(), logged (profiler/report_write_failed,
+//     Error), and left for the caller — laige-run maps it to its
+//     exit-2 IO class.
+//
+// The last run's snapshot is cached in the engine (profileStats())
+// because the world — and with it the world-pulled fields' source —
+// is released in the shutdown: the CLI reads the cache, not the live
+// state.
+//
+// The engine emits the structured profiler/* events (LOG-001/002):
+// report_written (Info), report_write_failed (Error), report_aborted
+// and report_already_started and report_path_invalid (Warn).
+//
+// ---------------------------------------------------------------------------
 // Ownership, threading
 // ---------------------------------------------------------------------------
 //
@@ -223,13 +283,24 @@
 // — a flush to the OS only every ~680 zero-length frames) and the
 // cold finish (flush + trailer + rename). Recording is never on the
 // default run path.
+// Profiler (M1-PROF-01, always-on by default): the ENABLED frame
+// path adds two steady_clock reads (the TimeIt around the frame's
+// sim work + presentation refresh) and one O(1) ring write
+// (Profiler::recordFrame); the tick path adds two clock reads + one
+// ring write per completed tick (the GameLoop's runOneTick —
+// game_loop.h). No allocation. DISABLED (Profiler::setEnabled(false)):
+// one branch each — the m1-profiler-cost baseline bounds the enabled
+// cost at 1% of a 10k-entity tick (CORE-001, DBG-004).
 // The run's setup path allocates exactly three times, all one-shot
 // (verified per-frame-zero by the M1-HEAD-01 zero-allocation test):
 // the GameLoop object, the PresentationSnapshot object, and the
 // presentation slot record table (24 B/entity slot, sized by the
-// scene budget — the presentation.h storage contract). The drop
-// path is cold (one rate-limited warn per overload frame — the
-// M1-LOOP-01 contract).
+// scene budget — the presentation.h storage contract). The profiler
+// is created in Engine::create (the engine's setup, not the run's) —
+// one object + its two fixed window storages. The drop path is cold
+// (one rate-limited warn per overload frame — the M1-LOOP-01
+// contract); the report finalization (startProfileReport) is cold
+// too (one format pass + one file write, once per run).
 //
 // ---------------------------------------------------------------------------
 // Misuse warnings
@@ -258,11 +329,18 @@
 //     in the identity is captured at recording start). A second call
 //     fails (replay/record_already_started); release builds reject
 //     the call entirely (replay/record_disabled).
+//   - The profile report is opt-in (startProfileReport) and ONE per
+//     run: call it after all registration and before run_headless
+//     (like replay recording). A second call fails
+//     (profiler/report_already_started). A report write failure does
+//     NOT fail the run — check profileReportStatus() (laige-run maps
+//     it to exit 2).
 
 #pragma once
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <string_view>
 
 #include "laige/errors.h"
@@ -273,6 +351,7 @@
 #include "laige/sim/entity.h"       // World, kDefaultChurnPerFrameBudget
 #include "laige/sim/game_loop.h"    // GameLoop, GameLoopStats, tick-rate constants
 #include "laige/sim/presentation.h" // Position2D, PresentationSnapshot
+#include "laige/sim/profiler.h"     // Profiler, ProfilerStats (M1-PROF-01)
 #include "laige/sim/replay.h"       // ReplayRecorder (M1-DET-02)
 
 namespace laige {
@@ -500,6 +579,58 @@ class Engine {
   // bytes; 0 when not recording). O(1), no side effects.
   [[nodiscard]] std::uint64_t replayBytesWritten() const noexcept;
 
+  // The engine's always-on profiler (M1-PROF-01; the counters are
+  // live while the engine runs). nullptr after shutdown or on a
+  // moved-from engine (the world() nullability precedent). Use
+  // profileStats() for the run's cached summary. O(1), no side
+  // effects.
+  [[nodiscard]] const Profiler* profiler() const noexcept;
+
+  // The last run's profile snapshot (the profiler's counters plus
+  // the world-pulled fields — entities, sim allocs, system count —
+  // captured at the end of the run, BEFORE the shutdown releases the
+  // world; all zeros before the first run). This is the feed the
+  // laige-run CLI's one-line summary prints (FR-11.1 "exposed in the
+  // CLI") and the M1-PROF-02 frame graph will consume per frame.
+  // O(1), no allocation, no side effects.
+  [[nodiscard]] ProfilerStats profileStats() const noexcept;
+
+  // Start the opt-in per-run profile report (M1-PROF-01, FR-11.1
+  // file export; see the header preamble "The profiler" for the
+  // full contract). EVERY build (the report is diagnostics, not
+  // replay state — unlike startReplayRecording's debug-only gate).
+  //
+  // Call after all component/system registration and before
+  // run_headless. `path` is the report's FINAL path (the report is
+  // written at the end of the run, JSON — profiler.h's version 1
+  // schema; the file appears only when the write fully succeeds).
+  //
+  //   stopped engine (already shut down) -> InvalidArgument (no log —
+  //                                          the stopped-state
+  //                                          precedent)
+  //   empty path                         -> InvalidArgument + warn
+  //                                          (profiler/report_path_
+  //                                          invalid)
+  //   already started                    -> InvalidArgument + warn
+  //                                          (profiler/report_
+  //                                          already_started)
+  //
+  // A write failure at the end of the run does NOT fail the run —
+  // it is sticky in profileReportStatus() (the laige-run CLI maps it
+  // to exit 2).
+  // @budget O(1); one string copy; no per-tick cost.
+  [[nodiscard]] Status startProfileReport(std::string_view path) noexcept;
+
+  // The sticky outcome of the last started report: ok when no report
+  // was started or the write succeeded; the write error (IoError)
+  // otherwise. O(1), no side effects.
+  [[nodiscard]] Status profileReportStatus() const noexcept;
+
+  // True while a report was started and its lifecycle has not ended
+  // (between startProfileReport and the run's finalization, or a
+  // shutdown's abandonment). O(1), no side effects.
+  [[nodiscard]] bool profileReportActive() const noexcept;
+
   // Move transfers the owned state; the source becomes a STOPPED
   // engine (world() nullptr, run_headless fails, shutdown is a no-op
   // — the GameLoop moved-out precedent).
@@ -546,12 +677,32 @@ class Engine {
   // The last run's loop accounting (set on every run completion,
   // including a failed one — before the loop is destroyed).
   GameLoopStats lastStats_{};
+  // The always-on profiler (M1-PROF-01): created in Engine::create
+  // (one object + its two fixed window storages — setup path),
+  // released in the shutdown's "pools" step. The GameLoop is created
+  // with a non-owning view of it (the per-tick timing hook,
+  // game_loop.h); runFrames drives the frame-time feed.
+  std::unique_ptr<Profiler> profiler_;
+  // The last run's profile snapshot (captured at the end of the run,
+  // before the shutdown — the world-pulled fields' source is the
+  // still-live world; the CLI reads this cache, the header preamble
+  // "The profiler").
+  ProfilerStats lastProfile_{};
   // Replay recording (M1-DET-02): the active recorder (nullptr when
   // not recording — the default path pays one null check per
   // completed tick and nothing else) and the sticky failure that
   // stopped the run (ok while nothing failed).
   std::unique_ptr<ReplayRecorder> replayRecorder_;
   Status replayFail_{};
+  // Profile report (M1-PROF-01): the started report's final path
+  // (empty = not started), its sticky write outcome (ok while
+  // nothing failed), and whether the report's lifecycle has ended
+  // (written at the run's end, or abandoned in a shutdown — a
+  // pre-run teardown with a started report emits the profiler/
+  // report_aborted warn and ends as abandoned).
+  std::string profileReportPath_;
+  Status profileReportStatus_{};
+  bool profileReportFinalized_{false};
   // True after shutdown() has run (or on a moved-from engine).
   bool shutDown_{false};
 };

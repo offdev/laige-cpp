@@ -114,6 +114,12 @@ still to land.
   `PresentationSnapshot`: the per-tick `prev`/`curr` capture, the
   exact-integer anchored alpha (clamped to [0, 1], never
   extrapolates), and `sample_position` (M1-LOOP-02; `laige-sim`).
+- [The always-on profiler](api/profiler.md) — the FR-11.1
+  always-on counters (tick/frame time windows, entity counts, sim
+  alloc count, draw calls / texture binds / net bytes), the cold
+  snapshot + text/JSON reports, the `GameLoop` per-tick timing hook,
+  the engine's per-run report (`laige-run --prof-out`), and the
+  measured ≤1% enabled cost (M1-PROF-01; `laige-sim`).
  - [Headless engine run](api/engine.md) — `laige::Engine`
   (config → world → systems → loop): `run_headless(maxTicks)` the
   bounded + server run forms, the ordered idempotent CONC-006
@@ -241,6 +247,7 @@ still to land.
   [system_timing.md](api/system_timing.md),
   [game_loop.md](api/game_loop.md),
   [presentation.md](api/presentation.md),
+  [profiler.md](api/profiler.md),
   [engine.md](api/engine.md),
   [config.md](api/config.md),
   [determinism.md](api/determinism.md),

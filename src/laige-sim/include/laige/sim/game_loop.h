@@ -199,6 +199,13 @@
 // cost, which M1-SYS-03 measures. The drop path is cold (an overload
 // episode): one rate-limited warn with field construction.
 //
+// Profiler attached + enabled (M1-PROF-01): two steady_clock reads
+// per completed tick (the TimeIt around the tick body) plus one O(1)
+// ring write (Profiler::recordTick) — no allocation; the measured
+// enabled cost is bounded at 1% of a 10k-entity tick (the
+// m1-profiler-cost baseline, CORE-001/DBG-004). Profiler null or
+// disabled: one branch per tick, nothing else.
+//
 // ---------------------------------------------------------------------------
 // Threading
 // ---------------------------------------------------------------------------
@@ -238,6 +245,14 @@
 //     precedent). A callback that blocks or allocates breaks the
 //     frame budget (PERF-002/003) — the snapshot's onTick is the
 //     reference contract.
+//   - Options::profiler is a non-owning view: the profiler must
+//     outlive the loop (the onTickContext precedent). A profiler that
+//     was disabled/moved out mid-run is safe (records are no-ops —
+//     the Profiler stopped contract, profiler.h); a DANGLING
+//     pointer is a lifetime bug the engine's ownership rules exist
+//     to prevent (the engine creates the profiler in Engine::create
+//     and destroys it only in the ordered shutdown AFTER the loop —
+//     engine.h).
 
 #pragma once
 
@@ -246,6 +261,8 @@
 #include "laige/sim/entity.h"  // World, SystemSchedule (via system.h), Result
 
 namespace laige {
+
+class Profiler;  // the M1-PROF-01 counters; only the pointer is used
 
 // The supported tick-rate range (FR-1.1: default 60 Hz, configurable
 // 20–120 Hz). Named constants (CORE-005): a rate outside this range
@@ -319,6 +336,18 @@ class GameLoop {
     // The onTick callback's user context (opaque; must outlive the
     // loop — the engine passes the PresentationSnapshot, M1-HEAD-01).
     void* onTickContext{nullptr};
+    // The per-completed-tick profiler (M1-PROF-01): when non-null and
+    // enabled, runOneTick times each tick (the M0-CORE-08 TimeIt — two
+    // steady_clock reads) and hands the measured ms to
+    // Profiler::recordTick; a failed tick is not recorded (the tick
+    // counts only when the system phase completes — the preamble
+    // "Failure behavior"). nullptr (the default): no tick timing —
+    // one branch per tick, nothing else (DBG-004; the measured
+    // enabled cost is bounded at 1% of a 10k-entity tick —
+    // docs/benchmarks/baselines/m1-profiler-cost.md). NON-OWNING:
+    // the profiler must outlive the loop (the onTickContext
+    // lifetime contract).
+    Profiler* profiler{nullptr};
   };
 
   // Construct the loop on `world` running `schedule` (setup phase,
@@ -395,8 +424,15 @@ class GameLoop {
   // dispatch. A successful tick is counted and (if configured,
   // M1-LOOP-02) fires the Options::onTick hook after the system
   // phase; a failed tick is neither — the hook observes only
-  // completed ticks.
+  // completed ticks. When Options::profiler is attached and enabled,
+  // the tick body is timed (the M0-CORE-08 TimeIt) and the measured
+  // ms handed to the profiler on success only (M1-PROF-01 — a
+  // failed tick is not recorded, the tick-count contract).
   [[nodiscard]] Status runOneTick() noexcept;
+
+  // The untimed tick body (beginFrame + runSystems + count + hook) —
+  // shared by runOneTick's timed and untimed paths (M1-PROF-01).
+  [[nodiscard]] Status runTick() noexcept;
 
   // Non-owning views (the world and the schedule outlive the loop).
   World* world_;

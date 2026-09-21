@@ -20,7 +20,9 @@
 #include <cstdint>
 #include <utility>
 
+#include "laige/budget_harness.h"  // TimeIt (the per-tick timing, M1-PROF-01)
 #include "laige/logging.h"
+#include "laige/sim/profiler.h"    // Profiler (Options::profiler)
 
 namespace laige {
 
@@ -206,7 +208,7 @@ Status GameLoop::frame() noexcept {
   return Status{};
 }
 
-Status GameLoop::runOneTick() noexcept {
+Status GameLoop::runTick() noexcept {
   // One tick: the frame's beginFrame() (once per frame — the preamble
   // "beginFrame wiring") plus one system-phase dispatch. The tick
   // counts only when the system phase completed (preamble "Failure
@@ -222,6 +224,26 @@ Status GameLoop::runOneTick() noexcept {
     }
   }
   return s;
+}
+
+Status GameLoop::runOneTick() noexcept {
+  // The M1-PROF-01 per-tick timing: when a profiler is attached and
+  // enabled, the tick body is wrapped in the M0-CORE-08 TimeIt (two
+  // steady_clock reads) and the measured ms handed to the profiler —
+  // on SUCCESS only (a failed tick is not counted, not recorded).
+  // Profiler null or disabled: one branch, nothing else (DBG-004).
+  // The measured sample is a wall-clock diagnostic (ARCH-009) — it
+  // never enters the tick count, the state hash, or a replay.
+  Profiler* prof = options_.profiler;
+  if (prof == nullptr || !prof->enabled()) {
+    return runTick();
+  }
+  const TimeIt timer;
+  const Status status = runTick();
+  if (status.ok()) {
+    prof->recordTick(timer.elapsedMs());
+  }
+  return status;
 }
 
 std::uint64_t GameLoop::currentTick() const noexcept { return ticks_; }
