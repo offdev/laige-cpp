@@ -36,6 +36,10 @@
 #include <utility>
 #include <vector>
 
+#if defined(_MSC_VER)
+#include <share.h>  // _SH_DENYNO: plain-fopen sharing for _fsopen
+#endif
+
 #include "gtest/gtest.h"
 #include "laige/budget_harness.h"
 #include "laige/errors.h"
@@ -139,8 +143,25 @@ SystemSchedule makeSchedule(World& world) {
 
 // The file helpers (report readers/cleaners — C stdio, the writeProfile
 // implementation's own boundary).
+//
+// Portable file open (CPP-009 platform boundary, the
+// replay_record_tests.cpp / src/laige-sim/replay.cpp precedent): MSVC's
+// CRT deprecates plain `fopen` (C4996, fatal under the engine's /WX
+// policy). As in replay.cpp, the MSVC path uses `_fsopen(path, mode,
+// _SH_DENYNO)` — plain-`fopen` sharing semantics (the secure `fopen_s`
+// opens with `_SH_SECURE` and would deny it).
+#if defined(_MSC_VER)
+std::FILE* openReportFile(const std::string& path, const char* mode) {
+  return ::_fsopen(path.c_str(), mode, _SH_DENYNO);
+}
+#else
+std::FILE* openReportFile(const std::string& path, const char* mode) {
+  return std::fopen(path.c_str(), mode);
+}
+#endif
+
 std::string readFile(const std::string& path) {
-  std::FILE* f = std::fopen(path.c_str(), "rb");
+  std::FILE* f = openReportFile(path, "rb");
   if (f == nullptr) return {};
   std::string out;
   char buf[4096];
@@ -151,7 +172,7 @@ std::string readFile(const std::string& path) {
 }
 
 bool fileExists(const std::string& path) {
-  std::FILE* f = std::fopen(path.c_str(), "rb");
+  std::FILE* f = openReportFile(path, "rb");
   if (f != nullptr) std::fclose(f);
   return f != nullptr;
 }
@@ -746,8 +767,9 @@ TEST(ProfilerZeroAlloc, RecordPathAllocatesNothing) {
 // profiler's fixed per-tick cost (the extra clock reads + the ring
 // write) disproportionately, and the measured overhead there (1.46%
 // on the ASan tree, 2026-09-21) measures the INSTRUMENTATION, not
-// the profiler. The gate is enforced on the non-instrumented trees —
-// the CI linux-gcc and linux-clang P0 jobs.
+// the profiler. The gate is enforced on every non-instrumented P0 CI
+// job (the linux-gcc and linux-clang P0 jobs, and the
+// windows-msvc and both macOS jobs' ctest alike).
 // ---------------------------------------------------------------------------
 
 #if defined(LAIGE_ALLOC_COUNTER)
@@ -781,16 +803,28 @@ void fnCostMove(laige::World& world, laige::SystemContext& ctx) {
 namespace {
 
 inline constexpr std::uint32_t kCostEntities = 10000;  // PRD §8.1
-inline constexpr std::uint32_t kCostTicks = 2000;  // the window fills
-inline constexpr std::uint32_t kCostWindow = 2000;  // samples per window
+inline constexpr std::uint32_t kCostTicks = 2000;  // samples PER ARM
+inline constexpr std::uint32_t kCostWindow = 2000;  // the profiler's tick window
 
-// One profiler-window's worth of 10k-entity ticks; returns the
-// test-side frame-time p50 (ms). Each run wraps its GameLoop frames
-// in the test's OWN TimeIt window (identical in both runs — it
-// cancels in the A/B ratio), so the two runs differ ONLY in the
-// profiler instrumentation: `enabled` flips the always-on counters
-// (the DBG-002 switch) and the loop's per-tick timing with it.
-double runCostWindow(bool enabled) {
+// The two arms' frame-time p50s of one INTERLEAVED run (ms): the
+// profiler is enabled on every other tick (tick i+1 is enabled iff i
+// is odd), so each ON sample is adjacent to an OFF sample ~1 ms
+// apart — the two subsequences sample the SAME machine-state
+// trajectory (a CI runner's frequency ramp or thermal oscillation
+// under sustained load shifts the whole trajectory, not one arm vs
+// the other — the phase cancels in the A/B ratio at the
+// adjacent-sample level; a blocked or per-run-interleaved order
+// measured two phases of that trajectory and showed the drift
+// itself as overhead — the macOS arm64 CI failure of M1-PROF-01,
+// 2.14% on a 0.255 ms tick). A transient CI stall slows at most
+// one tick = one sample of 2000 in one window — no p50 effect, so
+// no best-of-N repetition is needed.
+struct CostSample {
+  double onP50{};
+  double offP50{};
+};
+
+CostSample runCostInterleaved() {
   gSynthClockNs = 0;
   World::Options wo;
   wo.capacity = kCostEntities;
@@ -841,63 +875,61 @@ double runCostWindow(bool enabled) {
   SystemSchedule sched = makeSchedule(world);
 
   Profiler::Options po;
-  po.tickWindowSamples = kCostWindow;
-  po.enabled = enabled;
+  po.tickWindowSamples = kCostWindow;  // == kCostTicks: every ON sample stored
+  po.enabled = false;  // start disabled; toggled per tick below
   Profiler prof(po);
 
   GameLoop loop = makeLoopWithProfiler(world, sched, &prof, 1);
-  // The test-side frame window: present in BOTH runs (it cancels in
-  // the A/B ratio) — the profiler's own tick window only exists in
-  // the enabled run (the disabled one records nothing).
-  laige::Histogram frameWindow(laige::Histogram::Options{kCostWindow});
+  // The test-side frame windows: every frame is recorded in exactly
+  // one of the two (by its arm) — identical wrapping in both arms,
+  // it cancels in the A/B ratio. The profiler's own tick window
+  // stores the ON arm's ticks only (the OFF ticks are not
+  // measured — the disabled branch is one branch).
+  laige::Histogram onWindow(laige::Histogram::Options{kCostTicks});
+  laige::Histogram offWindow(laige::Histogram::Options{kCostTicks});
   if (!loop.frame().ok()) {  // the start reference (zero ticks)
     ADD_FAILURE() << "the start-reference frame failed";
     abort();
   }
-  for (std::uint32_t i = 0; i < kCostTicks; ++i) {
+  for (std::uint32_t i = 0; i < 2 * kCostTicks; ++i) {
+    const bool enabled = (i % 2 == 1);  // tick i+1: odd => ON, even => OFF
+    prof.setEnabled(enabled);
     gSynthClockNs += kSynthTickNs;
     const laige::TimeIt timer;
     if (!loop.frame().ok()) {
       ADD_FAILURE() << "frame " << i << " failed";
       abort();
     }
-    frameWindow.record(timer.elapsedMs());
+    if (enabled) {
+      onWindow.record(timer.elapsedMs());
+    } else {
+      offWindow.record(timer.elapsedMs());
+    }
   }
-  EXPECT_EQ(loop.currentTick(), static_cast<std::uint64_t>(kCostTicks));
+  EXPECT_EQ(loop.currentTick(), static_cast<std::uint64_t>(2 * kCostTicks));
   const ProfilerStats s = prof.snapshot();
-  if (!enabled) {
-    EXPECT_EQ(s.ticks, 0u);  // the disabled run records nothing
-  } else {
-    EXPECT_EQ(s.ticks, static_cast<std::uint64_t>(kCostTicks));
-    EXPECT_EQ(s.tickTimeMs.n, static_cast<std::uint64_t>(kCostWindow));
-  }
-  return frameWindow.stats().p50;
+  EXPECT_EQ(s.ticks, static_cast<std::uint64_t>(kCostTicks));  // ON ticks only
+  EXPECT_EQ(s.tickTimeMs.n, static_cast<std::uint64_t>(kCostWindow));
+  return CostSample{onWindow.stats().p50, offWindow.stats().p50};
 }
 
 }  // namespace
 
 TEST(ProfilerCost, EnabledCostBoundedToOnePercent) {
   // Warm-up run (cache/page-fault effects fall out of the measured
-  // windows — the benchmark's warm-up discipline, AGENTS §12).
-  const double warmup = runCostWindow(false);
+  // windows — the benchmark's warm-up discipline, AGENTS §12). It
+  // also warms both arms' one-time state (the ON arm's ring).
+  const CostSample warmup = runCostInterleaved();
   static_cast<void>(warmup);
 
-  // Best of 2 per configuration (the benchmarking norm: a
-  // preemption stall only ever makes a run SLOWER, so the faster
-  // run of a pair is the clean measurement — this keeps a
-  // transient CI stall from breaching the gate).
-  double onP50 = runCostWindow(true);
-  const double onAlt = runCostWindow(true);
-  if (onAlt < onP50) onP50 = onAlt;
-  double offP50 = runCostWindow(false);
-  const double offAlt = runCostWindow(false);
-  if (offAlt < offP50) offP50 = offAlt;
-
+  // One measured interleaved run — the per-tick A/B structure is
+  // stall-proof and drift-free by construction (runCostInterleaved),
+  // so no repetition is needed.
+  const CostSample m = runCostInterleaved();
   std::printf("profiler-cost on_p50=%.6g off_p50=%.6g overhead_pct=%.6g\n",
-              onP50, offP50,
-              (onP50 - offP50) / offP50 * 100.0);
-  ASSERT_GT(offP50, 0.0);
-  const double overhead = (onP50 - offP50) / offP50;
+              m.onP50, m.offP50, (m.onP50 - m.offP50) / m.offP50 * 100.0);
+  ASSERT_GT(m.offP50, 0.0);
+  const double overhead = (m.onP50 - m.offP50) / m.offP50;
   // The always-on enabled cost is bounded at 1% of a 10k-entity tick
   // (CORE-001, DBG-004; roadmap/M1-heartbeat.md M1-PROF-01).
   EXPECT_LE(overhead, 0.01);

@@ -21,6 +21,10 @@
 #include <string_view>
 #include <utility>
 
+#if defined(_MSC_VER)
+#include <share.h>  // _SH_DENYNO: plain-fopen sharing for _fsopen
+#endif
+
 #include "laige/budget_harness.h"  // formatStatsLine (the stats-line format)
 #include "laige/fpx16_16.h"        // fpx16_16::toFloat (the system budgets)
 #include "laige/json.h"            // JsonValue + serializeJson (the report)
@@ -64,6 +68,19 @@ void appendCount(std::string& out, const char* name, std::uint64_t value) {
   out += name;
   out += std::to_string(value);
   out += ' ';
+}
+
+// Portable file open (CPP-009 platform boundary, the replay.cpp /
+// logging.cpp precedent): MSVC's CRT deprecates plain `fopen` (C4996,
+// fatal under the engine's /WX policy); the MSVC path uses
+// `_fsopen(path, mode, _SH_DENYNO)` — plain-`fopen` sharing semantics
+// every other supported compiler provides.
+std::FILE* openProfileFile(const std::string& path, const char* mode) {
+#if defined(_MSC_VER)
+  return ::_fsopen(path.c_str(), mode, _SH_DENYNO);
+#else
+  return std::fopen(path.c_str(), mode);
+#endif
 }
 
 // The JSON form of one window's stats (null when empty — the report
@@ -274,12 +291,16 @@ std::string formatProfileJson(const Profiler& profiler, const World& world) {
   root.setMember("version", JsonValue::fromNumber(1));
 
   JsonValue counters = JsonValue::makeObject();
-  counters.setMember("ticks", JsonValue::fromNumber(stats.ticks));
-  counters.setMember("frames", JsonValue::fromNumber(stats.frames));
-  counters.setMember("draw_calls", JsonValue::fromNumber(stats.drawCalls));
+  counters.setMember("ticks",
+                     JsonValue::fromNumber(static_cast<double>(stats.ticks)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 counter to JSON number (M1-PROF-01, ARCH-009)
+  counters.setMember("frames",
+                     JsonValue::fromNumber(static_cast<double>(stats.frames)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 counter to JSON number (M1-PROF-01, ARCH-009)
+  counters.setMember("draw_calls",
+                     JsonValue::fromNumber(static_cast<double>(stats.drawCalls)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 counter to JSON number (M1-PROF-01, ARCH-009)
   counters.setMember("texture_binds",
-                     JsonValue::fromNumber(stats.textureBinds));
-  counters.setMember("net_bytes", JsonValue::fromNumber(stats.netBytes));
+                     JsonValue::fromNumber(static_cast<double>(stats.textureBinds)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 counter to JSON number (M1-PROF-01, ARCH-009)
+  counters.setMember("net_bytes",
+                     JsonValue::fromNumber(static_cast<double>(stats.netBytes)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 counter to JSON number (M1-PROF-01, ARCH-009)
   root.setMember("counters", std::move(counters));
 
   root.setMember("tick_time_ms", statsObject(stats.tickTimeMs));
@@ -292,7 +313,8 @@ std::string formatProfileJson(const Profiler& profiler, const World& world) {
                      JsonValue::fromNumber(stats.entitiesTotal));
   worldObj.setMember("entity_capacity",
                      JsonValue::fromNumber(stats.entityCapacity));
-  worldObj.setMember("sim_allocs", JsonValue::fromNumber(stats.simAllocs));
+  worldObj.setMember("sim_allocs",
+                     JsonValue::fromNumber(static_cast<double>(stats.simAllocs)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 counter to JSON number (M1-PROF-01, ARCH-009)
   worldObj.setMember("systems", JsonValue::fromNumber(stats.systems));
   root.setMember("world", std::move(worldObj));
 
@@ -318,7 +340,8 @@ std::string formatProfileJson(const Profiler& profiler, const World& world) {
                                                      : ""));
     sys.setMember("budget_ms",
                   JsonValue::fromNumber(fpx16_16::toFloat(info.def.budgetMs)));
-    sys.setMember("runs", JsonValue::fromNumber(timing.runs));
+    sys.setMember("runs",
+                  JsonValue::fromNumber(static_cast<double>(timing.runs)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 counter to JSON number (M1-PROF-01, ARCH-009)
     sys.setMember("last_ms", JsonValue::fromNumber(timing.lastMs));
     sys.setMember("warns", JsonValue::fromNumber(timing.warns));
     sys.setMember("errors", JsonValue::fromNumber(timing.errors));
@@ -341,7 +364,7 @@ Result<std::uint64_t, ErrorCode> writeProfile(const Profiler& profiler,
       (format == ProfileFormat::Json)
           ? formatProfileJson(profiler, world)
           : formatProfileText(profiler, world);
-  std::FILE* f = std::fopen(pathCopy.data(), "wb");
+  std::FILE* f = openProfileFile(pathCopy, "wb");
   if (f == nullptr) {
     return ErrorCode::IoError;
   }

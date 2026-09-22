@@ -233,8 +233,9 @@ compressed into one greppable line.
   zero-allocation probe's precedent: sanitizer instrumentation
   inflates the profiler's fixed per-tick cost disproportionately
   (1.46% measured on the ASan tree, 2026-09-21), so it measures the
-  instrumentation, not the profiler; the CI linux-gcc and linux-clang
-  P0 jobs enforce it).
+  instrumentation, not the profiler; every non-instrumented P0 CI
+  job enforces it — the linux-gcc and linux-clang jobs, and the
+  windows-msvc and both macOS jobs' ctest alike).
 - **Cold path:** `snapshot()` / `tickTime()` / `frameTime()` are
   O(n log n) over the stored window (no allocation — the
   `Histogram`'s pre-reserved scratch buffer); the report formatters
@@ -287,8 +288,8 @@ compressed into one greppable line.
   line; **non-sanitizer trees only** — the `LAIGE_ALLOC_COUNTER`
   gate, the zero-allocation probe's precedent: sanitizer
   instrumentation inflates the profiler's fixed per-tick cost and
-  would measure the instrumentation, not the profiler; the CI
-  linux-gcc / linux-clang P0 jobs enforce the bound).
+  would measure the instrumentation, not the profiler; every
+  non-instrumented P0 CI job enforces the bound).
 - `ctest -R laige_run_smoke` — the CLI smoke (the byte-stable
   `status=ok` line; the profile summary line follows it).
 - The TSan job runs the `profiler` entry with
