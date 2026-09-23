@@ -290,7 +290,8 @@ std::uint64_t Engine::replayBytesWritten() const noexcept;
 
 ```
 laige-run --headless CONFIG.json [--ticks N] [--replay LOG]
-          [--prof-out REPORT]
+          [--prof-out REPORT] [--budget-report [N]]
+          [--budgets PATH] [--fail-on-budget]
 ```
 
 - `--headless CONFIG` — required: the JSON config file (bounded read,
@@ -317,12 +318,34 @@ laige-run --headless CONFIG.json [--ticks N] [--replay LOG]
   happen); a write failure at run end does **not** fail the run —
   the run completes (exit `0`), the report error is printed on
   stderr, and the exit code becomes `2`.
+- `--budget-report [N]` — **prints the last N frames' budget
+  report** (M1-PROF-02, FR-11.2 —
+  [api/frame_budget.md](frame_budget.md)) to stdout at the end of
+  the run, in the AGENTS §12 field format (every declared budget
+  measured vs declared with a pass/flag, plus the over-budget
+  systems list). `N`: 1..`kFrameBudgetWindow` (32); omitted = all
+  retained frames. **Every build** (diagnostics, not replay state).
+  The report needs a `budgets.json` (see `--budgets`); a load
+  failure exits `2` (the run did not happen). The report is printed
+  **even on a failed run** (the run failure dominates the exit
+  code).
+- `--budgets PATH` — the `budgets.json` file (schema v1 —
+  [api/budget_harness.md](budget_harness.md)). Resolution order:
+  this argument, then the `LAIGE_BUDGETS_PATH` env var, then
+  `budgets.json` in the working directory (the `laige-bench`
+  resolution order).
+- `--fail-on-budget` — **exit `3`** when the run **completed** but
+  the budget report is `overall=FAIL` (the CI gate — PRD §8.1
+  budget policy). A failed run exits `1` regardless (the gate never
+  masks a run failure).
 - `--help` / `-h` — usage, exit 0.
 
 **Exit codes:** `0` = the run completed (and the profile report, if
 requested, was written); `1` = the engine run failed (the `Status`'s
-error name is printed on stderr); `2` = usage, file, config, or
-profile-report-write error. On completion the run prints one
+error name is printed on stderr); `2` = usage, file, config,
+profile-report-write, or budget-report-start error; **`3` = budget
+failure** (`--fail-on-budget`: the run completed, the report is
+`overall=FAIL`). On completion the run prints one
 machine-greppable summary line on stdout — **byte-stable, CI greps
 it** (`laige_run_smoke`'s `PASS_REGULAR_EXPRESSION "status=ok"`):
 
@@ -336,6 +359,20 @@ per-run snapshot):
 
 ```
 laige-run profile: ticks=1000 frames=1001 tick_ms: n=1000 min=... frame_ms: n=1001 ... entities_alive=... sim_allocs=... draw_calls=0 texture_binds=0 net_bytes=0
+```
+
+and, when `--budget-report` is given, the budget report itself
+(M1-PROF-02 — the machine-greppable field format; a sample is
+committed at `tests/laige-sim/fixtures/budget_report_sample.txt`):
+
+```
+laige-budget-report version=1
+laige-budget-report context: workload=headless build= machine= warmup=0
+laige-budget-report frames: n=4 total=31
+laige-budget-report frame=27 ticks=1 tick_after=27 frame_ms=... sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+...
+laige-budget-report over_budget: none
+laige-budget-report overall=PASS
 ```
 
 The CLI then calls `engine.shutdown()` a second time — the
@@ -370,6 +407,15 @@ double-shutdown idempotency the step verifies — and exits.
   fixed window storages) happens in `Engine::create`, not in the
   run's setup path — the "exactly three one-shot allocations per run"
   claim above stays true.
+- **Frame graph / budget report (M1-PROF-02):** the per-frame
+  accumulation is **always on** — two O(1) reads (the loop's tick
+  count, the pool reservations), two O(systemCount) passes over the
+  per-system G-R5 counters, and one O(1) ring write per completed
+  frame. No allocation, no logging (PERF-003, LOG-003). The ring is
+  fixed storage created in `Engine::create` (the engine's setup, not
+  the run's) — the "exactly three one-shot allocations per run" claim
+  stays true. The report build + cache at the run's end is cold
+  (one format pass, once per run — [api/frame_budget.md](frame_budget.md)).
 - **Complexity** — `run_headless` is O(maxTicks × per-tick system
   work), bounded per frame by `frameBudgetTicks`. The drop path is
   cold: one rate-limited warn per overload frame (M1-LOOP-01).
@@ -408,6 +454,14 @@ double-shutdown idempotency the step verifies — and exits.
   NOT fail the run — it is sticky in `profileReportStatus()` (the
   `laige-run` CLI maps it to exit 2). See the The profiler section
   above and [api/profiler.md](profiler.md).
+- **Start the budget report once, after registration, before the
+  run** — a second `startBudgetReport` fails `InvalidArgument`
+  (`budget/report_already_started`); a `budgets.json` load failure
+  fails the START (the run did not happen — the `laige-run` CLI maps
+  it to exit 2). A budget FAIL at the end of the run does NOT fail
+  the run — `lastBudgetReport().passed` is the gate (the CLI's
+  `--fail-on-budget` maps `overall=FAIL` to exit 3). See
+  [api/frame_budget.md](frame_budget.md).
 
 ## Testing and CI
 
@@ -421,6 +475,19 @@ double-shutdown idempotency the step verifies — and exits.
   10 000 slots): must exit 0 and print `status=ok` on every P0 OS
   job; TIMEOUT 300 s (≈16.7 s nominal); the TSan job sets
   `TSAN_OPTIONS=halt_on_error=1`.
+- `ctest -R laige_run_budget` — the M1-PROF-02 CLI smoke:
+  `laige-run --headless tests/laige-sim/fixtures/headless_smoke.json
+  --ticks 30 --budget-report 4 --budgets <repo>/budgets.json
+  --fail-on-budget`; passes iff the report prints `overall=PASS` and
+  the run exits 0 (a FAIL report exits 3, which ctest fails). The
+  budgets path is passed explicitly (the ctest CWD is the build
+  tree — the working-directory fallback would not resolve there).
+  See [api/frame_budget.md](frame_budget.md).
+- `ctest -R budget_report` — the M1-PROF-02 unit suite (the
+  recorder ring, the synthetic over-budget system's correct numbers,
+  the NO_ENTRY/NO_SAMPLES semantics, the cached per-run report, the
+  record-path zero-allocation). See
+  [api/frame_budget.md](frame_budget.md).
 - `ctest -R replay_record` — the M1-DET-02 replay suite (the format
   round trip, the malformed-input table, the recorder contract, the
   identity hashes, the engine's per-tick recording + failure stop);

@@ -120,6 +120,13 @@ still to land.
   snapshot + text/JSON reports, the `GameLoop` per-tick timing hook,
   the engine's per-run report (`laige-run --prof-out`), and the
   measured ≤1% enabled cost (M1-PROF-01; `laige-sim`).
+- [The frame graph / budget report](api/frame_budget.md) — the
+  FR-11.2 per-frame budget report: every declared budget (system
+  time, total tick time, allocation count) measured vs declared with
+  a pass/flag, the over-budget systems list, the fixed
+  `FrameBudgetRecorder` ring, the engine's opt-in cached per-run
+  report (`laige-run --budget-report`, `--fail-on-budget`), and the
+  zero-allocation record path (M1-PROF-02; `laige-sim`).
  - [Headless engine run](api/engine.md) — `laige::Engine`
   (config → world → systems → loop): `run_headless(maxTicks)` the
   bounded + server run forms, the ordered idempotent CONC-006

@@ -255,6 +255,46 @@
 // and report_already_started and report_path_invalid (Warn).
 //
 // ---------------------------------------------------------------------------
+// The frame graph / budget report (M1-PROF-02, FR-11.2)
+// ---------------------------------------------------------------------------
+//
+// The per-frame budget records are ALWAYS accumulated (cheap —
+// frame_budget.h "The per-frame record": two O(1) reads (the loop's
+// tick count, the pool reservations), two O(systemCount) passes over
+// the per-system G-R5 counters, one O(1) ring write per frame — no
+// allocation, no logging; PERF-003, LOG-003). The REPORT is
+// opt-in and available in EVERY build (diagnostics, not replay
+// state — like the profile report):
+//
+//   startBudgetReport(budgetsPath)  called after all registration
+//     and before run_headless (like startProfileReport — one report
+//     per run). It loads the budgets.json table (M0-CORE-08, schema
+//     v1) and stores it; the report is BUILT (and cached) at the
+//     END of the run on EVERY path — success, failed frame, and
+//     failed start alike: the report describes what actually
+//     happened (a zero-tick run gets a zero-tick report, loud
+//     NO_SAMPLES lines included). A budget FAIL does NOT fail the
+//     run (diagnostics never gate the simulation): the caller
+//     decides — laige-run maps --fail-on-budget to its exit-3
+//     budget class.
+//
+// The report evaluates the declared budgets (frame_budget.h):
+// each system's declared SystemDef budget vs its M1-SYS-03 rolling
+// window's p99 (over-budget systems flagged, the same counters the
+// G-R5 warn/error events count), the PRD §8.1 sim_tick_avg /
+// sim_tick_p99 entries vs the Profiler's tick window, and the
+// sim_heap_allocs hard-zero budget vs the per-frame sim-alloc
+// deltas. The machine-greppable text follows the AGENTS §12 field
+// format (docs/api/frame_budget.md).
+//
+// The last run's report is cached in the engine (lastBudgetReport())
+// for the same reason as profileStats(): the world — and with it the
+// per-system windows' source — is released in the shutdown. The
+// engine emits the structured budget/* events (LOG-001/002):
+// report_started (Info), report_path_invalid and
+// report_already_started (Warn), report_load_failed (Error).
+//
+// ---------------------------------------------------------------------------
 // Ownership, threading
 // ---------------------------------------------------------------------------
 //
@@ -301,6 +341,15 @@
 // (one rate-limited warn per overload frame — the M1-LOOP-01
 // contract); the report finalization (startProfileReport) is cold
 // too (one format pass + one file write, once per run).
+// Frame graph / budget report (M1-PROF-02): the per-frame
+// accumulation adds two O(1) reads (the loop's tick count, the pool
+// reservations), two O(systemCount) passes over the per-system G-R5
+// counters, and one O(1) ring write per completed frame — no
+// allocation and no logging (PERF-003, LOG-003); the ring is fixed
+// storage created in Engine::create (the engine's setup, not the
+// run's). The report build + cache (buildFrameBudgetReport at the
+// run's end) is cold (one O(systemCount × n log n) format pass, once
+// per run — the budget_harness.cpp precedent).
 //
 // ---------------------------------------------------------------------------
 // Misuse warnings
@@ -335,6 +384,16 @@
 //     (profiler/report_already_started). A report write failure does
 //     NOT fail the run — check profileReportStatus() (laige-run maps
 //     it to exit 2).
+//   - The budget report is opt-in (startBudgetReport) and ONE per
+//     run, called after all registration and before run_headless (a
+//     second call fails — budget/report_already_started). A budget
+//     FAIL does NOT fail the run: lastBudgetReport().passed is the
+//     gate (laige-run --fail-on-budget maps overall=FAIL to exit 3).
+//     Note the budgets.json path is resolved by the CALLER (laige-run
+//     does --budgets arg, the LAIGE_BUDGETS_PATH env, then
+//     "budgets.json" in the working directory — the laige-bench
+//     precedent); a load failure is a start error (exit 2), not a
+//     run failure.
 
 #pragma once
 
@@ -349,6 +408,7 @@
 #include "laige/sim/config.h"         // EngineConfig, the version 1 schema (M1-CFG-01)
 #include "laige/sim/determinism.h"  // SimMathBackend, DeterminismConfig (M1-DET-01)
 #include "laige/sim/entity.h"       // World, kDefaultChurnPerFrameBudget
+#include "laige/sim/frame_budget.h" // FrameBudgetRecorder/Report (M1-PROF-02)
 #include "laige/sim/game_loop.h"    // GameLoop, GameLoopStats, tick-rate constants
 #include "laige/sim/presentation.h" // Position2D, PresentationSnapshot
 #include "laige/sim/profiler.h"     // Profiler, ProfilerStats (M1-PROF-01)
@@ -631,6 +691,61 @@ class Engine {
   // shutdown's abandonment). O(1), no side effects.
   [[nodiscard]] bool profileReportActive() const noexcept;
 
+  // Start the opt-in per-run budget report (M1-PROF-02, FR-11.2 —
+  // the header preamble "The frame graph / budget report"; the
+  // report's format and pass/flag semantics in frame_budget.h,
+  // docs/api/frame_budget.md). EVERY build (diagnostics, not replay
+  // state — like startProfileReport).
+  //
+  // Call after all component/system registration and before
+  // run_headless. `budgetsPath` is the budgets.json file (schema v1
+  // — M0-CORE-08): the report evaluates its sim_tick_avg /
+  // sim_tick_p99 / sim_heap_allocs entries plus every registered
+  // system against its declared SystemDef budget. The table is
+  // loaded at start (bounded read + parse — cold, setup path); the
+  // report is built and CACHED at the end of the run (the world and
+  // the profiler are released in the shutdown).
+  //
+  //   stopped engine (already shut down) -> InvalidArgument (no log —
+  //                                          the stopped-state
+  //                                          precedent)
+  //   empty path                         -> InvalidArgument + warn
+  //                                          (budget/report_path_
+  //                                          invalid)
+  //   already started                    -> InvalidArgument + warn
+  //                                          (budget/report_
+  //                                          already_started)
+  //   budgets.json unreadable/malformed  -> IoError / MalformedInput
+  //                                          + warn (budget/
+  //                                          report_load_failed)
+  //
+  // A budget FAIL at the end of the run does NOT fail the run —
+  // lastBudgetReport().passed is the caller's gate (laige-run
+  // --fail-on-budget maps overall=FAIL to exit 3).
+  //
+  // `lastNFrames` bounds the report's per-frame section to the last
+  // N retained frames (1..kFrameBudgetWindow; 0 =
+  // kFrameBudgetWindow — all retained, the FrameBudgetReportOptions
+  // default). The engine builds the report with this bound at the
+  // run's end.
+  // @budget O(file read + parse) setup path; no per-tick cost.
+  [[nodiscard]] Status startBudgetReport(
+      std::string_view budgetsPath,
+      std::uint32_t lastNFrames = kFrameBudgetWindow) noexcept;
+
+  // True when the budget report was started (lastBudgetReport() is
+  // the meaningful read after a run). O(1), no side effects.
+  [[nodiscard]] bool budgetReportRequested() const noexcept;
+
+  // The last run's budget report (frame_budget.h): the overall
+  // pass/flag plus the machine-greppable text (AGENTS §12 field
+  // format). All-zero/empty before the first run (the profileStats()
+  // zero-state precedent); read it after a run, on every run path
+  // (a failed run's report describes what happened — loud
+  // NO_SAMPLES lines included). O(1), no allocation, no side
+  // effects.
+  [[nodiscard]] const FrameBudgetReport& lastBudgetReport() const noexcept;
+
   // Move transfers the owned state; the source becomes a STOPPED
   // engine (world() nullptr, run_headless fails, shutdown is a no-op
   // — the GameLoop moved-out precedent).
@@ -661,6 +776,18 @@ class Engine {
   // bounded loop frame, one snapshot refresh, one sleep per frame;
   // stops at maxTicks — 0 = run until the process ends).
   [[nodiscard]] Status runFrames(std::uint64_t maxTicks) noexcept;
+
+  // M1-PROF-02: the per-frame budget record (frame_budget.h): the
+  // frame's scalars (the tick delta, the frame's sim work — 0.0 when
+  // the profiler is disabled — the pool-reservations delta, the G-R5
+  // event deltas) into the fixed ring. Hot path: no allocation, no
+  // logging (PERF-003, LOG-003).
+  void recordFrameBudget(std::uint64_t frameIndex,
+                         std::uint64_t ticksBefore,
+                         std::uint64_t allocsBefore,
+                         std::uint64_t warnsBefore,
+                         std::uint64_t errorsBefore,
+                         double frameMs) noexcept;  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured frame time never enters sim state, hashes, or replays (M1-PROF-02, ARCH-009)
 
   // The owned state (all released in shutdown, in the documented
   // order).
@@ -703,6 +830,20 @@ class Engine {
   std::string profileReportPath_;
   Status profileReportStatus_{};
   bool profileReportFinalized_{false};
+  // Frame graph / budget report (M1-PROF-02): the per-frame ring
+  // (fixed storage — created in Engine::create, the engine's setup,
+  // not the run's), the loaded budgets.json table (empty while not
+  // started — the M0-CORE-08 BudgetTable), the started flag, and the
+  // last run's cached report (built at the run's end, before the
+  // shutdown releases the world and the profiler — the
+  // profileStats() cache precedent).
+  FrameBudgetRecorder budgetRecorder_{};
+  BudgetTable budgetTable_{};
+  bool budgetReportStarted_{false};
+  // The started report's per-frame bound (startBudgetReport's
+  // lastNFrames — the report build's FrameBudgetReportOptions).
+  std::uint32_t budgetReportLastN_{kFrameBudgetWindow};
+  FrameBudgetReport lastBudgetReport_{};
   // True after shutdown() has run (or on a moved-from engine).
   bool shutDown_{false};
 };

@@ -10,8 +10,10 @@
 // laige-run CLI contract.
 //
 // Hot-path cost (per headless frame): one clock read, one bounded
-// GameLoop::frame() dispatch, one snapshot onRenderFrame, one sleep —
-// no allocation and no logging on the healthy path (PERF-003,
+// GameLoop::frame() dispatch, one snapshot onRenderFrame, one
+// budget record (M1-PROF-02: two O(1) reads, two O(systemCount)
+// G-R5 counter passes, one O(1) ring write), one sleep — no
+// allocation and no logging on the healthy path (PERF-003,
 // LOG-003; the per-frame breakdown in engine.h "Performance").
 // Replay recording (M1-DET-02, opt-in debug builds only) adds one
 // bounded stdio write per completed tick when enabled, and one null
@@ -25,6 +27,7 @@
 
 #include "laige/sim/engine.h"  // the Engine contract (this header)
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -135,6 +138,32 @@ inline constexpr const char* kReportAbortedMessage =
     "it (or the run never started) | no report was written (diagnostics "
     "only — nothing to clean up); re-run the scenario with "
     "startProfileReport | docs/api/engine.md";
+
+// M1-PROF-02: the budget report messages (NFR-13.3 5-field grammar;
+// the dynamic values are structured fields, never message text).
+// Subsystem "budget" (LOG-001; the frame graph / budget report owns
+// its event space, docs/api/frame_budget.md).
+inline constexpr const char* kBudgetSubsystem = "budget";
+
+inline constexpr const char* kBudgetReportPathInvalidMessage =
+    "report_path_invalid | the requested budget report path is empty "
+    "| the report needs a budgets.json path to load at start "
+    "(sim_tick_avg / sim_tick_p99 / sim_heap_allocs — PRD 8.1) | pass a "
+    "non-empty path (laige-run --budgets <path>) | "
+    "docs/api/frame_budget.md";
+
+inline constexpr const char* kBudgetReportAlreadyStartedMessage =
+    "report_already_started | startBudgetReport was called twice | one "
+    "engine builds at most one budget report per run | call "
+    "startBudgetReport once, after all registration and before "
+    "run_headless | docs/api/frame_budget.md";
+
+inline constexpr const char* kBudgetReportLoadFailedMessage =
+    "report_load_failed | the budgets.json table could not be loaded | "
+    "the file could not be read, or it is not the version 1 budget "
+    "schema | check the path and the schema "
+    "(docs/api/budget_harness.md) and re-run; the run has not "
+    "started | docs/api/frame_budget.md";
 
 }  // namespace
 
@@ -377,6 +406,23 @@ Status Engine::run_headless(std::uint64_t maxTicks,
                                         laige::errorName(report.error())));
     }
   }
+  // M1-PROF-02: the opt-in budget report, built BEFORE the shutdown
+  // (the world and the profiler are still live — the per-system
+  // windows' and the tick window's source) and CACHED in
+  // lastBudgetReport_ (the CLI reads the cache after the shutdown,
+  // the profileStats() precedent). Built on EVERY path when started —
+  // a failed run's report describes what actually happened (a
+  // zero-tick run gets a loud NO_SAMPLES report — CORE-008: no silent
+  // omission). A budget FAIL never fails the run (diagnostics never
+  // gate the simulation): the caller gates (laige-run maps
+  // --fail-on-budget to exit 3).
+  if (budgetReportStarted_) {
+    FrameBudgetReportOptions reportOptions;
+    reportOptions.lastNFrames = budgetReportLastN_;
+    reportOptions.context.workload = "headless";
+    lastBudgetReport_ = buildFrameBudgetReport(
+        budgetRecorder_, *profiler_, *world_, budgetTable_, reportOptions);
+  }
   // The loop's accounting BEFORE it is destroyed in shutdown (the
   // profiler feed; zeros when the loop never existed).
   lastStats_ = (loop_ != nullptr) ? loop_->stats() : GameLoopStats{};
@@ -396,9 +442,53 @@ Status Engine::run_headless(std::uint64_t maxTicks,
   return runStatus;
 }
 
+// M1-PROF-02: the per-system G-R5 event totals (the sum of the
+// systemTimingStats warns/errors counters — frame_budget.cpp's
+// per-frame deltas subtract the frame's baseline from these).
+// O(systemCount); no allocation (the SystemTimingStats value copy —
+// the World::systemTimingStats contract).
+void budgetEventTotals(const World* world, std::uint64_t* warns,
+                       std::uint64_t* errors) {
+  *warns = 0;
+  *errors = 0;
+  for (std::uint32_t id = 1; id <= world->systemCount(); ++id) {
+    const SystemId sid{id};
+    const Result<SystemTimingStats, ErrorCode> stats =
+        world->systemTimingStats(sid);
+    // The id comes from the world's own dense count: unreachable.
+    assert(stats.ok() && "systemTimingStats for a valid dense id");
+    *warns += stats.value().warns;
+    *errors += stats.value().errors;
+  }
+}
+
+void Engine::recordFrameBudget(std::uint64_t frameIndex,
+                               std::uint64_t ticksBefore,
+                               std::uint64_t allocsBefore,
+                               std::uint64_t warnsBefore,
+                               std::uint64_t errorsBefore,
+                               double frameMs) noexcept {  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured frame time never enters sim state, hashes, or replays (M1-PROF-02, ARCH-009)
+  FrameBudgetRecord record;
+  record.frame = frameIndex;
+  record.tickAfter = loop_->currentTick();
+  record.ticks = static_cast<std::uint32_t>(record.tickAfter - ticksBefore);
+  record.frameMs = frameMs;
+  // The frame's sim allocation count: the pool-reservations delta
+  // (frame_budget.h — the M1-ECS-03 accounting; 0 = steady state).
+  record.simAllocs =
+      world_->archetypeStats().totalReservations - allocsBefore;
+  std::uint64_t warnsAfter = 0;
+  std::uint64_t errorsAfter = 0;
+  budgetEventTotals(world_.get(), &warnsAfter, &errorsAfter);
+  record.overrunWarns = static_cast<std::uint32_t>(warnsAfter - warnsBefore);
+  record.criticalErrors =
+      static_cast<std::uint32_t>(errorsAfter - errorsBefore);
+  budgetRecorder_.recordFrame(record);
+}
+
 // The frame drive: bounded, paced, allocation-free (engine.h
 // "Performance"). One clock read, one loop frame, one snapshot
-// refresh, one sleep per frame.
+// refresh, one budget record, one sleep per frame.
 Status Engine::runFrames(std::uint64_t maxTicks) noexcept {
   const std::int64_t startNs = loop_->startReferenceNs();
   const std::int64_t rate = static_cast<std::int64_t>(loop_->tickRateHz());
@@ -409,6 +499,9 @@ Status Engine::runFrames(std::uint64_t maxTicks) noexcept {
   // nothing else (DBG-004).
   Profiler* prof = profiler_.get();
   const bool timing = (prof != nullptr) && prof->enabled();
+  // M1-PROF-02: the run's frame index (0-based over the run frames —
+  // the start-reference first frame is not one of them).
+  std::uint64_t frameIndex = 0;
   for (;;) {
     // M1-DET-02: a replay-recording failure stops the run (at most
     // one frame's worth of ticks runs after the failing write — the
@@ -416,6 +509,17 @@ Status Engine::runFrames(std::uint64_t maxTicks) noexcept {
     if (replayFail_.isError()) return replayFail_;
     if (maxTicks != 0 && loop_->currentTick() >= maxTicks) break;
     const std::int64_t now = steadyNowNs();
+    // M1-PROF-02: the frame budget baseline (the cheap reads BEFORE
+    // the frame — frame_budget.h "The per-frame record").
+    const std::uint64_t ticksBefore = loop_->currentTick();
+    const std::uint64_t allocsBefore =
+        world_->archetypeStats().totalReservations;
+    std::uint64_t warnsBefore = 0;
+    std::uint64_t errorsBefore = 0;
+    budgetEventTotals(world_.get(), &warnsBefore, &errorsBefore);
+    // M1-PROF-02: the frame's sim work (0.0 when the profiler is
+    // disabled — no measurement, no clock reads — DBG-004).
+    double frameMs = 0.0;  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured frame time never enters sim state, hashes, or replays (M1-PROF-02, ARCH-009)
     if (timing) {
       const TimeIt timer;
       const Status frameStatus = loop_->frame();
@@ -429,7 +533,8 @@ Status Engine::runFrames(std::uint64_t maxTicks) noexcept {
       if (snapshot_.hasSnapshot()) {
         snapshot_.onRenderFrame(snapshot_.context, now);
       }
-      prof->recordFrame(timer.elapsedMs());
+      frameMs = timer.elapsedMs();
+      prof->recordFrame(frameMs);
     } else {
       const Status frameStatus = loop_->frame();
       if (frameStatus.isError()) return frameStatus;
@@ -438,6 +543,13 @@ Status Engine::runFrames(std::uint64_t maxTicks) noexcept {
         snapshot_.onRenderFrame(snapshot_.context, now);
       }
     }
+    // M1-PROF-02: record this completed frame (after the sim work and
+    // the presentation refresh, before pacing — the SAME frame the
+    // profiler records; a failed frame is not recorded — the
+    // frame did not complete).
+    recordFrameBudget(frameIndex, ticksBefore, allocsBefore, warnsBefore,
+                      errorsBefore, frameMs);
+    ++frameIndex;
     if (maxTicks != 0 && loop_->currentTick() >= maxTicks) {
       break;  // no sleep after the final tick (a bounded run ends)
     }
@@ -580,6 +692,67 @@ Status Engine::startProfileReport(std::string_view path) noexcept {
 }
 
 // ---------------------------------------------------------------------------
+// The frame graph / budget report (M1-PROF-02; the contract in
+// engine.h "The frame graph / budget report", frame_budget.h, and
+// docs/api/frame_budget.md)
+// ---------------------------------------------------------------------------
+
+Status Engine::startBudgetReport(std::string_view budgetsPath,
+                                std::uint32_t lastNFrames) noexcept {
+  // The report is diagnostics, not replay state: EVERY build (no
+  // NDEBUG gate — like startProfileReport).
+  // A stopped engine (shutdown or moved-from) is a no-op failure
+  // without logging (the stopped-state precedent).
+  if (shutDown_ || world_ == nullptr) {
+    return Status(ErrorCode::InvalidArgument);
+  }
+  if (budgetsPath.empty()) {
+    LAIGE_LOG_WARN(kBudgetSubsystem, "report_path_invalid",
+                   kBudgetReportPathInvalidMessage);
+    return Status(ErrorCode::InvalidArgument);
+  }
+  if (budgetReportStarted_) {
+    LAIGE_LOG_WARN(kBudgetSubsystem, "report_already_started",
+                   kBudgetReportAlreadyStartedMessage);
+    return Status(ErrorCode::InvalidArgument);
+  }
+  // The budgets.json table (M0-CORE-08, schema v1): bounded read +
+  // parse (the setup path — reporting is never a hot path). The report
+  // evaluates its sim_tick_avg / sim_tick_p99 / sim_heap_allocs
+  // entries (frame_budget.h).
+  Result<BudgetTable, ErrorCode> table = loadBudgets(budgetsPath);
+  if (table.isError()) {
+    LAIGE_LOG_ERROR(kBudgetSubsystem, "report_load_failed",
+                    kBudgetReportLoadFailedMessage,
+                    laige::log::field("path", std::string(budgetsPath)),
+                    laige::log::field("error",
+                                      laige::errorName(table.error())));
+    return Status(table.error());
+  }
+  budgetTable_ = std::move(table).takeValue();
+  // 0 = all retained (the FrameBudgetReportOptions default); a larger
+  // value clamps to the window at build time (buildFrameBudgetReport).
+  budgetReportLastN_ = (lastNFrames == 0)
+      ? kFrameBudgetWindow
+      : std::min(lastNFrames, kFrameBudgetWindow);
+  budgetReportStarted_ = true;
+  LAIGE_LOG_INFO(kBudgetSubsystem, "report_started",
+                 "Budget report requested (built at run end, cached)",
+                 laige::log::field("budgets", std::string(budgetsPath)),
+                 laige::log::field("last_frames", budgetReportLastN_),
+                 laige::log::field("systems", world_->systemCount()));
+  return Status{};
+}
+
+bool Engine::budgetReportRequested() const noexcept {
+  return budgetReportStarted_;
+}
+
+const FrameBudgetReport& Engine::lastBudgetReport() const noexcept {
+  return lastBudgetReport_;
+}
+
+// ---------------------------------------------------------------------------
 // Replay recording (M1-DET-02; the contract in engine.h "Replay
 // recording" and docs/api/replay.md)
 // ---------------------------------------------------------------------------
@@ -658,6 +831,11 @@ Engine::Engine(Engine&& other) noexcept
       profileReportPath_(std::move(other.profileReportPath_)),
       profileReportStatus_(other.profileReportStatus_),
       profileReportFinalized_(other.profileReportFinalized_),
+      budgetRecorder_(other.budgetRecorder_),
+      budgetTable_(std::move(other.budgetTable_)),
+      budgetReportStarted_(other.budgetReportStarted_),
+      budgetReportLastN_(other.budgetReportLastN_),
+      lastBudgetReport_(std::move(other.lastBudgetReport_)),
       shutDown_(other.shutDown_) {
   // The source becomes a STOPPED engine (the GameLoop moved-out
   // precedent): nothing left to release, nothing to flush. Its
@@ -690,6 +868,11 @@ Engine& Engine::operator=(Engine&& other) noexcept {
     profileReportPath_ = std::move(other.profileReportPath_);
     profileReportStatus_ = other.profileReportStatus_;
     profileReportFinalized_ = other.profileReportFinalized_;
+    budgetRecorder_ = other.budgetRecorder_;
+    budgetTable_ = std::move(other.budgetTable_);
+    budgetReportStarted_ = other.budgetReportStarted_;
+    budgetReportLastN_ = other.budgetReportLastN_;
+    lastBudgetReport_ = std::move(other.lastBudgetReport_);
     shutDown_ = other.shutDown_;
     other.shutDown_ = true;
   }

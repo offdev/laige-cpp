@@ -199,6 +199,8 @@ ProfilerStats Profiler::snapshot(const World& world) const noexcept {
   return s;
 }
 
+const Histogram& Profiler::tickWindow() const noexcept { return tickWindow_; }
+
 bool Profiler::enabled() const noexcept { return enabled_; }
 
 void Profiler::setEnabled(bool on) noexcept { enabled_ = on; }

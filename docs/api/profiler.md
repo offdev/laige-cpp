@@ -292,6 +292,10 @@ compressed into one greppable line.
   non-instrumented P0 CI job enforces the bound).
 - `ctest -R laige_run_smoke` — the CLI smoke (the byte-stable
   `status=ok` line; the profile summary line follows it).
+- `ctest -R budget_report` + `ctest -R laige_run_budget` — the
+  M1-PROF-02 frame graph / budget report (the profiler's tick window
+  is the `sim_tick_avg` / `sim_tick_p99` declared budgets' source —
+  [api/frame_budget.md](frame_budget.md)).
 - The TSan job runs the `profiler` entry with
   `TSAN_OPTIONS=halt_on_error=1`.
 - The disabled-cost baseline:
