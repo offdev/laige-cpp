@@ -99,6 +99,7 @@
 
 #include <cerrno>
 #include <cctype>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -192,6 +193,32 @@ bool parseTicks(std::string_view text, std::uint64_t* out) {
   *out = static_cast<std::uint64_t>(v);
   return true;
 }
+
+// Read an environment variable as a std::string (empty when unset).
+// The laige-bench.cpp precedent (platform boundary, CPP-009): MSVC
+// deprecates plain getenv (C4996, fatal under the engine's /WX
+// policy, NFR-8.10), so the Windows branch uses the CRT's documented
+// replacement, getenv_s, with the same lookup semantics.
+#if defined(_MSC_VER)
+// Largest environment value this tool reads (a budgets file path;
+// far inside the bound). Named per CORE-005; a value beyond it is
+// treated as unset (the documented fallback applies). MSVC-only:
+// getenv_s needs a caller-sized buffer, so the constant has no use
+// outside this branch (CORE-010: no unused symbols under -Werror).
+constexpr std::size_t kEnvValueMaxBytes = 4096;
+
+std::string envValue(const char* name) {
+  char buf[kEnvValueMaxBytes];
+  std::size_t len = 0;
+  if (getenv_s(&len, buf, sizeof(buf), name) != 0) return {};
+  return std::string(buf, len);
+}
+#else
+std::string envValue(const char* name) {
+  const char* v = std::getenv(name);
+  return (v != nullptr) ? std::string(v) : std::string();
+}
+#endif
 
 }  // namespace
 
@@ -333,8 +360,7 @@ int main(int argc, char** argv) {
   if (budgetReport) {
     std::string resolvedBudgetsPath = budgetsPath;
     if (resolvedBudgetsPath.empty()) {
-      const char* env = std::getenv("LAIGE_BUDGETS_PATH");
-      if (env != nullptr && env[0] != '\0') resolvedBudgetsPath = env;
+      resolvedBudgetsPath = envValue("LAIGE_BUDGETS_PATH");
     }
     if (resolvedBudgetsPath.empty()) resolvedBudgetsPath = "budgets.json";
     const laige::Status budgetStatus =
