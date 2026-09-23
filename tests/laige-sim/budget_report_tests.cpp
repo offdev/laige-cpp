@@ -48,6 +48,10 @@
 #include <string_view>
 #include <vector>
 
+#if defined(_MSC_VER)
+#include <share.h>  // _SH_DENYNO: plain-fopen sharing for _fsopen
+#endif
+
 #include "gtest/gtest.h"
 #include "laige/budget_harness.h"
 #include "laige/errors.h"
@@ -202,6 +206,22 @@ inline constexpr const char* kNoAllocsBudgetsPath = "brt_noallocs_budgets.json";
 inline constexpr const char* kBadVersionBudgetsPath =
     "brt_badversion_budgets.json";
 
+// Open a fixture file (the profiler_tests.cpp openReportFile /
+// replay.cpp precedent): MSVC's CRT deprecates plain `fopen`
+// (C4996, fatal under the engine's /WX policy). As in replay.cpp,
+// the MSVC path uses `_fsopen(path, mode, _SH_DENYNO)` — plain-`fopen`
+// sharing semantics (the secure `fopen_s` opens with `_SH_SECURE`
+// and would deny it).
+#if defined(_MSC_VER)
+std::FILE* openBudgetsFile(const char* path, const char* mode) {
+  return ::_fsopen(path, mode, _SH_DENYNO);
+}
+#else
+std::FILE* openBudgetsFile(const char* path, const char* mode) {
+  return std::fopen(path, mode);
+}
+#endif
+
 // The version-1 table the report's tick/alloc budgets need: generous
 // tick targets (1000 ms — the tick budgets are NOT the test subject;
 // the per-system declared budget is) and the hard-zero allocation
@@ -227,7 +247,7 @@ bool writeHealthyBudgets(const char* path) {
       "  ]\n"
       "}\n";
   std::remove(path);  // clean a crashed previous run's leftover
-  std::FILE* f = std::fopen(path, "wb");
+  std::FILE* f = openBudgetsFile(path, "wb");
   if (f == nullptr) return false;
   const bool ok =
       std::fwrite(text, 1, std::strlen(text), f) == std::strlen(text);
@@ -252,7 +272,7 @@ bool writeNoAllocsBudgets(const char* path) {
       "  ]\n"
       "}\n";
   std::remove(path);
-  std::FILE* f = std::fopen(path, "wb");
+  std::FILE* f = openBudgetsFile(path, "wb");
   if (f == nullptr) return false;
   const bool ok =
       std::fwrite(text, 1, std::strlen(text), f) == std::strlen(text);
@@ -264,7 +284,7 @@ bool writeNoAllocsBudgets(const char* path) {
 bool writeBadVersionBudgets(const char* path) {
   const char* text = "{\"version\": 99, \"budgets\": []}\n";
   std::remove(path);
-  std::FILE* f = std::fopen(path, "wb");
+  std::FILE* f = openBudgetsFile(path, "wb");
   if (f == nullptr) return false;
   const bool ok =
       std::fwrite(text, 1, std::strlen(text), f) == std::strlen(text);
