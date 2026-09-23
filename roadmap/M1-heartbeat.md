@@ -238,7 +238,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R profiler` green; disabled-cost measurement recorded in `docs/benchmarks/baselines/m1-profiler-cost.md`.
   - **Size:** ~300 lines + tests
 
-- [ ] **M1-PROF-02 · Frame graph / budget report**
+- [x] **M1-PROF-02 · Frame graph / budget report**
   - **Refs:** FR-11.2; PRD §9.1 S-6
   - **Depends:** M1-PROF-01, M0-CORE-08
   - **Scope:**

@@ -10,7 +10,8 @@
 // Usage (docs/api/engine.md, the "laige-run" section):
 //
 //   laige-run --headless <config.json> [--ticks N] [--replay <log>]
-//               [--prof-out <report>]
+//               [--prof-out <report>] [--budget-report [N]]
+//               [--budgets <path>] [--fail-on-budget]
 //
 //   --headless <config.json>  run the engine headless with the given
 //                             JSON config (required; the windowed mode
@@ -43,15 +44,39 @@
 //                             state). A write failure does not fail
 //                             the run — it is reported on stderr and
 //                             the exit code becomes 2.
+//   --budget-report [N]       BUDGET REPORT (M1-PROF-02, FR-11.2):
+//                             print the last N frames' budget report
+//                             to stdout at the end of the run (the
+//                             AGENTS §12 field format: every declared
+//                             budget — system time, total tick time,
+//                             allocation count — measured vs declared
+//                             with a pass/flag, plus the over-budget
+//                             systems list). N: 1..kFrameBudgetWindow
+//                             (32); omitted: all retained frames.
+//                             EVERY build (diagnostics, not replay
+//                             state). A budgets.json load failure
+//                             exits 2 (the run did not happen).
+//   --budgets <path>          the budgets.json file (schema v1 —
+//                             laige/budget_harness.h, the M0-CORE-08
+//                             table). Resolution: this arg, then the
+//                             LAIGE_BUDGETS_PATH env var, then
+//                             "budgets.json" in the working directory
+//                             (the laige-bench resolution order).
+//   --fail-on-budget          CI gate (PRD §8.1 budget policy): exit
+//                             3 when the run COMPLETED but the budget
+//                             report is overall=FAIL. Without it the
+//                             report is printed and the run exits 0.
 //
 // Exit codes (documented, stable for CI grepping):
 //   0  the run completed (the requested ticks reached; the summary
 //      line carries the loop accounting)
 //   1  the engine run reported a failure Status (a failed frame —
 //      the engine still shut down, CONC-006)
-//   2  usage, IO, config-parse, engine-create, or profile-report
-//      write error (the message carries the NFR-13.3 5-field error
-//      text where one applies)
+//   2  usage, IO, config-parse, engine-create, profile-report-write,
+//      or budget-report-start error (the message carries the
+//      NFR-13.3 5-field error text where one applies)
+//   3  budget failure (--fail-on-budget: the run completed, the
+//      report is overall=FAIL)
 //
 // The one-line summary goes to stdout (machine-greppable, detcheck
 // precedent):
@@ -94,7 +119,8 @@ namespace {
 void printUsage(std::FILE* out) {
   std::fprintf(out,
       "Usage: laige-run --headless <config.json> [--ticks N] "
-      "[--replay <log>] [--prof-out <report>]\n"
+      "[--replay <log>] [--prof-out <report>] [--budget-report [N]]\n"
+      "            [--budgets <path>] [--fail-on-budget]\n"
       "\n"
       "  --headless <config.json>  run the engine headless with the "
       "given\n"
@@ -122,10 +148,34 @@ void printUsage(std::FILE* out) {
       "                            the end of the run (M1-PROF-01; EVERY\n"
       "                            build; a write failure exits 2 — the\n"
       "                            run itself completes)\n"
+      "  --budget-report [N]       print the last N frames' budget\n"
+      "                            report to stdout at the end of the\n"
+      "                            run (M1-PROF-02, FR-11.2 — the\n"
+      "                            AGENTS §12 field format: every\n"
+      "                            declared budget (system time, total\n"
+      "                            tick time, allocation count) measured\n"
+      "                            vs declared with a pass/flag, plus\n"
+      "                            the over-budget systems list). N: 1..32\n"
+      "                            (kFrameBudgetWindow); omitted: all\n"
+      "                            retained frames. The report needs\n"
+      "                            budgets.json — see --budgets\n"
+      "  --budgets <path>          the budgets.json file (schema v1 —\n"
+      "                            docs/api/budget_harness.md); default:\n"
+      "                            the LAIGE_BUDGETS_PATH env var, then\n"
+      "                            \"budgets.json\" in the working\n"
+      "                            directory (the laige-bench\n"
+      "                            resolution order)\n"
+      "  --fail-on-budget          exit 3 when the run COMPLETED but\n"
+      "                            the budget report is overall=FAIL\n"
+      "                            (the CI gate — PRD §8.1 budget\n"
+      "                            policy); without it the report is\n"
+      "                            printed and the run exits 0\n"
       "  --help, -h                this help\n"
       "\n"
       "Exit codes: 0 = ok, 1 = engine run failure, 2 = usage / IO /\n"
-      "config / profile-report-write error.\n");
+      "config / profile-report-write / budget-report-start error,\n"
+      "3 = budget failure (--fail-on-budget; the run completed, the\n"
+      "report is overall=FAIL).\n");
 }
 
 // True when `text` parses as an unsigned 64-bit decimal integer
@@ -151,6 +201,10 @@ int main(int argc, char** argv) {
   std::uint64_t maxTicks = 0;
   std::string replayPath;
   std::string profOutPath;
+  bool budgetReport = false;
+  std::uint32_t budgetReportN = laige::kFrameBudgetWindow;
+  std::string budgetsPath;
+  bool failOnBudget = false;
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -183,6 +237,28 @@ int main(int argc, char** argv) {
         return 2;
       }
       profOutPath = argv[++i];
+    } else if (arg == "--budget-report") {
+      budgetReport = true;
+      // Optional N: a decimal in 1..kFrameBudgetWindow (the omitted
+      // form reports all retained frames — kFrameBudgetWindow).
+      if (i + 1 < argc) {
+        std::uint64_t n = 0;
+        if (parseTicks(argv[i + 1], &n) && n >= 1 &&
+            n <= laige::kFrameBudgetWindow) {
+          budgetReportN = static_cast<std::uint32_t>(n);
+          ++i;
+        }
+      }
+    } else if (arg == "--budgets") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "laige-run: --budgets needs a budgets.json "
+                             "path\n");
+        printUsage(stderr);
+        return 2;
+      }
+      budgetsPath = argv[++i];
+    } else if (arg == "--fail-on-budget") {
+      failOnBudget = true;
     } else if (arg == "--help" || arg == "-h") {
       printUsage(stdout);
       return 0;
@@ -246,6 +322,30 @@ int main(int argc, char** argv) {
       return 2;
     }
   }
+  // Budget report (M1-PROF-02, FR-11.2): opt-in, EVERY build. The
+  // budgets.json path resolves --budgets arg, then the
+  // LAIGE_BUDGETS_PATH env var, then "budgets.json" in the working
+  // directory (the laige-bench resolution order). The engine loads
+  // the table now (the cold setup path) and builds the report at the
+  // end of the run (engine.h "The frame graph / budget report"); a
+  // start failure is an exit-2 usage/IO error (the run did not
+  // happen).
+  if (budgetReport) {
+    std::string resolvedBudgetsPath = budgetsPath;
+    if (resolvedBudgetsPath.empty()) {
+      const char* env = std::getenv("LAIGE_BUDGETS_PATH");
+      if (env != nullptr && env[0] != '\0') resolvedBudgetsPath = env;
+    }
+    if (resolvedBudgetsPath.empty()) resolvedBudgetsPath = "budgets.json";
+    const laige::Status budgetStatus =
+        engine.startBudgetReport(resolvedBudgetsPath, budgetReportN);
+    if (budgetStatus.isError()) {
+      std::fprintf(stderr, "laige-run: budget-report: %s (path: %s)\n",
+                   laige::errorText(budgetStatus.error()),
+                   resolvedBudgetsPath.c_str());
+      return 2;
+    }
+  }
   // The frame budget (the run_headless contract, engine.h): a bounded
   // run uses budget 1 — each frame runs AT MOST one tick, so the run
   // lands EXACTLY on maxTicks under any cadence (a late frame drops
@@ -279,6 +379,22 @@ int main(int argc, char** argv) {
   std::fprintf(stdout, "%s\n",
                laige::formatProfileSummaryLine(engine.profileStats())
                    .c_str());
+  // Budget report (M1-PROF-02, FR-11.2): the engine built it at the
+  // end of the run, BEFORE the shutdown (the world and the profiler
+  // were still live) and cached it (engine.h "The frame graph /
+  // budget report"). Printed on stdout after the profile line — the
+  // machine-greppable AGENTS §12 field format. Printed even on a
+  // failed run (the run failure dominates the exit code — the
+  // report's numbers describe what happened).
+  int budgetExit = 0;
+  if (budgetReport) {
+    const laige::FrameBudgetReport& report = engine.lastBudgetReport();
+    std::fputs(report.report.c_str(), stdout);
+    // The CI gate (PRD §8.1 budget policy): the run COMPLETED and the
+    // report is overall=FAIL. A failed run exits 1 regardless (the
+    // gate never masks a run failure).
+    if (failOnBudget && !report.passed && runStatus.ok()) budgetExit = 3;
+  }
   // The run always ends in the ordered shutdown (CONC-006); this
   // second call exercises the idempotency (the M1-HEAD-01 test).
   engine.shutdown();
@@ -297,5 +413,5 @@ int main(int argc, char** argv) {
                  laige::errorText(engine.profileReportStatus().error()));
     return 2;
   }
-  return 0;
+  return budgetExit;
 }

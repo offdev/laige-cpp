@@ -82,11 +82,17 @@
 # write; the public types and contract live in
 # include/laige/sim/profiler.h) plus the GameLoop Options::profiler
 # per-tick timing hook and the Engine's frame timing + per-run report
-# finalization (game_loop.cpp, engine.cpp).
+# finalization (game_loop.cpp, engine.cpp). M1-PROF-02 adds
+# frame_budget.cpp: the frame graph / budget report (FrameBudgetRecord,
+# the FrameBudgetRecorder fixed ring, buildFrameBudgetReport — the
+# per-frame records against the declared budgets: system time, total
+# tick time, allocation count — plus the Engine's per-frame recording
+# and opt-in per-run report in engine.cpp; the public types and
+# contract live in include/laige/sim/frame_budget.h).
 set(LAIGE_SIM_SOURCES entity.cpp archetype.cpp query.cpp guardrails.cpp
                      systems.cpp system_timing.cpp game_loop.cpp
                      engine.cpp config.cpp replay.cpp state_hash.cpp
-                     replay_diff.cpp profiler.cpp)
+                     replay_diff.cpp profiler.cpp frame_budget.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-sim SHARED ${LAIGE_SIM_SOURCES})

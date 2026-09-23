@@ -1,0 +1,48 @@
+laige-budget-report version=1
+laige-budget-report context: workload=headless build= machine= warmup=0
+laige-budget-report frames: n=31 total=31
+laige-budget-report frame=0 ticks=0 tick_after=0 frame_ms=0.00018 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=1 ticks=1 tick_after=1 frame_ms=0.001954 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=2 ticks=1 tick_after=2 frame_ms=0.001343 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=3 ticks=1 tick_after=3 frame_ms=0.002235 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=4 ticks=1 tick_after=4 frame_ms=0.002866 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=5 ticks=1 tick_after=5 frame_ms=0.004138 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=6 ticks=1 tick_after=6 frame_ms=0.001824 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=7 ticks=1 tick_after=7 frame_ms=0.001323 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=8 ticks=1 tick_after=8 frame_ms=0.002024 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=9 ticks=1 tick_after=9 frame_ms=0.001553 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=10 ticks=1 tick_after=10 frame_ms=0.003887 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=11 ticks=1 tick_after=11 frame_ms=0.002525 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=12 ticks=1 tick_after=12 frame_ms=0.001483 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=13 ticks=1 tick_after=13 frame_ms=0.004479 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=14 ticks=1 tick_after=14 frame_ms=0.002474 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=15 ticks=1 tick_after=15 frame_ms=0.003126 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=16 ticks=1 tick_after=16 frame_ms=0.002314 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=17 ticks=1 tick_after=17 frame_ms=0.002114 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=18 ticks=1 tick_after=18 frame_ms=0.001743 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=19 ticks=1 tick_after=19 frame_ms=0.002615 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=20 ticks=1 tick_after=20 frame_ms=0.002695 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=21 ticks=1 tick_after=21 frame_ms=0.002084 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=22 ticks=1 tick_after=22 frame_ms=0.002194 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=23 ticks=1 tick_after=23 frame_ms=0.003917 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=24 ticks=1 tick_after=24 frame_ms=0.001924 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=25 ticks=1 tick_after=25 frame_ms=0.003888 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=26 ticks=1 tick_after=26 frame_ms=0.002996 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=27 ticks=1 tick_after=27 frame_ms=0.001923 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=28 ticks=1 tick_after=28 frame_ms=0.003056 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=29 ticks=1 tick_after=29 frame_ms=0.003497 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+laige-budget-report frame=30 ticks=1 tick_after=30 frame_ms=0.004329 sim_allocs=0 overrun_warns=0 critical_errors=0 result=PASS
+budget=sim_tick_avg result=PASS metric=mean unit=ms
+  after=0.00148723 before=0 target=3
+  stats: n=30 min=0.000712 mean=0.00148723 p50=0.001312 p95=0.002655 p99=0.002705 max=0.002705
+  context: workload=headless build= machine= warmup=0
+budget=sim_tick_p99 result=PASS metric=p99 unit=ms
+  after=0.002705 before=0 target=5
+  stats: n=30 min=0.000712 mean=0.00148723 p50=0.001312 p95=0.002655 p99=0.002705 max=0.002705
+  context: workload=headless build= machine= warmup=0
+budget=sim_heap_allocs result=PASS metric=max unit=allocs_per_frame
+  after=0 before=0 target=0
+  stats: n=31 min=0 mean=0 p50=0 p95=0 p99=0 max=0
+  context: workload=headless build= machine= warmup=0
+laige-budget-report over_budget: none
+laige-budget-report overall=PASS

@@ -49,7 +49,9 @@
 // no duplicated state, one source of truth each:
 //
 //   - per-system time histograms: World::systemTimingWindow(id)
-//     (M1-SYS-03) — the report reads them per system
+//     (M1-SYS-03) — the report reads them per system (and the
+//     frame graph's budget report, frame_budget.h — M1-PROF-02 —
+//     reads the tick window itself through tickWindow())
 //   - entity counts (total / alive): World::stats() (inUse /
 //     totalCreated, M1-ECS-01)
 //   - sim alloc count (sum of the pool accounting, target 0):
@@ -221,6 +223,15 @@ class Profiler {
   // The frame-time stats over the stored window (cold path, as above).
   // @budget O(n log n) cold path; no allocation.
   [[nodiscard]] HistogramStats frameTime() const noexcept;
+
+  // The tick-time window itself (the M1-PROF-02 frame graph's budget
+  // checks read it cold through the M0-CORE-08 budgetCheck — the
+  // header preamble's "the per-frame budget report over them is
+  // M1-PROF-02"). Non-owning const view into the profiler's fixed
+  // window (valid until the profiler is destroyed or moved — the
+  // profiler is owned by the Engine for its whole lifetime).
+  // @budget O(1); no allocation.
+  [[nodiscard]] const Histogram& tickWindow() const noexcept;
 
   // The snapshot of the profiler's own counters (no world access).
   // Cold path (the two stats passes); no side effects.

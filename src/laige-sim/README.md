@@ -169,7 +169,20 @@ per-run report (`startProfileReport` / `profileStats()` /
 entry `profiler`; API contract in
 [docs/api/profiler.md](../docs/api/profiler.md); baseline in
 [docs/benchmarks/baselines/m1-profiler-cost.md](../docs/benchmarks/baselines/m1-profiler-cost.md)).
-The per-frame budget report over the per-system windows
-(M1-PROF-02), the editor overlay surface (M2), PRNG state
-introspection (M1-DET-03), the detcheck matrix (M1-DET-04), and the
-remaining M1 steps land next; physics, input, and animation in M3.
+M1-PROF-02 landed the frame graph / budget report (FR-11.2) —
+`FrameBudgetRecorder` (the fixed 32-frame ring),
+`buildFrameBudgetReport` (every declared budget — each system's
+declared `SystemDef` budget vs its M1-SYS-03 window's p99, the
+`sim_tick_avg` / `sim_tick_p99` budgets vs the `Profiler`'s tick
+window, the `sim_heap_allocs` hard-zero budget vs the per-frame sim
+alloc deltas — measured vs declared with a pass/flag, plus the
+over-budget systems list), the `Engine` per-frame accumulation +
+opt-in cached per-run report (`startBudgetReport` /
+`budgetReportRequested()` / `lastBudgetReport()`), and the
+`laige-run --budget-report` / `--budgets` / `--fail-on-budget`
+surface (CTest entries `budget_report`, `laige_run_budget`; API
+contract in
+[docs/api/frame_budget.md](../docs/api/frame_budget.md)).
+The editor overlay surface (M2), the detcheck matrix (M1-DET-04),
+and the remaining M1 steps land next; physics, input, and animation
+in M3.
