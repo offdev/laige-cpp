@@ -95,13 +95,14 @@ namespace {
 // call site (FR-12.3). Evaluated DIRECTLY in the operator new frame
 // (a helper function would add a frame and shift the return address
 // into the helper, not the allocating caller). GCC/Clang: the
-// builtin; MSVC: the __return_address macro; any other compiler: no
-// site (the count still works — the assert's message then points at
-// the log event only).
+// builtin; MSVC: the _ReturnAddress() intrinsic from <intrin.h>;
+// any other compiler: no site (the count still works — the assert's
+// message then points at the log event only).
 #if defined(__GNUC__) || defined(__clang__)
 #  define LAIGE_ALLOC_CALLER_SITE() __builtin_return_address(0)
 #elif defined(_MSC_VER)
-#  define LAIGE_ALLOC_CALLER_SITE() __return_address
+#  include <intrin.h>  // _ReturnAddress
+#  define LAIGE_ALLOC_CALLER_SITE() _ReturnAddress()
 #else
 #  define LAIGE_ALLOC_CALLER_SITE() static_cast<const void*>(nullptr)
 #endif
