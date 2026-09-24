@@ -25,10 +25,12 @@
 // new/new[] (alloc_watch.cpp, compiled in every non-sanitizer build
 // tree): while a window is armed, every heap allocation made by ANY
 // translation unit — engine storage, the pools, a system's local
-// std::vector, even a hot-path log — increments the window count, and
-// the caller's return address of the first offending allocation is
-// captured (the actionable call site, FR-12.3). While no window is
-// armed, each allocation pays exactly one atomic load + one branch.
+// std::vector — increments the window count, and the caller's return
+// address of the first offending allocation is captured (the
+// actionable call site, FR-12.3). The one exclusion is the diagnostic
+// subsystem's own emit (the attribution contract, below): the logging
+// facade marks its own work while it emits an event. While no window
+// is armed, each allocation pays two atomic loads + two branches.
 //
 // ---------------------------------------------------------------------------
 // The per-tick assertion (the laige-sim half of M1-ALLOC-01)
