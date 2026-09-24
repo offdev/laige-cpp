@@ -44,7 +44,7 @@ laige::AllocWatchReading r = laige::allocWatchRead();
 
 **First-site semantics:** the first allocation after the arm is
 recorded (the caller's return address of the allocating call —
-`__builtin_return_address` on GCC/Clang, `__return_address` on MSVC);
+`__builtin_return_address` on GCC/Clang, `_ReturnAddress()` on MSVC);
 later offenders are counted but keep the first site (a relaxed CAS
 that fails once the first site is recorded). The first site is the
 actionable one: it is where the invariant broke first (FR-12.3).
