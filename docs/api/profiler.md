@@ -265,8 +265,12 @@ compressed into one greppable line.
   wall-clock diagnostics (ARCH-009): never in the tick count, the
   state hash, or a replay (the M1-SYS-03 precedent).
 - **`sim_allocs` is a total, not a per-frame delta** — the steady-
-  state **per-frame delta** is the FR-11.1 target of 0 (M1-ALLOC-01
-  asserts it per tick via the allocation hook).
+  state **per-frame delta** is the FR-11.1 target of 0. M1-ALLOC-01
+  enforces it directly in debug builds: the per-tick allocation watch
+  ([api/alloc_watch.md](alloc_watch.md)) arms around each completed
+  tick and asserts a zero count (the diagnostic subsystem's own emit
+  is attributed to it, not the tick — see that doc's attribution
+  note).
 
 ## Testing and CI
 

@@ -16,17 +16,17 @@ set(LAIGE_CORE_TEST_SOURCES laige-core_tests.cpp result_status_tests.cpp
                               prng_tests.cpp
                               config_json_tests.cpp
                                budget_harness_tests.cpp)
-# M0-CORE-02: the test-only allocation counter overrides the global
-# operator new/new[]; the sanitizer runtimes define their own new/delete
-# (strong symbols in the Clang/GCC TSan runtime archives, interposed by
-# ASan), so the counter is excluded from the sanitizer trees. There, the
-# step's zero-allocation property is covered by the leak-free sanitizer
-# run of the same spam loop plus the LogPerformance timing property —
-# the fallback the roadmap names for this step.
-if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN)
-  list(APPEND LAIGE_CORE_TEST_SOURCES logging_alloc_counter.cpp)
-endif()
-
+# M1-ALLOC-01: the test-only allocation counter no longer carries its
+# own global operator new/new[] overrides — they moved into laige-core
+# (src/laige-core/alloc_watch.cpp, the G-R1 counting backend, one
+# strong definition per binary), so the test-side probes
+# (logging_alloc_counter.h) and the engine's per-tick assertion share
+# one counter. LAIGE_ALLOC_COUNTER marks the non-sanitizer trees where
+# the backend is live (the same gate as laige-core's LAIGE_ALLOC_WATCH;
+# the sanitizer runtimes own operator new/delete, so the backend is
+# excluded there — the zero-allocation property is then covered by the
+# leak-free sanitizer run of the same loops plus the pool
+# reservation-delta assertion, the same fallback pattern).
 add_executable(laige-core_tests ${LAIGE_CORE_TEST_SOURCES})
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN)
   target_compile_definitions(laige-core_tests PRIVATE LAIGE_ALLOC_COUNTER=1)

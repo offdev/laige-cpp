@@ -11,15 +11,24 @@
 // exact due computation, the bounded run loop), and up to
 // maxCatchUpTicks runSystems dispatches — no allocation and no
 // logging on the success path (PERF-003, LOG-003). The tick_dropped
-// warn is cold (an overload episode).
+// warn is cold (an overload episode). The M1-ALLOC-01 G-R1 watch
+// (debug builds only) adds three atomic stores per completed tick
+// (the arm: first-site, count, armed flag) + two atomic loads (the
+// read) — no allocation, no logging on the healthy path (the
+// alloc/sim_tick_allocation event is cold: it fires only when the
+// zero-allocation invariant breaks); release builds compile the
+// check out entirely.
 
 #include "laige/sim/game_loop.h"  // the GameLoop contract (this header)
 
 #include <cassert>
 #include <chrono>
+#include <cinttypes>
+#include <cstdio>
 #include <cstdint>
 #include <utility>
 
+#include "laige/alloc_watch.h"    // the G-R1 per-tick watch (M1-ALLOC-01)
 #include "laige/budget_harness.h"  // TimeIt (the per-tick timing, M1-PROF-01)
 #include "laige/logging.h"
 #include "laige/sim/profiler.h"    // Profiler (Options::profiler)
@@ -34,6 +43,27 @@ inline constexpr std::int64_t kNanosecondsPerSecond = 1000000000LL;
 
 // The stable subsystem name for game-loop events (LOG-001).
 inline constexpr const char* kLoopSubsystem = "loop";
+
+#if !defined(NDEBUG)
+// The M1-ALLOC-01 G-R1 event (debug builds only — the per-tick
+// zero-allocation check in runOneTick): the subsystem name (LOG-001)
+// and the NFR-13.3 5-field-grammar message ({code} | {what} | {why} |
+// {fix} | {doc_anchor}), build-stable — the dynamic values are
+// structured fields (the tick, the alloc count, the offending call
+// site), never message text (the system_timing.cpp precedent). The
+// guard mirrors the engine.cpp pattern: a debug-build-only message
+// must not trip -Wunused-const-variable in release trees.
+inline constexpr const char* kAllocSubsystem = "alloc";
+inline constexpr const char* kSimTickAllocationMessage =
+    "sim_tick_allocation | a heap allocation occurred inside a "
+    "completed sim tick | the zero steady-state allocation invariant "
+    "(G-R1, PRD 8.1) was broken by the tick's work (a system, the "
+    "onTick hook, the replay recorder, engine storage growth, or a "
+    "hot-path log) | find the offending allocation's call site (the "
+    "site field) and move the allocation out of the tick: into a "
+    "pool, a pre-reserved block, or the setup phase | "
+    "docs/api/game_loop.md";
+#endif
 
 // The headless clock source (M1-LOOP-01): the monotonic steady_clock
 // as nanoseconds since its epoch (the windowed clock arrives with
@@ -227,6 +257,20 @@ Status GameLoop::runTick() noexcept {
 }
 
 Status GameLoop::runOneTick() noexcept {
+#if !defined(NDEBUG)
+  // M1-ALLOC-01 (G-R1): arm the per-tick zero-allocation watch BEFORE
+  // the tick body (debug builds — the laige/alloc_watch.h contract):
+  // any heap allocation inside the completed tick (a system, the
+  // onTick hook, the replay recorder, engine storage growth) is
+  // counted by the process-wide counting backend — except the
+  // diagnostic subsystem's own emit, which is attributed to the
+  // logging facade (the attribution contract, alloc_watch.h).
+  // Release builds: the entire check is compiled out — the pool-
+  // overflow degradation is already logged through the pool
+  // accounting (the M1-PROF-01/02 simAllocs frame delta); never a
+  // crash.
+  laige::allocWatchArm();
+#endif
   // The M1-PROF-01 per-tick timing: when a profiler is attached and
   // enabled, the tick body is wrapped in the M0-CORE-08 TimeIt (two
   // steady_clock reads) and the measured ms handed to the profiler —
@@ -235,14 +279,45 @@ Status GameLoop::runOneTick() noexcept {
   // The measured sample is a wall-clock diagnostic (ARCH-009) — it
   // never enters the tick count, the state hash, or a replay.
   Profiler* prof = options_.profiler;
+  Status status;
   if (prof == nullptr || !prof->enabled()) {
-    return runTick();
+    status = runTick();
+  } else {
+    const TimeIt timer;
+    status = runTick();
+    if (status.ok()) {
+      prof->recordTick(timer.elapsedMs());
+    }
   }
-  const TimeIt timer;
-  const Status status = runTick();
+#if !defined(NDEBUG)
+  // M1-ALLOC-01 (G-R1): check the watch AFTER the completed tick
+  // (a failed tick ran no systems — the check follows the profiler's
+  // "a failed tick is not recorded" contract). Cold path: it fires
+  // only when the invariant is broken — one structured Error event
+  // carrying the offending call site, then the debug assert
+  // (FR-12.3: actionable, never silent). Attribution (alloc_watch.h):
+  // the engine's own cold-path event emission during the tick (a G-R5
+  // budget-overrun warn/critical, a replay write failure, a guardrail
+  // warn) is the diagnostic subsystem's memory, not the sim loop's —
+  // those events degrade loudly and are never counted here. A tick
+  // that allocates for any other reason (a system's local std::vector,
+  // engine storage growth) still fails.
   if (status.ok()) {
-    prof->recordTick(timer.elapsedMs());
+    const AllocWatchReading watch = laige::allocWatchRead();
+    if (watch.allocs != 0) {
+      LAIGE_LOG_ERROR(kAllocSubsystem, "sim_tick_allocation",
+                      kSimTickAllocationMessage,
+                      laige::log::field("tick", ticks_),
+                      laige::log::field("allocs", watch.allocs),
+                      laige::log::field("site", watch.firstSite));
+      assert(watch.allocs == 0 &&
+             "G-R1: a heap allocation occurred inside a completed sim "
+             "tick — see the alloc/sim_tick_allocation error event "
+             "(the site field names the offending call site) and "
+             "docs/api/game_loop.md");
+    }
   }
+#endif
   return status;
 }
 

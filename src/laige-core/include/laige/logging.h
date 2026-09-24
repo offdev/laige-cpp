@@ -57,6 +57,8 @@
 
 #pragma once
 
+#include "laige/alloc_watch.h"  // the G-R1 emit-attribution guard (LAIGE_LOG)
+
 #include <array>
 #include <atomic>
 #include <charconv>
@@ -517,9 +519,20 @@ class Logger {
   do {                                                                  \
     if (::laige::log::Logger::instance().enabled(                     \
             static_cast<::laige::log::Severity>(severity), subsystem)) { \
-      ::laige::log::Logger::instance().emit(                           \
-          static_cast<::laige::log::Severity>(severity), subsystem, event, \
-          message, ##__VA_ARGS__);                                     \
+      /* M1-ALLOC-01 (G-R1 attribution, alloc_watch.h): this emit's    \
+         own heap work — the field value strings (field() allocates), \
+         the rate-state, the sink's message formatting — is the        \
+         diagnostic subsystem's memory, not the sim loop's. The guard  \
+         block spans the field argument evaluation (evaluated HERE,   \
+         before emit's body) through the whole emission, so the       \
+         per-tick allocation watch never attributes it to the tick's  \
+         window. */                                                    \
+      {                                                                 \
+        ::laige::detail::LoggingAllocationGuard _laige_log_attr_;     \
+        ::laige::log::Logger::instance().emit(                        \
+            static_cast<::laige::log::Severity>(severity), subsystem, \
+            event, message, ##__VA_ARGS__);                           \
+      }                                                                 \
     }                                                                   \
   } while (0)
 

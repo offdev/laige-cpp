@@ -248,7 +248,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
   - **Verify:** `ctest -R budget_report` green; sample report file committed as fixture.
   - **Size:** ~200 lines + tests
 
-- [ ] **M1-ALLOC-01 · Zero sim-loop allocation assertion (G-R1)**
+- [x] **M1-ALLOC-01 · Zero sim-loop allocation assertion (G-R1)**
   - **Refs:** PRD §9.3 G-R1, §8.1 (0 per frame in sim); PERF-003
   - **Depends:** M1-PROF-01, M1-ECS-03, M1-ECS-07, M1-LOOP-01
   - **Scope:**
