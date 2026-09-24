@@ -1,51 +1,42 @@
-// Test-only process-wide allocation counter (M1-ECS-03).
+// Test-only allocation-counter facade (M1-ECS-03; moved to laige-core
+// in M1-ALLOC-01).
 //
-// The M1-ECS-03 churn test asserts its zero-allocation property the
-// way M0-CORE-02's logging test did: a strong global
-// operator new/new[] override counts every heap allocation in the test
-// process, so the churn window's `allocCounter() == 0` is proof that
-// the add/remove churn touches no heap — only the pre-reserved SoA
-// column blocks (the "pool accounting" is the ArchetypeStats
-// reservation delta, asserted alongside in the test).
+// The process-wide global operator new/new[] overrides that back this
+// counter no longer live in this test tree: they moved into
+// laige-core (src/laige-core/alloc_watch.cpp, compiled in every
+// non-sanitizer tree — the LAIGE_ALLOC_WATCH definition marks it),
+// so the engine's per-tick zero-allocation assertion (M1-ALLOC-01,
+// G-R1) and the test-side zero-allocation probes share ONE counting
+// backend. This header keeps the original test API on top of it:
 //
-// logging_alloc_counter.cpp defines the program's global operator
-// new/new[] (the strong definition overrides the CRT's weak default
-// for the whole test executable), so every heap allocation made
-// anywhere in the process — test framework, engine under test, test
-// code — is counted.
+//   - resetAllocCounter() arms a fresh watch window;
+//   - allocCounter() reads the window's allocation count.
 //
-// TEST-ONLY: never link this translation unit into an engine library
-// or a tool — it would replace the real allocator for that binary. It
-// is also excluded from the sanitizer build trees (LAIGE_ASAN/
-// LAIGE_TSAN): the sanitizer runtimes define their own new/delete, so
-// the overrides cannot be linked there (see this directory's
-// CMakeLists.txt; the zero-allocation property is verified in those
-// trees by the leak-free sanitizer run of the same churn loop plus
-// the ArchetypeStats reservation-delta assertion).
+// TEST-FACADE ONLY: the counter is a diagnostic, not an API.
 //
-// (Same pattern as tests/laige-core/logging_alloc_counter.{h,cpp} —
-// one copy per test executable, since two strong definitions in one
-// binary would collide.)
+// Sanitizer trees: the watch is compiled out there (the sanitizer
+// runtimes define their own new/delete), LAIGE_ALLOC_COUNTER is not
+// defined, and the counter API is unused — the zero-allocation
+// properties are verified by the leak-free sanitizer run of the same
+// loop plus the pool reservation-delta assertion (the established
+// fallback pattern, see tests/laige-sim/CMakeLists.txt).
 
 #pragma once
 
-#include <atomic>
 #include <cstdint>
+
+#include "laige/alloc_watch.h"
 
 namespace laige::test {
 
-namespace detail {
-
-// The process-wide heap-allocation count (see the file header).
-inline std::atomic<std::uint64_t> allocCount{0};
-
-}  // namespace detail
-
-// Reset the counter to zero. Call it after the test framework has
-// finished its startup allocations and before the region under test.
-void resetAllocCounter();
+// Reset the counter to zero (start a fresh watch window). Call it
+// after the test framework has finished its startup allocations and
+// before the region under test.
+inline void resetAllocCounter() { laige::allocWatchArm(); }
 
 // The number of heap allocations since the last reset.
-std::uint64_t allocCounter();
+inline std::uint64_t allocCounter() {
+  return laige::allocWatchRead().allocs;
+}
 
 }  // namespace laige::test

@@ -28,6 +28,8 @@
 
 #include "laige/logging.h"
 
+#include "laige/alloc_watch.h"  // the G-R1 emit-attribution guard
+
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
@@ -333,6 +335,13 @@ bool Logger::enabled(Severity severity, std::string_view subsystem) const {
 void Logger::record(Severity severity, std::string_view subsystem,
                     std::string_view event, std::string_view message,
                     std::span<const Field> fields) {
+  // M1-ALLOC-01 (G-R1 attribution): this emit's heap work (rate-state,
+  // the rate-limit summary strings, the sink's message formatting) is
+  // the diagnostic subsystem's own memory, not the sim loop's — the
+  // guard marks it so the per-tick allocation watch does not attribute
+  // it to the tick's window (alloc_watch.h, the attribution contract).
+  // Everything the tick does that is NOT this emit still counts.
+  laige::detail::LoggingAllocationGuard guard;
   if (retired_.load(std::memory_order_relaxed)) return;
   const auto now = (clock_ != nullptr)
                        ? clock_()

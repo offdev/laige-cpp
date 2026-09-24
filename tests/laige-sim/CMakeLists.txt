@@ -1,6 +1,6 @@
 # laige-sim tests (M1-ECS-01/02/03/04/05/06/07 + M1-SYS-01/02/03
 # + M1-LOOP-01/02 + M1-HEAD-01 + M1-CFG-01 + M1-DET-01/02/03
-# + M1-PROF-01/02):
+# + M1-ALLOC-01 + M1-PROF-01/02):
 # entity handle + World entity storage, component type registry,
 # archetype SoA storage, query API + iteration legality,
 # deterministic iteration order, the ECS guardrails (G-R3/G-R4), the
@@ -47,7 +47,15 @@
 # evaluation (the synthetic over-budget system's correct numbers, the
 # loud NO_ENTRY / NO_SAMPLES semantics), and the engine's opt-in
 # cached per-run report (the G-R5 events folded into the per-frame
-# records, the start validation, the cached-after-shutdown read)).
+# records, the start validation, the cached-after-shutdown read)), and
+# the zero sim-loop allocation assertion (M1-ALLOC-01: the G-R1
+# per-tick watch — the M1-ECS-07 workload run THROUGH the game loop
+# with zero per-tick heap allocations (the engine's per-tick assertion
+# enforces it in debug non-sanitizer builds; the suite asserts it
+# through the watch where the watch is live), the scratch-system
+# failure case (a deliberate std::vector in a system aborts the debug
+# build in a forked child; no crash in release/sanitizer builds), and
+# the watch API's arm/read/first-site round trip).
 #
 # One executable per module (tests/README.md; docs/testing.md is the
 # source of truth): laige-sim_tests links the module under test plus
@@ -56,19 +64,20 @@
 # `ecs_guardrails`, `ecs_stress`, `system_registry`, `scheduler`,
 # `system_timing`, `game_loop`, `presentation`, `engine`,
 # `game_config`, `determinism_mode`, `replay_record`, `replay_replay`,
-# `replay_diff`, `profiler`, and `budget_report` entries
+# `replay_diff`, `zero_alloc`, `profiler`, and `budget_report` entries
 # are the M1-ECS-01, M1-ECS-02, M1-ECS-03, M1-ECS-04, M1-ECS-05,
 # M1-ECS-06, M1-ECS-07, M1-SYS-01, M1-SYS-02, M1-SYS-03, M1-LOOP-01,
 # M1-LOOP-02, M1-HEAD-01, M1-CFG-01, M1-DET-01, M1-DET-02, M1-DET-03,
-# M1-DET-05, M1-PROF-01, and M1-PROF-02 Verify commands (`ctest -R
-# entity`, `ctest -R component_registry`, `ctest -R archetype`,
-# `ctest -R query`, `ctest -R iter_order`, `ctest -R ecs_guardrails`,
-# `ctest -R ecs_stress`, `ctest -R system_registry`, `ctest -R
-# scheduler`, `ctest -R system_timing`, `ctest -R game_loop`,
-# `ctest -R presentation`, `ctest -R engine`, `ctest -R game_config`,
-# `ctest -R determinism_mode`, `ctest -R replay_record`,
-# `ctest -R replay_replay`, `ctest -R replay_diff`, `ctest -R
-# profiler`, and `ctest -R budget_report`), selecting exactly the
+# M1-DET-05, M1-ALLOC-01, M1-PROF-01, and M1-PROF-02 Verify commands
+# (`ctest -R entity`, `ctest -R component_registry`, `ctest -R
+# archetype`, `ctest -R query`, `ctest -R iter_order`,
+# `ctest -R ecs_guardrails`, `ctest -R ecs_stress`, `ctest -R
+# system_registry`, `ctest -R scheduler`, `ctest -R system_timing`,
+# `ctest -R game_loop`, `ctest -R presentation`, `ctest -R engine`,
+# `ctest -R game_config`, `ctest -R determinism_mode`,
+# `ctest -R replay_record`, `ctest -R replay_replay`, `ctest -R
+# replay_diff`, `ctest -R zero_alloc`, `ctest -R profiler`, and
+# `ctest -R budget_report`), selecting exactly the
 # suites below from the shared executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
@@ -86,21 +95,22 @@ set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            replay_record_tests.cpp
                            replay_replay_tests.cpp
                            replay_diff_tests.cpp
+                           zero_alloc_tests.cpp
                            profiler_tests.cpp
                            budget_report_tests.cpp)
-# M1-ECS-03: the test-only allocation counter overrides the global
-# operator new/new[]; the sanitizer runtimes define their own
-# new/delete (strong symbols in the Clang/GCC TSan runtime archives,
-# interposed by ASan), so the counter is excluded from the sanitizer
-# trees. There, the zero-allocation properties (the M1-ECS-03 churn
-# and the M1-HEAD-01 headless run) are covered by the leak-free
+# M1-ALLOC-01: the test-only allocation counter no longer carries its
+# own global operator new/new[] overrides — they moved into
+# laige-core (src/laige-core/alloc_watch.cpp, the G-R1 counting
+# backend, one strong definition per binary), so the test-side
+# probes (logging_alloc_counter.h) and the engine's per-tick
+# assertion share one counter. LAIGE_ALLOC_COUNTER marks the
+# non-sanitizer trees where the backend is live (the same gate as
+# laige-core's LAIGE_ALLOC_WATCH; the sanitizer runtimes own
+# operator new/delete, so the backend is excluded there — the
+# zero-allocation properties are then covered by the leak-free
 # sanitizer run of the same loops plus the ArchetypeStats
-# reservation-delta assertion (the same fallback pattern as
+# reservation-delta assertion, the same fallback pattern as
 # tests/laige-core, M0-CORE-02/05).
-if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN)
-  list(APPEND LAIGE_SIM_TEST_SOURCES logging_alloc_counter.cpp)
-endif()
-
 add_executable(laige-sim_tests ${LAIGE_SIM_TEST_SOURCES})
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN)
   target_compile_definitions(laige-sim_tests PRIVATE LAIGE_ALLOC_COUNTER=1)
@@ -291,6 +301,19 @@ add_test(NAME replay_diff
          COMMAND laige-sim_tests
          --gtest_filter=StateDiff.*:ReplayDiff.*)
 
+# M1-ALLOC-01: the zero sim-loop allocation assertion (G-R1, PRD
+# §8.1, PERF-003). The step's Verify command is `ctest -R zero_alloc`;
+# this entry selects exactly the ZeroAlloc suites from the shared
+# laige-sim_tests executable (the M1-ECS-07 workload run through the
+# game loop with the per-tick zero-allocation assertion live, the
+# scratch-system failure case — a deliberate std::vector in a system
+# aborts the debug build in a forked child — and the watch API's
+# arm/read/first-site round trip; the machine-greppable zero-alloc
+# window line lands in the ctest output).
+add_test(NAME zero_alloc
+         COMMAND laige-sim_tests
+         --gtest_filter=ZeroAlloc.*)
+
 # M1-PROF-01: the always-on profiler counters (FR-11.1). The step's
 # Verify command is `ctest -R profiler`; this entry selects exactly
 # the Profiler* suites from the shared laige-sim_tests executable (the
@@ -374,7 +397,8 @@ if(LAIGE_TSAN)
     query iter_order ecs_guardrails ecs_stress system_registry scheduler
     system_timing game_loop presentation engine game_config
     determinism_mode
-    replay_record replay_replay replay_diff profiler budget_report
+    replay_record replay_replay replay_diff zero_alloc profiler
+    budget_report
     PROPERTIES
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

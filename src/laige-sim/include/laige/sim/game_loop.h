@@ -185,6 +185,45 @@
 // caller's, not the simulation's) — never authoritative.
 //
 // ---------------------------------------------------------------------------
+// The zero-allocation check (M1-ALLOC-01, G-R1)
+// ---------------------------------------------------------------------------
+//
+// G-R1 (PRD §9.3, budgets.json sim_heap_allocs: target 0 allocs per
+// frame) is enforced in DEBUG builds at the tick boundary:
+// runOneTick() arms the process-wide allocation watch
+// (laige/alloc_watch.h) before the tick body and reads it after a
+// COMPLETED tick. A completed tick with a nonzero window count fails
+// with one structured Error event (alloc/sim_tick_allocation — the
+// offending call site in the site field) followed by the debug
+// assert (FR-12.3: actionable, never silent). The check covers
+// everything the tick runs: the systems, the onTick hook, the replay
+// recorder, the engine storage growth. Attribution (alloc_watch.h):
+// the engine's own cold-path event emission during the tick (a G-R5
+// budget-overrun warn/critical, a replay write failure, a guardrail
+// warn) is the diagnostic subsystem's memory, not the sim loop's —
+// those documented degradations still log and never trip the assert.
+// If a tick allocates for any other reason, the invariant is broken
+// and the assert names the site. This is the standing hot-path
+// guardrail for every later sim/render step (roadmap README §6,
+// "Global invariants").
+//
+// Release builds carry NO check and no crash (the guardrail table's
+// release column): a game system that allocates in release degrades
+// through the already-logged pool accounting — the pool overflow
+// path (pools.h) and the per-frame simAllocs delta (M1-PROF-01/02)
+// — never silent (CORE-008), never an assert.
+//
+// Scope of the counting backend: static build trees count every heap
+// allocation in the process; shared build trees count the
+// allocations made inside the engine images (the engine allocators
+// and the pools — the sim loop's storage; POSIX interposes
+// process-wide, Windows does not); sanitizer trees compile the watch
+// out (the runtimes own operator new/delete — the zero-allocation
+// property is then verified by the leak-free sanitizer run plus the
+// pool reservation-delta assertion, the established fallback pattern;
+// the full scope in laige/alloc_watch.h).
+//
+// ---------------------------------------------------------------------------
 // Performance (PERF-002/003)
 // ---------------------------------------------------------------------------
 //
@@ -205,6 +244,13 @@
 // enabled cost is bounded at 1% of a 10k-entity tick (the
 // m1-profiler-cost baseline, CORE-001/DBG-004). Profiler null or
 // disabled: one branch per tick, nothing else.
+//
+// G-R1 watch (M1-ALLOC-01), debug builds only: three atomic stores
+// per completed tick (the arm: the first-site, the count, and the
+// armed flag) + two atomic loads (the read) — no allocation, no
+// logging on the healthy path (the event is cold — it fires only
+// when the invariant breaks). Release builds: the check is compiled
+// out (the alloc_watch.h cost contract).
 //
 // ---------------------------------------------------------------------------
 // Threading

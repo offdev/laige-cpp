@@ -208,6 +208,45 @@ tick is not counted and not recorded (the tick-count contract,
   (ARCH-009) — it never enters the tick count, the state hash, or a
   replay.
 
+## The zero-allocation check (M1-ALLOC-01, G-R1)
+
+**Debug builds only.** G-R1 (PRD §9.3): the simulation's steady-state
+tick path MUST allocate nothing — the `sim_heap_allocs` budget
+(budgets.json) targets 0 allocs/frame. `runOneTick` enforces it
+directly, per tick:
+
+- **Arm** — `laige::allocWatchArm()` (the process-wide allocation
+  watch, [api/alloc_watch.md](alloc_watch.md)) starts a fresh window
+  **before** the tick body (the `beginFrame` + `runSystems` dispatch,
+  plus the attached profiler, `onTick` hook, and replay recorder).
+- **Read + assert** — **after a completed tick** (`status.ok()`),
+  `laige::allocWatchRead()`: a nonzero count logs one
+  `alloc/sim_tick_allocation` Error event (fields: `tick`, `allocs`,
+  `site` — the first offending call site) and then fails the debug
+  assert (FR-12.3: actionable, never silent). A failed tick is not
+  checked (the profiler's "a failed tick is not recorded" contract).
+- **Attribution** — the window counts the sim loop's own heap: the
+  systems, the `onTick` hook, the replay recorder, engine storage
+  growth, any other tick heap use. The diagnostic subsystem's own
+  emit (the logging facade's field strings, rate-state, sink
+  formatting — see [api/alloc_watch.md](alloc_watch.md)) is
+  attributed to the diagnostic subsystem: the engine's documented
+  in-tick degradations (a G-R5 budget overrun, a replay write
+  failure, a guardrail warn) still log and never trip G-R1.
+- **Release builds:** the whole check is compiled out (`#if !NDEBUG`)
+  — no assert, no crash (CPP-012); an allocating tick degrades
+  through the logged pool accounting and the per-frame `simAllocs`
+  delta ([api/profiler.md](profiler.md)) instead.
+- **Standing guardrail** — this check is the hot-path guardrail for
+  every later sim/render step (roadmap README §6, "Global
+  invariants"): any M2/M3 step that adds an allocation inside a tick
+  fails the debug build at the allocating call site.
+
+Suite: `ctest -R zero_alloc` (the 10k-entity M1-ECS-07 workload
+through the loop does 0 allocs per tick; a deliberate `std::vector` in
+a scratch system fails the assert; the watch's first-site capture is
+checked directly).
+
 ## Performance (DOC-004)
 
 - **Per frame (hot path):** one clock read, a few integer ops (the
@@ -227,7 +266,12 @@ tick is not counted and not recorded (the tick-count contract,
   ring write per completed tick (the `runOneTick` `TimeIt`) — no
   allocation; the measured enabled cost is bounded at 1% of a
   10k-entity tick (the m1-profiler-cost baseline, CORE-001/DBG-004).
-  Profiler null or disabled: one branch per tick, nothing else.
+  Profiler null or disabled: one branch per tick, nothing else. The
+  G-R1 watch (M1-ALLOC-01, debug builds only) adds three atomic
+  stores per completed tick (the arm: first-site, count, armed flag)
+  + two atomic loads (the read) — no allocation, no logging on the
+  healthy path; release builds compile the check out entirely (the
+  section above).
 - **Cold path (overload):** one rate-limited `tick_dropped` warn with
   field construction — only while a frame exceeds the catch-up bound.
 - **Complexity:** `frame()` is O(maxCatchUpTicks × per-tick system

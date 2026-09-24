@@ -160,6 +160,11 @@ still to land.
   flags (M0-CORE-03/04; ADR 0002).
 - [Memory pools](api/pools.md) — `ArenaPool<T>` and `Pool<T>` with
   generation-checked handles and `PoolStats` accounting (M0-CORE-05).
+- [Allocation watch](api/alloc_watch.md) — the process-wide heap
+  allocation counter behind the G-R1 zero-sim-loop-allocation
+  guardrail: the armed-window model, the per-tick debug assertion
+  (game_loop.md), the release fallback, and the sanitizer scope
+  (M1-ALLOC-01).
 - [Bounded JSON](api/json.md) — `laige::JsonValue`, `parseJson`,
   `serializeJson`, `JsonOptions` bounds (M0-CORE-07; ADR 0003).
 - [Budget harness](api/budget_harness.md) — `Histogram`, `TimeIt`,

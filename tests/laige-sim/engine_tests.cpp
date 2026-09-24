@@ -333,9 +333,14 @@ TEST(EngineShutdown, ShutdownReleasesTheWorld) {
 }
 
 // ---------------------------------------------------------------------------
-// The zero-allocation headless frame path (PERF-003; the M1-ALLOC-01
-// assertion will supersede this probe once it exists — ASan + pool
-// accounting is the milestone's interim check)
+// The zero-allocation headless frame path (PERF-003, G-R1). The
+// M1-ALLOC-01 per-tick watch arms around every tick, so this probe
+// reads the LAST completed tick's window after the run (the
+// one-shot setup allocations land before the first arm) — and in
+// debug non-sanitizer builds the engine's own per-tick assertion
+// additionally proves every tick of the run allocated nothing
+// (an allocating tick would abort the run). The sanitizer trees
+// prove the run leak-free.
 // ---------------------------------------------------------------------------
 
 #if defined(LAIGE_ALLOC_COUNTER)
@@ -366,17 +371,18 @@ TEST(EngineRun, HeadlessFramePathAllocatesNothing) {
   // The run's setup path allocates exactly three times, all one-shot:
   // the GameLoop object, the PresentationSnapshot object, and the
   // presentation slot record table (24 B x capacity — the
-  // presentation.h storage contract). The steady-state frame path
-  // (clock read, loop frame, snapshot refresh, sleep) touches no
-  // heap: the count below is identical for 1, 2, 3, and 10 ticks
-  // (probe-verified, M1-HEAD-01), i.e. zero per frame/per tick —
-  // the PERF-003 hot-path property.
+  // presentation.h storage contract). Those land BEFORE the first
+  // tick's G-R1 watch arm (M1-ALLOC-01), so the window read after
+  // the run holds the LAST completed tick's allocations: zero — the
+  // steady-state frame path (clock read, loop frame, snapshot
+  // refresh, sleep) touches no heap (the PERF-003 hot-path property;
+  // probe-verified for 1, 2, 3, and 10 ticks, M1-HEAD-01).
   std::printf("engine-zeroalloc ticks=%llu allocs=%llu\n",
               static_cast<unsigned long long>(engine.stats().ticks),
               static_cast<unsigned long long>(allocs));
   ASSERT_TRUE(status.ok());
   EXPECT_EQ(engine.stats().ticks, 3u);
-  EXPECT_EQ(allocs, 3u);
+  EXPECT_EQ(allocs, 0u);
   EXPECT_EQ(sink->entries.size(), 0u);
   restoreLogger();
 }
