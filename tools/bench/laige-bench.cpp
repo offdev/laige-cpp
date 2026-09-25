@@ -164,12 +164,14 @@ constexpr std::uint64_t kSimTickSeed = 0x1F055EED;
 constexpr std::int64_t kSimTickNs = 16666667;
 
 // Initial-state shape (deterministic, index-derived — no RNG in the
-// measured path): the dynamic bodies scatter over a 100-unit span
-// (50×50 grid, one body per cell of the first 2000 cells) with a
+// measured path): the dynamic bodies scatter over a 50×50 grid span
+// (one body per cell of the first 2000 cells: x = col−25 ∈ −25..24,
+// y = row ∈ 0..49) with a
 // small per-axis drift (vx ∈ -3..3, vy ∈ -5..5 world units per tick).
-// Max drift over the full run (warmup + measured, 4 000 ticks) is
-// 20 025 units — inside fpx16_16's ±32 768 Q16.16 range, so no
-// saturating-overflow edge is ever touched in the measured window.
+// Max coordinate magnitude over the full run (warmup + measured,
+// 4 000 ticks) is 20 049 units (49 + 5·4000) — inside fpx16_16's
+// ±32 768 Q16.16 range, so no saturating-overflow edge is ever
+// touched in the measured window.
 constexpr std::int32_t kSimTickGridSpan = 50;
 constexpr std::int32_t kSimTickVelXMax = 3;
 constexpr std::int32_t kSimTickVelYMax = 5;
@@ -323,8 +325,10 @@ bool simTickSetup(const Config& cfg) {
     }
     const laige::Entity entity = std::move(e).takeValue();
     if (i < kSimTickDynamic) {
+      // One body per grid cell, column-major over the 50×50 span:
+      // i = 50·col + row — the first 2 000 cells (40 columns of 50).
       const std::int32_t x =
-          static_cast<std::int32_t>((i / kSimTickDynamic) %
+          static_cast<std::int32_t>((i / kSimTickGridSpan) %
                                          kSimTickGridSpan) -
           kSimTickGridSpan / 2;
       const std::int32_t y = static_cast<std::int32_t>(i % kSimTickGridSpan);

@@ -25,10 +25,12 @@ Workload shape (the suite is in `tools/bench/laige-bench.cpp`):
   scenery's M1 stand-in.
 - Initial state is deterministic and index-derived (no RNG in the
   measured path): the 2 000 dynamic bodies scatter over a 50×50 grid
-  span with per-tick velocities `vx ∈ -3..3`, `vy ∈ -5..5` world units
-  (max drift 20 025 units over the full 4 000-tick run — inside
-  `fpx16_16`'s ±32 768 Q16.16 range, so no saturating-overflow edge is
-  ever touched in the measured window).
+  span — one body per cell of the first 2 000 cells (column-major:
+  `x = col − 25 ∈ −25..24`, `y = row ∈ 0..49`) — with per-tick
+  velocities `vx ∈ -3..3`, `vy ∈ -5..5` world units (max coordinate
+  magnitude 20 049 units — 49 + 5·4000 — over the full 4 000-tick run,
+  inside `fpx16_16`'s ±32 768 Q16.16 range, so no saturating-overflow
+  edge is ever touched in the measured window).
 - Two systems, registered in execution order (no `depends_on`):
   - `BenchMove` (1 ms declared budget) — `pos += vel` over every
     dynamic body, through the active backend's `SimMath::add` (the
@@ -69,8 +71,8 @@ entries (one run checks both budgets via the repeatable
 `--budget=` form; a failed check exits 2 and fails the CI job). The
 entries are excluded from the sanitizer trees: instrumentation
 inflates the tick's absolute cost (the m1-profiler-cost baseline
-precedent — ASan+UBSan measures ≈1.6 ms/tick on this workload, 2.7×
-the canonical 0.59 ms), so a sanitizer measurement would measure the
+precedent — ASan+UBSan measures ≈1.64 ms/tick on this workload, 2.7×
+the canonical 0.60 ms), so a sanitizer measurement would measure the
 instrumentation, not the sim; those trees verify the workload's
 safety properties instead (the leak-free ASan run, the race-free TSan
 run — see Interpretation).
@@ -95,8 +97,8 @@ pass), and recording the worse keeps the 10% regression band
 | 6 | Dataset / workload | `sim-tick` — 10 000 entities at the 100% scene budget, 2 000 dynamic bodies (`Position2D<B>` + `BenchVel<B>`), 8 000 bare entities; systems `BenchMove` (1 ms budget, `pos += vel` via `SimMath::add`) and `BenchHash` (2 ms budget, per-tick `World::stateHash`); `GameLoop` 60 Hz, 1 tick/frame, exact synthetic clock (`16 666 667` ns/frame); both SimMath backends |
 | 7 | Warm-up | 1 000 ticks discarded |
 | 8 | Sample count | `n=3000` tick samples per backend (histogram capacity 3000, no truncation) |
-| 9 | Summary statistics | `fpx16_16`: mean=0.59283 p50=0.591775 p95=0.604027 **p99=0.618314** max=0.679561 ms · `fp32_pinned`: mean=0.589047 p50=0.588107 p95=0.599378 **p99=0.605951** max=0.717022 ms (min: 0.580593 / 0.578499) |
-| 10 | Before / after | `before=0` (M0 convention — not yet measured) · `after`: sim_tick_avg (mean) `fpx16=0.59283`, `fp32=0.589047` → **recorded 0.59283** (worse of backends); sim_tick_p99 (p99) `fpx16=0.618314`, `fp32=0.605951` → **recorded 0.618314** (worse of backends) · `target`: mean ≤ 3.0 ms, p99 ≤ 5.0 ms — both backends **PASS** (5.1× / 8.1× inside the gates) |
+| 9 | Summary statistics | `fpx16_16`: mean=0.598405 p50=0.598226 p95=0.601423 **p99=0.606001** max=0.813886 ms · `fp32_pinned`: mean=0.591438 p50=0.590442 p95=0.601623 **p99=0.615179** max=0.902675 ms (min: 0.588077 / 0.581054) |
+| 10 | Before / after | `before=0` (M0 convention — not yet measured) · `after`: sim_tick_avg (mean) `fpx16=0.598405`, `fp32=0.591438` → **recorded 0.598405** (worse of backends); sim_tick_p99 (p99) `fpx16=0.606001`, `fp32=0.615179` → **recorded 0.615179** (worse of backends) · `target`: mean ≤ 3.0 ms, p99 ≤ 5.0 ms — both backends **PASS** (5.0× / 8.1× inside the gates) |
 
 ## Verbatim run output
 
@@ -111,25 +113,30 @@ $ LAIGE_BUDGETS_PATH=$PWD/budgets.json ./build/bin/laige-bench \
     --runs=3000 --warmup=1000 --budget=sim_tick_avg --budget=sim_tick_p99
 ```
 
+(The report's `before=` carries the `measured` value recorded by this
+step's first commit — 0.59283 / 0.618314 — before the initial-state
+grid-shape fix below re-measured the workload; the first-ever
+measurement of these budgets was `before=0`, the M0 convention.)
+
 ```text
-sim-tick: backend=fixed_point_16_16 entities=10000 dynamic=2000 rate_hz=60 ticks=4000 final_hash=0x8aa6b855aa807b31
+sim-tick: backend=fixed_point_16_16 entities=10000 dynamic=2000 rate_hz=60 ticks=4000 final_hash=0x7840644a24334cd0
 suite=sim-tick runs=3000 warmup=1000
 budget=sim_tick_avg result=PASS metric=mean unit=ms
-  after=0.59283 before=0 target=3
-  stats: n=3000 min=0.580593 mean=0.59283 p50=0.591775 p95=0.604027 p99=0.618314 max=0.679561
+  after=0.598405 before=0.59283 target=3
+  stats: n=3000 min=0.588077 mean=0.598405 p50=0.598226 p95=0.601423 p99=0.606001 max=0.813886
   context: workload=10k entities, 2k dynamic bodies (PRD 8.1) build=GCC 16.2.1 20260810, Debug machine= warmup=1000
 
 budget=sim_tick_p99 result=PASS metric=p99 unit=ms
-  after=0.618314 before=0 target=5
-  stats: n=3000 min=0.580593 mean=0.59283 p50=0.591775 p95=0.604027 p99=0.618314 max=0.679561
+  after=0.606001 before=0.618314 target=5
+  stats: n=3000 min=0.588077 mean=0.598405 p50=0.598226 p95=0.601423 p99=0.606001 max=0.813886
   context: workload=10k entities, 2k dynamic bodies (PRD 8.1) build=GCC 16.2.1 20260810, Debug machine= warmup=1000
 ```
 
 Exit code: `0`. (Same command with `--math=float_pinned_32`:
-`sim-tick: backend=float_pinned_32 … ticks=4000 final_hash=0x34ff9f20dac09426`;
-`sim_tick_avg after=0.589047` PASS, `sim_tick_p99 after=0.605951` PASS;
-stats `n=3000 min=0.578499 mean=0.589047 p50=0.588107 p95=0.599378
-p99=0.605951 max=0.717022`; exit code `0`.)
+`sim-tick: backend=float_pinned_32 … ticks=4000 final_hash=0x7a60d70232e448c7`;
+`sim_tick_avg after=0.591438` PASS, `sim_tick_p99 after=0.615179` PASS;
+stats `n=3000 min=0.581054 mean=0.591438 p50=0.590442 p95=0.601623
+p99=0.615179 max=0.902675`; exit code `0`.)
 
 ### Gate — CI shape, canonical tree, `ctest -R laige_bench_sim_tick`
 
@@ -140,16 +147,16 @@ $ ctest --test-dir build -R "laige_bench_sim_tick" --output-on-failure
 ```text
 Test project /home/anon/devel/laige-cpp/build
     Start 91: laige_bench_sim_tick_fpx16
-1/2 Test #91: laige_bench_sim_tick_fpx16 .......   Passed    2.61 sec
+1/2 Test #91: laige_bench_sim_tick_fpx16 .......   Passed    2.48 sec
     Start 92: laige_bench_sim_tick_fp32
-2/2 Test #92: laige_bench_sim_tick_fp32 ........   Passed    2.56 sec
+2/2 Test #92: laige_bench_sim_tick_fp32 ........   Passed    2.45 sec
 
 100% tests passed out of 2
 
-Total Test time (real) =   5.18 sec
+Total Test time (real) =   4.94 sec
 ```
 
-Commit: the M1-BENCH-01 commit on branch `m1-bench-01-sim-tick`
+Commit: the M1-BENCH-01 commits on branch `m1-bench-01-sim-tick`
 (the ctest entries are the CI perf lane — the P0 jobs run the full
 `ctest` on the canonical tree; see the M1-EXIT-01 gate).
 
@@ -164,12 +171,12 @@ rises with the instrumentation.
 
 | Tree | Build | `fpx16_16` mean / p99 (ms) | `fp32_pinned` mean / p99 (ms) | final_hash (fpx16 / fp32) | Budget gate |
 |---|---|---|---|---|---|
-| `build/` (canonical) | Debug g++ 16.2.1 | 0.59283 / 0.618314 | 0.589047 / 0.605951 | `0x8aa6b855aa807b31` / `0x34ff9f20dac09426` | PASS (gate) |
-| `build-release/` | Release g++ 16.2.1 | 0.0796074 / 0.0839 | 0.0790198 / 0.092677 | identical | PASS |
-| `build-clang/` | Debug Clang 22.1.8 | 0.918488 / 0.939555 | 0.900266 / 0.925299 | identical | PASS |
-| `build-shared/` | Debug g++ 16.2.1 (shared libs) | 0.627088 / 0.651729 | 0.621431 / 0.644755 | identical | PASS |
-| `build-asan/` | Debug Clang 22.1.8 (+ASan/UBSan) | 1.62355 / 1.65581 (n=500) | — | identical | excluded (instrumentation) |
-| `build-tsan/` | Debug Clang 22.1.8 (+TSan) | 2.4672 / 2.56305 (n=500) | — | identical | excluded (instrumentation) |
+| `build/` (canonical) | Debug g++ 16.2.1 | 0.598405 / 0.606001 | 0.591438 / 0.615179 | `0x7840644a24334cd0` / `0x7a60d70232e448c7` | PASS (gate) |
+| `build-release/` | Release g++ 16.2.1 | 0.0801446 / 0.08439 | 0.0782755 / 0.082517 | identical | PASS |
+| `build-clang/` | Debug Clang 22.1.8 | 0.913303 / 0.935979 | 0.892101 / 0.904358 | identical | PASS |
+| `build-shared/` | Debug g++ 16.2.1 (shared libs) | 0.623729 / 0.639315 | 0.623554 / 0.678189 | identical | PASS |
+| `build-asan/` | Debug Clang 22.1.8 (+ASan/UBSan) | 1.63971 / 1.74115 (n=500) | — | identical | excluded (instrumentation) |
+| `build-tsan/` | Debug Clang 22.1.8 (+TSan) | 2.44972 / 2.52165 (n=500) | — | identical | excluded (instrumentation) |
 
 (The ASan/TSan rows are the shorter 600-tick safety runs — leak-free
 ASan exit 0, race-free TSan exit 0 with `halt_on_error=1` — not the
@@ -184,36 +191,49 @@ m1-profiler-cost.)
 
 At M1's ECS-only slice — 10 000 entities, 2 000 kinematic dynamic
 bodies, movement + per-tick state hash — a complete 60 Hz tick
-measures **0.59 ms mean / 0.62 ms p99** on the canonical Debug tree
-(`fpx16_16`, the worse backend): **5.1× inside** the 3.0 ms mean
-budget and **8.1× inside** the 5.0 ms p99 budget. The p99/mean ratio
-(1.04) shows a flat, allocation-free tick with no visible churn or
-GC-like spikes; the max (0.68 ms) is a preemption-class outlier, not a
-systemic tail. Both SimMath backends pass identically — the Q16.16
-fixed-point path costs no more than the pinned-float path at this
-scale (both are register-resident integer/FP work; the fixed-point
-addition's per-component shift/mask is cheaper than a division, and
-no division occurs in the measured path).
+measures **0.60 ms mean / 0.62 ms p99** (the worse of the backends:
+mean `fpx16_16` 0.598405, p99 `fp32_pinned` 0.615179) on the canonical
+Debug tree: **5.0× inside** the 3.0 ms mean budget and **8.1× inside**
+the 5.0 ms p99 budget. The p99/mean ratio (1.01–1.04) shows a flat,
+allocation-free tick with no visible churn or GC-like spikes; the max
+(0.81 / 0.90 ms) is a preemption-class outlier, not a systemic tail.
+Both SimMath backends pass identically — the Q16.16 fixed-point path
+costs no more than the pinned-float path at this scale (both are
+register-resident integer/FP work; the fixed-point addition's
+per-component shift/mask is cheaper than a division, and no division
+occurs in the measured path).
 
-The Debug-vs-Release spread (0.59 ms → 0.08 ms, ≈7.4×) is the
+The Debug-vs-Release spread (0.60 ms → 0.08 ms, ≈7.5×) is the
 instrumentation and no-optimization cost of the canonical tree — the
 CI gate deliberately measures the Debug tree, so the budget protects
 the configuration the tests run in (methodology §5). The Clang Debug
-run (0.92 ms mean) is 1.5× the GCC Debug run — compiler-level
+run (0.91 ms mean) is 1.5× the GCC Debug run — compiler-level
 codegen differences in the debug build; both are far inside budget,
 and the Linux P0 CI lane covers both compilers.
 
-Every measured tick passed the engine's G-R1 per-tick zero-allocation
-assertion in the debug trees (an allocating tick would have aborted
-the run) — the M1-ALLOC-01 property is asserted across all 8 000
-measured ticks of both backends, not just sampled. The `final_hash`
-fingerprint is bit-identical across the four non-instrumented trees
-and across the two compilers, at both backends — the ADR 0002
-cross-build bit-exactness for `fpx16_16` (guaranteed by the C++20
-standard) and the per-ISA agreement of the pinned `fp32` path on
-x86-64 (the detcheck matrix's supported-platform scope, ADR 0002 /
-ARCH-010), now demonstrated on this larger 4 000-tick workload
+Every tick passed the engine's G-R1 per-tick zero-allocation assertion
+in the debug trees (an allocating tick would have aborted the run) —
+the M1-ALLOC-01 property is asserted across all ticks of both
+backends (4 000 each — warm-up and measured alike), not just sampled.
+The `final_hash` fingerprint is bit-identical across the four
+non-instrumented trees and across the two compilers, at both backends
+— the ADR 0002 cross-build bit-exactness for `fpx16_16` (guaranteed by
+the C++20 standard) and the per-ISA agreement of the pinned `fp32`
+path on x86-64 (the detcheck matrix's supported-platform scope, ADR
+0002 / ARCH-010), now demonstrated on this larger 4 000-tick workload
 (beyond the hello baseline's scope).
+
+**Initial-state grid-shape fix (recorded here, same PR):** the step's
+first commit stacked the 2 000 dynamic bodies in a single grid column
+(`x = (i / 2000) % 50 − 25` — the divisor was the body count, not the
+grid span) instead of scattering one body per cell of the first 2 000
+50×50 cells as documented. The fix (`x = (i / 50) % 50 − 25`) was
+re-measured on every tree: the `final_hash` fingerprint changed (as it
+must — the initial state changed), the new values above are the
+recorded ones, and the numbers moved <2% (0.59283 → 0.598405 mean
+fpx16_16; 0.618314 → 0.606001 p99) — the workload's iteration cost is
+archetype-bound, not position-value-bound, so the budget result is
+unchanged: both backends still PASS with the same margins.
 
 The measured tick is the simulation tick only (beginFrame + the two
 systems + the loop's bookkeeping). The PRD §8.1 tick's remaining

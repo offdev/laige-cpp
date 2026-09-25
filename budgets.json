@@ -15,7 +15,7 @@
       "metric": "mean",
       "unit": "ms",
       "target": 3.0,
-      "measured": 0.59283,
+      "measured": 0.598405,
       "workload": "10k entities, 2k dynamic bodies (PRD 8.1)"
     },
     {
@@ -23,7 +23,7 @@
       "metric": "p99",
       "unit": "ms",
       "target": 5.0,
-      "measured": 0.618314,
+      "measured": 0.615179,
       "workload": "10k entities, 2k dynamic bodies (PRD 8.1)"
     },
     {
