@@ -28,7 +28,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** ADR exists.
   - **Size:** docs only
 
-- [ ] **M2-DEC-02 · Confirm minimal UI widget set (D-UI)**
+- [x] **M2-DEC-02 · Confirm minimal UI widget set (D-UI)**
   - **Refs:** PRD §18.5, FR-2.8
   - **Depends:** —
   - **Scope:**
