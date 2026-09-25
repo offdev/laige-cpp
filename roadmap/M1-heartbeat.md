@@ -283,7 +283,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 ## Milestone gate
 
-- [ ] **M1-EXIT-01 · M1 exit gate**
+- [x] **M1-EXIT-01 · M1 exit gate**
   - **Refs:** PRD §15 M1 exit criteria
   - **Depends:** all other M1 steps
   - **Scope:**
