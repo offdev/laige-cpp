@@ -9,12 +9,14 @@ Benchmark methodology, baselines, results, and the regression policy
   map onto them, the baseline-file convention, the PRD §8.1 regression
   policy, and workload discipline.
 - [baselines/](baselines/README.md) — recorded baseline reports
-  (`<milestone>-<workload>.md`). Every `budgets.json` entry still has
-  `measured: 0`: the two baselines recorded so far
-  (`baselines/m0-synthetic.md`, M0-EXIT-01, and
-  `baselines/m1-ecs-stress.md`, M1-ECS-07) measure harness and stress
-  workloads that update no budget. `baselines/m1-profiler-cost.md`
-  lands with M1-PROF-01.
+  (`<milestone>-<workload>.md`). Four are recorded:
+  `baselines/m0-synthetic.md` (M0-EXIT-01),
+  `baselines/m1-ecs-stress.md` (M1-ECS-07),
+  `baselines/m1-profiler-cost.md` (M1-PROF-01), and
+  `baselines/m1-sim-tick.md` (M1-BENCH-01) — the first that updates a
+  `budgets.json` `measured` field (`sim_tick_avg`, `sim_tick_p99`);
+  every other entry still has `measured: 0` (its subsystem lands in a
+  later milestone).
 - [determinism-matrix.md](determinism-matrix.md) — the **determinism
   report** for the M1-SAMPLE-01 hello scenario (M1-DET-04): the
   committed per-tick hash baselines (both SimMath backends), the CI

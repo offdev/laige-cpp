@@ -261,7 +261,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 ## Benchmark & sample
 
-- [ ] **M1-BENCH-01 · 10k-entity tick benchmark**
+- [x] **M1-BENCH-01 · 10k-entity tick benchmark**
   - **Refs:** PRD §8.1 (≤ 3.0 ms avg, ≤ 5 ms p99), §15 M1 exit
   - **Depends:** M1-ALLOC-01, M1-PROF-01
   - **Scope:**
