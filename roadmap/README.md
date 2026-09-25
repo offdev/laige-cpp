@@ -140,7 +140,7 @@ Steps tagged `DEC` close these. ADRs live in `docs/decisions/`.
 | D-NAME | Engine name & license (MIT proposed) | M0-REPO-01 | keep "Laige", MIT | **Decided 2026-09-10:** keep "Laige" (*Legendary AI Game Engine*); MIT (ADR 0001) |
 | D-MATH | Fixed-point default for all deterministic paths, or float-pinned + FP only for lockstep | M1-DET-01, M3-PHYS-11 | Q16.16 default for deterministic mode (PRD §10.3 recommends it for lockstep/MMO) | **Decided 2026-09-10:** SimMath — config-selectable; `fpx16_16` default + `fp32_pinned` opt-in (ADR 0002) |
 | D-JSON | Config JSON: tiny in-engine parser vs vendored library | M0-CORE-07 | in-engine bounded parser (no new dep) | **Decided 2026-09-10:** in-engine bounded parser, no new dep (ADR 0003) |
-| D-ISO | 2:1 dimetric vs true iso as template default | M2-CAM-02 | 2:1 dimetric (PRD v0.2: pixel-art default) | — open |
+| D-ISO | 2:1 dimetric vs true iso as template default | M2-CAM-02 | 2:1 dimetric (PRD v0.2: pixel-art default) | **Decided 2026-09-25:** 2:1 dimetric as template default (ADR 0005); both presets selectable per scene |
 | D-UI | Confirm minimal retained UI widget set for M2 | M2-UI-01 | the FR-2.8 P0 list (panel/button/text/image/list/slider/input) | — open |
 | D-EDITOR | Editor embedded vs standalone | M5-ED-01 | standalone binary (FR-8.7) | — open |
 | D-LUA | Confirm Lua 5.4 (vs no scripting in 1.0, vs WASM) | M4-SCRIPT-01 | Lua 5.4, optional module, off by default | — open |
@@ -157,7 +157,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 |---|---|---|---|
 | M0 | 22 | 22 | ✅ complete (2026-09-13, M0-EXIT-01) |
 | M1 | 25 | 25 | ✅ complete (M1-EXIT-01, 2026-09-25) |
-| M2 | 33 | 0 | ⬜ not started |
+| M2 | 33 | 1 | ⬜ in progress |
 | M3 | 36 | 0 | ⬜ not started |
 | M4 | 12 | 0 | ⬜ not started |
 | M5 | 21 | 0 | ⬜ not started |
@@ -165,7 +165,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 | M7 | 15 | 0 | ⬜ not started |
 | M8 | 8 | 0 | ⬜ not started |
 | M9 | 6 | 0 | ⬜ proposals only |
-| **Total** | **194** | **47** | |
+| **Total** | **194** | **48** | |
 
 ---
 

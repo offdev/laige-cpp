@@ -19,7 +19,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
 
 ## Decisions
 
-- [ ] **M2-DEC-01 · Confirm 2:1 dimetric as template default (D-ISO)**
+- [x] **M2-DEC-01 · Confirm 2:1 dimetric as template default (D-ISO)**
   - **Refs:** PRD §18.8, v0.2 note
   - **Depends:** —
   - **Scope:**
