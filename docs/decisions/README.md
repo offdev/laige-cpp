@@ -12,3 +12,4 @@ alternatives, evidence, consequences, and review conditions; the full
 | [0003](0003-config-json.md) | Config JSON strategy | Accepted | 2026-09-10 |
 | [0004](0004-google-test-vendoring.md) | Vendoring GoogleTest as the dev-only test dependency | Accepted | 2026-09-10 |
 | [0005](0005-iso-default.md) | Default isometric projection for new projects: 2:1 dimetric (D-ISO) | Accepted | 2026-09-25 |
+| [0006](0006-ui-scope.md) | M2 retained UI widget set: the seven FR-2.8 widgets (D-UI) | Accepted | 2026-09-25 |

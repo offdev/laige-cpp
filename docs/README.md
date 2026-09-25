@@ -212,7 +212,8 @@ still to land.
 
 - [ADR index](decisions/README.md) — 0001 (name and license), 0002
   (deterministic math), 0003 (config JSON), 0004 (GoogleTest
-  vendoring), 0005 (iso default: 2:1 dimetric).
+  vendoring), 0005 (iso default: 2:1 dimetric), 0006 (UI widget scope:
+  the seven FR-2.8 widgets).
 
 ## Compatibility
 
