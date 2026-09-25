@@ -116,7 +116,7 @@ Exact flags are fixed by `M0-BUILD-01`; later steps must use the documented form
 |---|---|---|---|
 | [M0-foundations.md](M0-foundations.md) | **M0 — Foundations** (2–3 wks) | CI green on 3 OSes; core unit-tested; budget harness wired | 22 |
 | [M1-heartbeat.md](M1-heartbeat.md) | **M1 — Heartbeat** (3–4 wks) | 10k entities @ 60 Hz ≤ 3 ms; replay bit-exact; zero-alloc assertion passes | 25 |
-| [M2-rendering-2.5d.md](M2-rendering-2.5d.md) | **M2 — 2.5D Rendering** (4–6 wks) | 50k sprites ≤ 30 draw calls (worst-case iso); isometric is the default template; all AC-4.x pass | 32 |
+| [M2-rendering-2.5d.md](M2-rendering-2.5d.md) | **M2 — 2.5D Rendering** (4–6 wks) | 50k sprites ≤ 30 draw calls (worst-case iso); isometric is the default template; all AC-4.x pass | 33 |
 | [M3-game-feel.md](M3-game-feel.md) | **M3 — Game Feel** (4–6 wks) | Physics budgets + determinism AC; playable isometric sample in-engine | 36 |
 | [M4-scripting-customization.md](M4-scripting-customization.md) | **M4 — Scripting & Customization** (3–4 wks) | Script budget watchdog works; a custom-render-pass sample runs | 12 |
 | [M5-editor-mvp.md](M5-editor-mvp.md) | **M5 — Editor MVP** (6–8 wks) | A dev can build a small isometric game *entirely* in the editor | 21 |
@@ -157,7 +157,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 |---|---|---|---|
 | M0 | 22 | 22 | ✅ complete (2026-09-13, M0-EXIT-01) |
 | M1 | 25 | 25 | ✅ complete (M1-EXIT-01, 2026-09-25) |
-| M2 | 32 | 0 | ⬜ not started |
+| M2 | 33 | 0 | ⬜ not started |
 | M3 | 36 | 0 | ⬜ not started |
 | M4 | 12 | 0 | ⬜ not started |
 | M5 | 21 | 0 | ⬜ not started |
@@ -165,7 +165,7 @@ Updated in the same PR that closes steps. "Done" = box checked + Verify green.
 | M7 | 15 | 0 | ⬜ not started |
 | M8 | 8 | 0 | ⬜ not started |
 | M9 | 6 | 0 | ⬜ proposals only |
-| **Total** | **193** | **47** | |
+| **Total** | **194** | **47** | |
 
 ---
 

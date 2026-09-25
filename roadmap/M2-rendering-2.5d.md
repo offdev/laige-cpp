@@ -11,6 +11,9 @@ Rules specific to this milestone: isometric is the **primary projection** — ev
 visual acceptance test uses the reference isometric scene (M2-SCENE-01). No
 simulation code may depend on the projection mode (AC-4.2). All rendering goes
 through the batcher (S-5); the unsafe draw path does not exist yet (M4-UNSAFE-01).
+The P1 step M2-TEXT-03 (SDF text, FR-2.8) is placed here per the roadmap README's
+P1-placement note (rendering subsystem); it is descopable by decision with an ADR
+if M2 slips, and its status is recorded in M2-EXIT-01.
 
 ---
 
@@ -248,7 +251,7 @@ through the batcher (S-5); the unsafe draw path does not exist yet (M4-UNSAFE-01
 ## Text & UI
 
 - [ ] **M2-TEXT-01 · Font rasterization (bitmap, P0)**
-  - **Refs:** FR-2.8 (bitmap P0; SDF is P1 → M9), PRD §11 (stb_truetype)
+  - **Refs:** FR-2.8 (bitmap P0; SDF is P1 → M2-TEXT-03), PRD §11 (stb_truetype)
   - **Depends:** M2-GL-01
   - **Scope:**
     - Vendor stb_truetype (deps.lock); rasterize the configured font + glyph set (default Latin-1 + documented extension) into a bitmap glyph atlas (fixed size, no runtime re-rasterization).
@@ -266,6 +269,17 @@ through the batcher (S-5); the unsafe draw path does not exist yet (M4-UNSAFE-01
     - Unit tests: width measurement golden-checked for known strings; wrap at max-width exact; empty/oversized string behavior documented.
   - **Verify:** `ctest -R text_items` green.
   - **Size:** ~200 lines + tests
+
+- [ ] **M2-TEXT-03 · SDF font rendering (P1)**
+  - **Refs:** FR-2.8 (SDF — P1, placed here: it is a text/render feature next to the bitmap path; PRD §7 P1 = M6–M7), PRD §11 (stb_truetype)
+  - **Depends:** M2-TEXT-02
+  - **Scope:**
+    - SDF glyph generation from the M2-TEXT-01 bitmap glyphs (documented distance-field algorithm — e.g. Felice & Nienhuis, per CORE-014) into a fixed-size SDF glyph atlas (no runtime re-rasterization).
+    - SDF sprite shader (the M2-SPRITE-02 pattern: per-instance UV rect + SDF threshold); `TextItem` selects bitmap (default) vs SDF via a documented scene-config key.
+    - Resolution/zoom independence: text stays crisp at any zoom (the P1 motivation — documented).
+    - Unit tests: SDF atlas generation deterministic (same font+size → identical bytes); SDF text width matches the bitmap path within documented tolerance; threshold-edge behavior documented.
+  - **Verify:** `ctest -R font_sdf` green.
+  - **Size:** ~150 lines + tests
 
 - [ ] **M2-UI-01 · UI widget tree (retained, screen-space)**
   - **Refs:** FR-2.8 (panel, button, text, image, list, slider, input), FR-4.4 (UI input routing base)
@@ -339,7 +353,7 @@ through the batcher (S-5); the unsafe draw path does not exist yet (M4-UNSAFE-01
     - **AC-4.1:** one engine build runs both a side-view (platformer-style) and an isometric scene, differing **only** in config (two fixture configs, same binary, both render offscreen + golden-checked).
     - **AC-4.2:** proof no sim/physics/pathing/network code depends on projection mode: include-graph lint rule + surface check (no `ProjectionMode` in `laige-sim`/`laige-net` public surface) — automated in CI.
     - **AC-4.3:** 10k overlapping sprites sorted + drawn at 60 FPS on CI reference hardware (dedicated suite `render-sort-10k`).
-    - **AC-4.4:** iso picking exact at all zoom levels (M2-ISO-03 tests) + depth-key rebuild after terrain edit within §8.1 budget (M2-ISO-02 tests) + isometric is the template default (checked in M2-SAMPLE-01 config).
+    - **AC-4.4:** iso picking exact at all zoom levels (M2-ISO-03 tests) + depth-key rebuild after terrain edit within §8.1 budget (M2-ISO-02 tests) + isometric is the template default (engine default projection = iso, asserted here; M2-SAMPLE-01's config is checked in M2-EXIT-01).
     - Suite wired into CI as `laige-bench --suite=ac4` + `ctest -R ac4`.
   - **Verify:** `ctest -R ac4` and the AC-4 bench green; AC checklist recorded in `docs/benchmarks/baselines/m2-ac4.md`.
   - **Size:** test wiring + ~150 lines
@@ -348,10 +362,10 @@ through the batcher (S-5); the unsafe draw path does not exist yet (M4-UNSAFE-01
 
 - [ ] **M2-SAMPLE-01 · `iso-arena.laige` template (isometric default)**
   - **Refs:** NFR-13.5, PRD v0.2 (isometric default template), §4 AC-4.4
-  - **Depends:** M2-AC-01
+  - **Depends:** M2-CAM-02, M2-ISO-03, M2-TILE-01, M2-SPRITE-02
   - **Scope:**
     - `samples/iso-arena/`: small isometric scene — tile ground with a height step, 3 sprites, grid-snap camera, screen→grid picking prints the picked cell, 2:1 dimetric default (per D-ISO); **≤ 200 lines of game code**, commented.
-    - Config sets projection=iso explicitly (the default for new projects — M2-AC-01 checks this).
+    - Config sets projection=iso explicitly (the default for new projects — the engine default is asserted in M2-AC-01, this config is checked in M2-EXIT-01).
     - Runs headless (offscreen) in CI and windowed locally; renders in < 2 s cold start (PRD §8.1 — measured on CI desktop job).
   - **Verify:** CI builds + runs it (headless, 100 frames, picking test case prints expected cell); cold-start time recorded in baseline.
   - **Size:** ~250 lines (sample + wiring)
@@ -362,7 +376,7 @@ through the batcher (S-5); the unsafe draw path does not exist yet (M4-UNSAFE-01
   - **Refs:** PRD §15 M2 exit criteria
   - **Depends:** all other M2 steps
   - **Scope:**
-    - Confirm and record: (1) 50k-sprite budget green (M2-PERF-01 report link), (2) isometric is the default template (sample + config check link), (3) all AC-4.x pass (M2-AC-01 report link), (4) zero per-frame allocation in the render batcher (M1-ALLOC-01 assertion extended, link).
+    - Confirm and record: (1) 50k-sprite budget green (M2-PERF-01 report link), (2) isometric is the default template (M2-SAMPLE-01 config check link + M2-AC-01 engine-default check), (3) all AC-4.x pass (M2-AC-01 report link), (4) zero per-frame allocation in the render batcher (M1-ALLOC-01 assertion extended, link), (5) P1 status: M2-TEXT-03 (SDF) done or descoped-with-ADR.
     - Update Progress Board.
-  - **Verify:** all evidence links present; no open M2 step.
+  - **Verify:** all evidence links present; no open M2 P0 step (M2-TEXT-03 done or descoped-with-ADR).
   - **Size:** docs only
