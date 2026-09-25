@@ -38,8 +38,34 @@ if (!r.passed) { /* print r.report; fail the CI run (PRD 8.1 policy) */ }
 ```
 
 The end-to-end form is the tool:
-`./build/bin/laige-bench --suite=synthetic --runs=1000 --warmup=100
-[--budget=<name>]` — exit code 0 on pass, 2 on a failed budget check.
+
+```console
+./build/bin/laige-bench --suite=<name> [--runs=N] [--warmup=N]
+                       [--budget=<budget-name>]... [--budgets=<path>]
+                       [--math=<fixed_point_16_16|float_pinned_32>]
+                       [--report=<path>] [--list]
+```
+
+- `--suite` — required; `synthetic` (the M0 harness stand-in) or
+  `sim-tick` (the M1-BENCH-01 PRD §8.1 workload: 10k entities, 2k
+  dynamic bodies, 60 Hz, movement + per-tick state hash — its baseline:
+  `docs/benchmarks/baselines/m1-sim-tick.md`). `--list` prints the
+  suite table.
+- `--budget` — **repeatable**: one run checks every named budget against
+  the same histogram (each entry's `metric` picks its statistic),
+  printing one report per entry. A duplicate name is a usage error.
+  The M1 gate form: `--budget=sim_tick_avg --budget=sim_tick_p99`.
+- `--math` — the SimMath backend (ADR 0002) the `sim-tick` suite runs
+  on; `fixed_point_16_16` (the default) or `float_pinned_32`. Other
+  suites ignore it.
+- `--budgets` — the budgets file (default: `$LAIGE_BUDGETS_PATH`, then
+  `budgets.json` in the working directory — the ctest gate entries set
+  the env var to the repo root).
+- `--report` — append the printed report to a file.
+
+Exit code 0 on pass, 2 on a failed budget check (any one of the named
+budgets failing fails the run — PRD 8.1 policy: a budget regression
+fails CI), 1 on usage/load errors.
 
 ## `laige::Histogram`
 
@@ -175,8 +201,10 @@ fields explicitly). Schema version **1**:
   the first baseline).
 - **All 15 PRD §8.1 targets** are present as named entries (sim tick,
   50k-sprite scene, cold start, and the zone server each carry two
-  budgets). Until their subsystems exist (M1+) their `measured` values
-  stay 0 = not yet measured.
+  budgets). `sim_tick_avg`/`sim_tick_p99` carry their first recorded
+  values (M1-BENCH-01, `docs/benchmarks/baselines/m1-sim-tick.md` —
+  the worse of the two SimMath backends, canonical Debug tree); every
+  other entry stays 0 = not yet measured until its subsystem lands.
 - **Versioning:** an incompatible schema change bumps `version` and ships
   a migration note here; `loadBudgets` rejects every other version
   (never guesses).
@@ -204,8 +232,12 @@ is smaller than the run and then claiming "all samples"; using
 ## Determinism
 
 The harness measures wall-clock durations: it is *not* deterministic
-simulation state and plays no part in replay/lockstep (ARCH-010). The
-synthetic `laige-bench --suite=synthetic` workload is deterministic by
-construction (fixed LCG constants — Marsaglia 2003 — no RNG, no
-allocation), which is what makes its baseline reproducible
-(`docs/benchmarks/baselines/m0-synthetic.md`, M0-EXIT-01).
+simulation state and plays no part in replay/lockstep (ARCH-010). Both
+suites are deterministic by construction, which is what makes their
+baselines reproducible: `synthetic` (fixed LCG constants — Marsaglia
+2003 — no RNG, no allocation; `docs/benchmarks/baselines/m0-synthetic.md`,
+M0-EXIT-01) and `sim-tick` (fixed seed `0x1F055EED`, deterministic
+index-derived initial state, no randomness in the measured path — the
+run's `final_hash` line is a bit-identical fingerprint across runs,
+build types, and compilers per the ADR 0002 scope;
+`docs/benchmarks/baselines/m1-sim-tick.md`, M1-BENCH-01).

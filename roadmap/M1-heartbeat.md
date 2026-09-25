@@ -261,7 +261,7 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 ## Benchmark & sample
 
-- [ ] **M1-BENCH-01 · 10k-entity tick benchmark**
+- [x] **M1-BENCH-01 · 10k-entity tick benchmark**
   - **Refs:** PRD §8.1 (≤ 3.0 ms avg, ≤ 5 ms p99), §15 M1 exit
   - **Depends:** M1-ALLOC-01, M1-PROF-01
   - **Scope:**
@@ -283,11 +283,51 @@ zero-allocation property (M1-ALLOC-01 enforces it once it exists; before that, A
 
 ## Milestone gate
 
-- [ ] **M1-EXIT-01 · M1 exit gate**
+- [x] **M1-EXIT-01 · M1 exit gate**
   - **Refs:** PRD §15 M1 exit criteria
   - **Depends:** all other M1 steps
   - **Scope:**
     - Confirm and record: (1) `sim-tick` budget green on both SimMath backends (link report), (2) replay bit-exact on CI across all P0 OS jobs and both backends (link run), (3) zero-alloc assertion green on the 10k workload (link test log).
     - Update Progress Board; note any deferred P1 items (there should be none in M1 — everything here is P0).
   - **Verify:** all three evidence links present; no open M1 step.
+  - **Recorded (2026-09-25):** gate items confirmed and recorded:
+    (1) **`sim-tick` budget green on both SimMath backends** — the
+    report [docs/benchmarks/baselines/m1-sim-tick.md](../docs/benchmarks/baselines/m1-sim-tick.md)
+    (canonical Debug, both backends PASS: `fixed_point_16_16` mean
+    0.598405 / p99 0.606001 ms, `float_pinned_32` mean 0.591438 /
+    p99 0.615179 ms, against the 3.0 / 5.0 ms targets) — and on CI
+    (the CI reference machine, ubuntu-24.04, is the gate): PR-lane run
+    [36152843429](https://github.com/offdev/laige-cpp/actions/runs/36152843429)
+    (linux-gcc + linux-clang full `ctest` 94/94, including the two
+    budget-gate entries `laige_bench_sim_tick_fpx16` /
+    `laige_bench_sim_tick_fp32` — both budgets, both backends, exit 0)
+    and run [36155154836](https://github.com/offdev/laige-cpp/actions/runs/36155154836)
+    (macOS arm64 + Intel full `ctest`, the same two gate entries green
+    on AppleClang).
+    (2) **Replay bit-exact on CI across all P0 OS jobs and both
+    backends** — the determinism report
+    [docs/benchmarks/determinism-matrix.md](../docs/benchmarks/determinism-matrix.md)
+    (every P0 OS job asserts per-tick identity of the hello baseline
+    for both backends — `hello_baseline_fpx` / `hello_baseline_fp32` —
+    and the always-on detcheck job compares the cross-build pairs on
+    both backends) — CI evidence: merge-lane run
+    [36037080146](https://github.com/offdev/laige-cpp/actions/runs/36037080146)
+    (master, 2026-09-24: all 7 P0 jobs + detcheck green) and this PR's
+    label-gated P0 matrix — Linux: run 36152843429, macOS arm64 /
+    Intel: run 36155154836, Windows x64: run
+    [36156322585](https://github.com/offdev/laige-cpp/actions/runs/36156322585)
+    — every job green, including the two hello-baseline tests in each
+    OS job's full `ctest` and the detcheck job (both backends).
+    (3) **Zero-alloc assertion green on the 10k workload** — the
+    `zero_alloc` ctest entry (M1-ALLOC-01: the M1-ECS-07 10 000-entity
+    workload driven through the game loop, asserting 0 allocations per
+    tick in the debug trees) green in every P0 job's full `ctest` in
+    the runs above (test logs in each run's job logs; the ASan/TSan
+    lanes additionally archive the sanitizer reports) — and the
+    M1-BENCH-01 measurement itself is zero-alloc-asserted: every tick
+    of both backends (4 000 each — warm-up and measured) passed the
+    engine's G-R1 per-tick allocation assertion (an allocating tick
+    aborts the run).
+    Deferred P1 items: none — every M1 step is P0.
+    Progress Board: M1 25/25 complete (total 47/193).
   - **Size:** docs only
