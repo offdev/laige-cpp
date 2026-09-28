@@ -103,7 +103,11 @@ OS so that CI can run the GL smoke on every P0 runner:
   GLFW 3.5 loads the X11 libraries at runtime (`dlopen` — no X11 link
   dependency). A Linux host with no X server (the P0 CI runners) yields
   a clean `GlUnavailable` from `createWindowed`; the CI GL smoke there
-  runs the headless path.
+  runs the headless path. The no-display detection is a fast-fail probe
+  (`DISPLAY` unset → `GlUnavailable`/`glfw_init` before GLFW is
+  initialized): GLFW 3.5's X11 init failure path leaks process-global
+  Xlib state (upstream), which the engine's fatal-on-any-leak ASan CI
+  lane would otherwise turn into a failed job.
 
 In every case the FBO (headless) is an RGBA8 texture
 (`glTexImage2D(GL_RGBA8)`) attached to a single framebuffer, created

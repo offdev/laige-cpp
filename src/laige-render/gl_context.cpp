@@ -30,6 +30,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string_view>
 
@@ -105,6 +106,20 @@ bool glfwInitialized() {
   static const bool kDone = glfwInit() != GLFW_FALSE;
   return kDone;
 }
+
+// Linux (the X11-only GLFW build, ADR 0007): an X server is reachable
+// if and only if DISPLAY is set — the same probe GLFW's own diagnostic
+// uses ("The DISPLAY environment variable is missing"). GLFW's X11
+// backend dlopens X11 and initializes process-global Xlib state
+// (XInitThreads/XrmInitialize) BEFORE XOpenDisplay, and its failure
+// path (no display) frees the dlopen module but not that state — an
+// upstream leak on the init-failure path that the ASan CI lane treats
+// as fatal. The display-less hosts (the P0 CI runners) therefore never
+// enter glfwInit for the windowed path: createWindowed returns the
+// identical GlUnavailable/glfw_init result with no GLFW state created.
+#if defined(__unix__) && !defined(__APPLE__)
+bool x11DisplayAvailable() { return std::getenv("DISPLAY") != nullptr; }
+#endif
 
 // Parse "major.minor" from the GL_VERSION string ("4.6.0 ...", "3.3").
 bool parseGlVersion(const char* s, std::int32_t& major, std::int32_t& minor) {
@@ -423,6 +438,16 @@ Result<GlContext> GlContext::createWindowed(std::int32_t width,
   if (title == nullptr || title[0] == '\0') {
     return Result<GlContext>::failure(ErrorCode::InvalidArgument);
   }
+#if defined(__unix__) && !defined(__APPLE__)
+  // Display-less Linux host: fail fast with the identical
+  // GlUnavailable/glfw_init result glfwInit would produce, without
+  // entering its (leaky on failure) X11 init path — see
+  // x11DisplayAvailable().
+  if (!x11DisplayAvailable()) {
+    logCreationFailure("windowed", "glfw_init", ErrorCode::GlUnavailable);
+    return Result<GlContext>::failure(ErrorCode::GlUnavailable);
+  }
+#endif
   auto impl = std::make_unique<Impl>();
   impl->width = width;
   impl->height = height;

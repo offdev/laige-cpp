@@ -75,7 +75,19 @@ configure (ADR 0004 machinery).
   libxext-dev` on the ubuntu-24.04 build jobs. A Linux host without an X
   server (the P0 CI runners) gets a clean `GlUnavailable` from
   `createWindowed` — the windowed path there is not a supported mode;
-  headless rendering uses `createHeadless` (EGL surfaceless).
+  headless rendering uses `createHeadless` (EGL surfaceless). The engine
+  additionally fast-fails the windowed path on Linux when `DISPLAY` is
+  unset (the same probe GLFW's own diagnostic uses): GLFW 3.5's X11
+  backend dlopens X11 and initializes process-global Xlib state
+  (`XInitThreads`/`XrmInitialize`) before `XOpenDisplay`, and its
+  no-display failure path frees the dlopen module but not that state —
+  an upstream leak on the init-failure path that the ASan CI lane
+  (every report fatal) turns into a failed job; the fast-fail returns
+  the identical `GlUnavailable`/`glfw_init` result with no GLFW state
+  created. The CI jobs also install the runtime GL stack for the
+  headless smoke (`libegl1 libgl1 libegl-mesa0 libglx-mesa0
+  libgl1-mesa-dri`: Mesa surfaceless EGL + llvmpipe software GL — both
+  loaded by dlopen at runtime, by the engine and by GLAD).
 
 ## DEP-003 justification
 

@@ -125,12 +125,16 @@ jobs:
         # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
         # CMakeLists.txt) needs only the X11 *headers* at configure time
         # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
-        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
+        # packages are the RUNTIME GL stack for the headless GL smoke
+        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
+        # GLAD load them by dlopen at runtime) (M2-GL-01).
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             libx11-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxext-dev
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
       - name: Build
@@ -148,12 +152,16 @@ jobs:
         # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
         # CMakeLists.txt) needs only the X11 *headers* at configure time
         # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
-        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
+        # packages are the RUNTIME GL stack for the headless GL smoke
+        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
+        # GLAD load them by dlopen at runtime) (M2-GL-01).
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             libx11-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxext-dev
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
       - name: Build
@@ -177,12 +185,16 @@ jobs:
         # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
         # CMakeLists.txt) needs only the X11 *headers* at configure time
         # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
-        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
+        # packages are the RUNTIME GL stack for the headless GL smoke
+        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
+        # GLAD load them by dlopen at runtime) (M2-GL-01).
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             libx11-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxext-dev
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
       - name: Configure (ASan+UBSan)
         run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_ASAN=ON
       - name: Build (ASan+UBSan)
@@ -225,12 +237,16 @@ jobs:
         # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
         # CMakeLists.txt) needs only the X11 *headers* at configure time
         # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
-        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
+        # packages are the RUNTIME GL stack for the headless GL smoke
+        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
+        # GLAD load them by dlopen at runtime) (M2-GL-01).
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             libx11-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxext-dev
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
       - name: Configure (TSan)
         run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_TSAN=ON
       - name: Build (TSan)
@@ -366,12 +382,16 @@ jobs:
         # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
         # CMakeLists.txt) needs only the X11 *headers* at configure time
         # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
-        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
+        # packages are the RUNTIME GL stack for the headless GL smoke
+        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
+        # GLAD load them by dlopen at runtime) (M2-GL-01).
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             libx11-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxext-dev
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
       - name: Build scanner
@@ -416,12 +436,16 @@ jobs:
         # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
         # CMakeLists.txt) needs only the X11 *headers* at configure time
         # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
-        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
+        # packages are the RUNTIME GL stack for the headless GL smoke
+        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
+        # GLAD load them by dlopen at runtime) (M2-GL-01).
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             libx11-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxext-dev
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
       # -- The four build configurations (targeted builds: only the
       #    scenario binaries and the checker — no full project build).
       #    The hello binaries land at the SOURCE-tree path
