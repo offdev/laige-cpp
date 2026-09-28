@@ -556,14 +556,21 @@ Result<GlContext> GlContext::createHeadless(std::int32_t width,
   impl->egl.destroyDisplay =
       reinterpret_cast<egl::Bool (*)(egl::Display)>(
           dlsym(impl->eglHandle, "eglDestroyDisplay"));
-  // A partial table is unusable: any missing symbol is a clean failure.
+  // A partial table is unusable: any missing symbol is a clean failure —
+  // except eglDestroyDisplay, which is OPTIONAL: the libglvnd dispatcher
+  // (libEGL.so.1 on P0 Ubuntu, what the engine dlopens) does not export
+  // it (verified against the noble libegl1 1.7.0 symbol table), while
+  // vendor libraries (e.g. Mesa's libEGL_mesa.so.0) do. When absent,
+  // the display's resources are released at process termination — the
+  // engine's one-display-per-process design (CORE-009: the display's
+  // lifetime is the process's, owned by this context object until then).
+  // destroy() already skips the call when the pointer is null.
   const bool complete =
       impl->egl.getPlatformDisplay != nullptr &&
       impl->egl.initialize != nullptr && impl->egl.bindApi != nullptr &&
       impl->egl.createContext != nullptr && impl->egl.makeCurrent != nullptr &&
       impl->egl.getCurrentContext != nullptr &&
-      impl->egl.destroyContext != nullptr &&
-      impl->egl.destroyDisplay != nullptr;
+      impl->egl.destroyContext != nullptr;
   if (!complete) {
     logCreationFailure("headless", "egl_load", ErrorCode::GlUnavailable);
     return Result<GlContext>::failure(ErrorCode::GlUnavailable);

@@ -80,7 +80,12 @@ OS so that CI can run the GL smoke on every P0 runner:
   clean `GlUnavailable`, not a build failure) and resolves the small
   EGL 1.5 function set by name (`eglGetPlatformDisplay`,
   `eglInitialize`, `eglBindAPI`, `eglCreateContext`, `eglMakeCurrent`,
-  `eglGetCurrentContext`, `eglDestroyContext`, `eglDestroyDisplay`).
+  `eglGetCurrentContext`, `eglDestroyContext`, and — **optional** —
+  `eglDestroyDisplay`: the libglvnd dispatcher that P0 Ubuntu exposes
+  as `libEGL.so.1` does not export it, so its absence is not a
+  failure; when absent the display's resources are released at process
+  termination, which matches the engine's one-display-per-process
+  design (the display's lifetime is the process's).
   `eglBindAPI(EGL_OPENGL_API)` is called **before** `eglInitialize` —
   the order the EGL 1.5 spec requires — and its result is checked: a
   display that cannot bind the desktop OpenGL API (an ES-only driver
