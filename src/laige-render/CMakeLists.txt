@@ -34,6 +34,17 @@ set(GLFW_BUILD_DOCS OFF)
 set(GLFW_BUILD_EXAMPLES OFF)
 set(GLFW_BUILD_TESTS OFF)
 set(GLFW_INSTALL OFF)
+# Backend selection (ADR 0007): X11 only on Linux.
+# - The Wayland backend is OFF: it requires wayland-scanner
+#   (wayland-protocols) at CONFIGURE time — a system package the P0 CI
+#   runners (ubuntu-24.04) do not carry — and it buys no P0 coverage:
+#   GLFW's X11 backend reaches Wayland sessions through XWayland.
+# - GLFW 3.5 resolves the X11 and GL libraries at RUNTIME (dlopen +
+#   dlsym inside the X11/GLX backend), so only the X11 *headers* are a
+#   configure-time requirement (the CI workflows install the six
+#   libx*-dev packages; see .github/workflows).
+set(GLFW_BUILD_X11 ON)
+set(GLFW_BUILD_WAYLAND OFF)
 add_subdirectory(${CMAKE_SOURCE_DIR}/deps/glfw ${CMAKE_BINARY_DIR}/deps/glfw)
 
 add_library(laige-glad STATIC ${CMAKE_SOURCE_DIR}/deps/glad/src/gl.c)

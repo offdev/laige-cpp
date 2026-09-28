@@ -97,7 +97,13 @@ OS so that CI can run the GL smoke on every P0 runner:
   window is never presented and the render target is the offscreen
   FBO.
 - **Windowed (all P0 OSes):** a normal GLFW window with the same 3.3
-  core hints; the render target is the window's frame buffer.
+  core hints; the render target is the window's frame buffer. On Linux
+  the GLFW build carries the **X11 backend only** (`GLFW_BUILD_WAYLAND=
+  OFF`, ADR 0007): Wayland sessions are reached through XWayland, and
+  GLFW 3.5 loads the X11 libraries at runtime (`dlopen` — no X11 link
+  dependency). A Linux host with no X server (the P0 CI runners) yields
+  a clean `GlUnavailable` from `createWindowed`; the CI GL smoke there
+  runs the headless path.
 
 In every case the FBO (headless) is an RGBA8 texture
 (`glTexImage2D(GL_RGBA8)`) attached to a single framebuffer, created

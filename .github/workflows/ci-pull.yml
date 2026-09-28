@@ -76,6 +76,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
+        # CMakeLists.txt) needs only the X11 *headers* at configure time
+        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
+        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
       - name: Build
@@ -92,6 +102,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
+        # CMakeLists.txt) needs only the X11 *headers* at configure time
+        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
+        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
       - name: Build
@@ -114,6 +134,16 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
+        # CMakeLists.txt) needs only the X11 *headers* at configure time
+        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
+        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev
       - name: Configure (ASan+UBSan)
         run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_ASAN=ON
       - name: Build (ASan+UBSan)
@@ -157,6 +187,16 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
+        # CMakeLists.txt) needs only the X11 *headers* at configure time
+        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
+        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev
       - name: Configure (TSan)
         run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_TSAN=ON
       - name: Build (TSan)
@@ -298,6 +338,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
+        # CMakeLists.txt) needs only the X11 *headers* at configure time
+        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
+        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
       - name: Build scanner
@@ -324,6 +374,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
+        # CMakeLists.txt) needs only the X11 *headers* at configure time
+        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
+        # ubuntu-24.04 runner image ships none of them (M2-GL-01).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
       - name: Build

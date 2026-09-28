@@ -61,6 +61,21 @@ configure (ADR 0004 machinery).
 - The root `project()` enables `C` from M2-GL-01 on (the GLFW subproject
   and the `laige-glad` target are C targets at the root scope); engine
   targets remain C++-only and keep the engine policy verbatim.
+- **Linux backend selection: X11 only** (`GLFW_BUILD_X11=ON`,
+  `GLFW_BUILD_WAYLAND=OFF`, set in `src/laige-render/CMakeLists.txt`). The
+  Wayland backend is OFF because it requires `wayland-scanner`
+  (wayland-protocols) at **configure** time — a system package the P0 CI
+  runners (ubuntu-24.04) do not carry — and it buys no P0 coverage: GLFW's
+  X11 backend reaches Wayland sessions through XWayland. GLFW 3.5 resolves
+  the X11 and GL libraries at **runtime** (the X11 backend dlopens
+  `libX11.so.6` and the GLX/EGL backends dlopen the GL libraries; there is
+  no X11/GL link dependency), so the only configure-time requirement is the
+  X11 *headers*: the CI workflows install
+  `libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev
+  libxext-dev` on the ubuntu-24.04 build jobs. A Linux host without an X
+  server (the P0 CI runners) gets a clean `GlUnavailable` from
+  `createWindowed` — the windowed path there is not a supported mode;
+  headless rendering uses `createHeadless` (EGL surfaceless).
 
 ## DEP-003 justification
 
