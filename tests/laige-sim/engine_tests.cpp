@@ -343,7 +343,14 @@ TEST(EngineShutdown, ShutdownReleasesTheWorld) {
 // prove the run leak-free.
 // ---------------------------------------------------------------------------
 
-#if defined(LAIGE_ALLOC_COUNTER)
+// Debug non-sanitizer builds only: the engine's per-tick G-R1 watch
+// arm lives in the #if !NDEBUG branch of GameLoop::runOneTick, so in a
+// release build the run's three one-shot setup allocations (GameLoop,
+// PresentationSnapshot, the presentation record table) fall inside the
+// measured window and the zero assertion does not hold; release trees
+// verify the property through the pool accounting and the sanitizer
+// trees instead (the ZeroAlloc suite's release branch).
+#if defined(LAIGE_ALLOC_COUNTER) && !defined(NDEBUG)
 TEST(EngineRun, HeadlessFramePathAllocatesNothing) {
   MemorySink* sink = installCaptureSink();
   // Gate the engine's Info lifecycle events and the loop's drop

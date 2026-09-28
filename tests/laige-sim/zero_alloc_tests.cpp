@@ -483,7 +483,7 @@ TEST(ZeroAlloc, TenKWorkloadThroughTheLoopAllocatesNothing) {
   const laige::ArchetypeStats before = world.archetypeStats();
 
   // The measured window: 10k ticks, exactly one per frame.
-#if defined(LAIGE_ALLOC_COUNTER)
+#if defined(LAIGE_ALLOC_COUNTER) && !defined(NDEBUG)
   // Per-tick windows (the M1-ALLOC-01 model): the engine's per-tick
   // arm resets the watch at the start of each tick, so the counter
   // read after a frame is exactly that tick's allocation count.
@@ -496,7 +496,7 @@ TEST(ZeroAlloc, TenKWorkloadThroughTheLoopAllocatesNothing) {
       windowOk = false;
       break;
     }
-#if defined(LAIGE_ALLOC_COUNTER)
+#if defined(LAIGE_ALLOC_COUNTER) && !defined(NDEBUG)
     windowAllocs += laige::test::allocCounter();
 #endif
   }
@@ -522,14 +522,18 @@ TEST(ZeroAlloc, TenKWorkloadThroughTheLoopAllocatesNothing) {
   EXPECT_EQ(after.rowsLive, kEntities);
   EXPECT_EQ(world.entityCount(), kEntities);
 
-#if defined(LAIGE_ALLOC_COUNTER)
-  // The window's zero-allocation property (non-sanitizer trees):
-  // every tick's window read zero heap allocations. In debug builds
-  // the engine's own per-tick G-R1 assertion additionally proves the
+#if defined(LAIGE_ALLOC_COUNTER) && !defined(NDEBUG)
+  // The window's zero-allocation property (debug non-sanitizer trees):
+  // every tick's window read zero heap allocations. This relies on the
+  // engine's per-tick G-R1 arm re-arming the watch each tick, which
+  // lives in the #if !NDEBUG branch of GameLoop::runOneTick — release
+  // trees never arm per tick, so the window is not re-armed between
+  // frames and the per-tick read does not isolate one tick (the
+  // reservation delta above plus the leak-free sanitizer run of the
+  // same loop are the established fallbacks there). In debug builds
+  // the engine's own per-tick assertion additionally proves the
   // property for every tick of the run (an allocating tick would have
-  // aborted this run before the reads). The sanitizer trees prove the
-  // same property with the leak-free sanitizer run of the same loop
-  // plus the reservation delta above (the established fallback).
+  // aborted this run before the reads).
   EXPECT_EQ(windowAllocs, 0u);
 #endif
 
@@ -543,7 +547,7 @@ TEST(ZeroAlloc, TenKWorkloadThroughTheLoopAllocatesNothing) {
       static_cast<unsigned long long>(gChurnAdds),
       static_cast<unsigned long long>(gChurnRemoves),
       static_cast<unsigned long long>(gVisits),
-#if defined(LAIGE_ALLOC_COUNTER)
+#if defined(LAIGE_ALLOC_COUNTER) && !defined(NDEBUG)
       static_cast<unsigned long long>(windowAllocs),
 #else
       0ULL,

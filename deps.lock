@@ -11,6 +11,28 @@
       "sha256": "9eac342808f400ff2955195e1261d9ad4b6d33ef13450e4557adc5864ff5c76a",
       "license": "BSD-3-Clause",
       "justification": "PRD §11 (dev-only): unit/integration test framework for tests/; never linked into engine libraries, never shipped"
+    },
+    {
+      "name": "glfw",
+      "version": "3.5.1",
+      "path": "deps/glfw",
+      "owner": "src/laige-render",
+      "source_url": "https://github.com/glfw/glfw",
+      "source_commit": "d9d6f0f1f967807ffade6598ea9a631ebaf37a56",
+      "sha256": "d2883a22e3f5416e1c8391a35e3012f051acd7d9a732268d18abc68f5a1e235d",
+      "license": "zlib",
+      "justification": "PRD §11 (windowing + input across all P0 OSes; compiled, vendored): the windowed GL context path of laige-render (M2-GL-01); the headless offscreen path uses it on Windows/macOS and EGL surfaceless on Linux"
+    },
+    {
+      "name": "glad",
+      "version": "2.0.8",
+      "path": "deps/glad",
+      "owner": "src/laige-render",
+      "source_url": "https://github.com/Dav1dde/glad",
+      "source_commit": "73db193f853e2ee079bf3ca8a64aa2eaf6459043",
+      "sha256": "72a0b8ccd4bd9eb03bc5ba0f8a1992c74bba32ff3b4ec05133619c6f3f927927",
+      "license": "WTFPL OR CC0-1.0 AND Apache-2.0",
+      "justification": "PRD §11 (OpenGL loader for our GL version; header-only, vendored): generated with glad2 v2.0.8 for gl:core=3.3 with the internal dynamic loader (--reproducible); the vendored tree is the generated output of that pinned commit, not a source checkout (M2-GL-01, ADR 0007)"
     }
   ]
 }

@@ -69,6 +69,8 @@ const laige::ErrorCode kRegistered[] = {
     laige::ErrorCode::MalformedInput,
     laige::ErrorCode::BudgetExhausted,
     laige::ErrorCode::IoError,
+    laige::ErrorCode::GlUnavailable,
+    laige::ErrorCode::GlVersionUnsupported,
 };
 
 // NFR-13.3 grammar check on a rendered error line: exactly 5 fields
@@ -309,6 +311,11 @@ TEST(ErrorCodeRegistry, IntegerValuesArePinned) {
   EXPECT_EQ(static_cast<std::uint32_t>(laige::ErrorCode::BudgetExhausted),
             4u);
   EXPECT_EQ(static_cast<std::uint32_t>(laige::ErrorCode::IoError), 5u);
+  EXPECT_EQ(static_cast<std::uint32_t>(laige::ErrorCode::GlUnavailable),
+            6u);
+  EXPECT_EQ(
+      static_cast<std::uint32_t>(laige::ErrorCode::GlVersionUnsupported),
+      7u);
 }
 
 TEST(ErrorCodeRegistry, UnregisteredValuesRenderUnknown) {

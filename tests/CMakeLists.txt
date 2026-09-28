@@ -68,6 +68,10 @@ add_subdirectory(laige-core)
 # (tests/laige-sim; CTest entry `entity`).
 add_subdirectory(laige-sim)
 
+# laige-render tests (M2-GL-01): the GL context suite (tests/laige-
+# render; CTest entry `gl_context`).
+add_subdirectory(laige-render)
+
 # Test-infrastructure checks (M0-TEST-01): the seed-handling convention
 # for randomized tests (tests/support/laige_test_seed.h) is exercised by
 # tests/testing (suite `SeededRandom`, CTest entry `test_infra`).

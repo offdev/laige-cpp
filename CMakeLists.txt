@@ -15,9 +15,13 @@
 
 cmake_minimum_required(VERSION 3.22)
 
+# LANGUAGES includes C from M2-GL-01 on: the vendored C dependencies
+# (GLFW, GLAD — deps.lock) compile in C targets defined at the root
+# scope (deps/glfw's own, and the laige-glad target), so C must be
+# enabled in the root scope, not only inside deps/glfw's subproject.
 project(laige
   DESCRIPTION "Laige — Legendary AI Game Engine"
-  LANGUAGES CXX)
+  LANGUAGES C CXX)
 
 # ---------------------------------------------------------------------------
 # Engine-wide language policy (NFR-8.10)
@@ -174,6 +178,9 @@ function(laige_apply_engine_policy target)
   # PUBLIC: this target compiles as C++20 and consumers are required to be
   # C++20 as well (engine headers are C++20, NFR-8.10).
   target_compile_features(${target} PUBLIC cxx_std_20)
+  # Every engine target is C++-only: vendored C sources compile in their
+  # own targets (deps/glfw's, and the laige-glad C target from M2-GL-01
+  # on), which keep the plain compiler policy.
   if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_compile_options(${target} PRIVATE
       -Wall -Werror -fno-exceptions -fno-rtti)
@@ -237,10 +244,12 @@ endfunction()
 # Modules (PRD §10.1 module map)
 # ---------------------------------------------------------------------------
 # One directory per module. laige-core is the M0 foundation
-# (M0-BUILD-01); laige-sim is the first module beyond it (M1-ECS-01).
+# (M0-BUILD-01); laige-sim is the first module beyond it (M1-ECS-01);
+# laige-render lands the GL infrastructure in M2-GL-01.
 # Later milestones add their targets in place.
 add_subdirectory(src/laige-core)
 add_subdirectory(src/laige-sim)
+add_subdirectory(src/laige-render)
 
 # Samples (M1-SAMPLE-01): the hello.laige headless template game.
 # Unconditional (not test-gated): the sample is a shipped project, and

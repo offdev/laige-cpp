@@ -185,6 +185,11 @@ std::FILE* openReplayFile(const char* path, const char* mode) {
 }
 #endif
 
+// Debug builds only: the capture-sink helpers below serve the
+// ReplayEngine suite (which exercises the engine's debug-only
+// startReplayRecording); in release trees they are unused (they would
+// trip -Werror=unused-function, NFR-8.10).
+#if !defined(NDEBUG)
 // One log event captured from the facade (the engine_tests.cpp
 // MemorySink pattern — Warn+ only, rate limiting off).
 class MemorySink : public laige::log::Sink {
@@ -241,6 +246,7 @@ std::size_t countEvents(const MemorySink& sink, std::string_view event) {
   }
   return n;
 }
+#endif  // !defined(NDEBUG)
 
 }  // namespace
 
@@ -821,8 +827,15 @@ TEST(ReplayIdentity, MakeIdentityEchoesTheFields) {
 // ---------------------------------------------------------------------------
 // ReplayEngine: the engine's per-tick empty-frame recording
 // (M1-DET-02: FR-1.4, PRD Appendix A, ADR 0002)
+//
+// Debug builds only: startReplayRecording is a debug-build feature
+// (the engine's #if defined(NDEBUG) gate), so these tests exercise a
+// compiled-out call in release trees (the ConfigHotReload suite's
+// pattern — its ReleaseBuildsRejectTheFeature twin lives in
+// game_config_tests.cpp).
 // ---------------------------------------------------------------------------
 
+#if !defined(NDEBUG)
 TEST(ReplayEngine, RecordsEmptyFramesPerTick) {
   // An engine run with recording ON records one zero-length frame per
   // COMPLETED tick, and the log's identity matches the run's identity
@@ -969,3 +982,4 @@ TEST(ReplayEngine, StartAfterRunFails) {
   EXPECT_FALSE(engine.replayRecordingActive());
   EXPECT_EQ(engine.replayBytesWritten(), 0u);
 }
+#endif  // !defined(NDEBUG)

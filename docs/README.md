@@ -177,6 +177,12 @@ still to land.
   the scenario hash-line contract (`<tick> <hash>` lines, two build
   configurations) (M0-TOOL-02; activated on the hello scenario by
   M1-DET-04 — the baseline comparison and the CI matrix).
+- [GL context](api/gl_context.md) — `laige::render::GlContext`: the
+  OpenGL 3.3 core context contract (windowed + headless offscreen, the
+  version gate, the capability snapshot, the offscreen FBO), the exact
+  per-OS headless mechanism (EGL surfaceless on Linux; never-shown GLFW
+  window on Windows/macOS), and the clean-failure contract (M2-GL-01;
+  ADR 0007; `laige-render`).
 
 ## Guides
 

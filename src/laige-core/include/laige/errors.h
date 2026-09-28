@@ -34,6 +34,14 @@ enum class ErrorCode : std::uint32_t {
   MalformedInput = 3,
   BudgetExhausted = 4,
   IoError = 5,
+  // M2-GL-01 (laige-render): a usable OpenGL context could not be
+  // created — no windowing backend (GLFW/EGL), context creation failed,
+  // the GL library could not be loaded, or the offscreen FBO failed.
+  GlUnavailable = 6,
+  // M2-GL-01 (laige-render): a GL context was created but does not meet
+  // the engine's OpenGL 3.3 core requirement (PRD §6) — an older version
+  // or the compatibility profile. There is no fallback.
+  GlVersionUnsupported = 7,
 };
 
 // One registry entry per stable code. `text` is the pre-rendered
