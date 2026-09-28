@@ -81,6 +81,10 @@ OS so that CI can run the GL smoke on every P0 runner:
   EGL 1.5 function set by name (`eglGetPlatformDisplay`,
   `eglInitialize`, `eglBindAPI`, `eglCreateContext`, `eglMakeCurrent`,
   `eglGetCurrentContext`, `eglDestroyContext`, `eglDestroyDisplay`).
+  `eglBindAPI(EGL_OPENGL_API)` is called **before** `eglInitialize` —
+  the order the EGL 1.5 spec requires — and its result is checked: a
+  display that cannot bind the desktop OpenGL API (an ES-only driver
+  configuration) is a clean `GlUnavailable` (`reason=egl_context`).
   The display is created for **`EGL_PLATFORM_SURFACELESS_MESA`
   (0x31DD, `EGL_MESA_platform_surfaceless`)** — no display server, no
   window, no surface — and the context is created with no config and no

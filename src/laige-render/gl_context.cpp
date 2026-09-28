@@ -577,13 +577,21 @@ Result<GlContext> GlContext::createHeadless(std::int32_t width,
     return Result<GlContext>::failure(ErrorCode::GlUnavailable);
   }
 
+  // EGL 1.5 spec order: eglBindAPI binds the OpenGL API to the display
+  // and MUST be called before eglInitialize; its result is checked
+  // (CORE-008) — a display that cannot bind the desktop OpenGL API
+  // (an ES-only driver configuration) is a clean GlUnavailable, not a
+  // silent fallback.
+  if (impl->egl.bindApi(egl::kOpenGlApi) == 0) {
+    logCreationFailure("headless", "egl_context", ErrorCode::GlUnavailable);
+    return Result<GlContext>::failure(ErrorCode::GlUnavailable);
+  }
   egl::Int major = 0;
   egl::Int minor = 0;
   if (impl->egl.initialize(impl->eglDisplay, &major, &minor) == 0) {
     logCreationFailure("headless", "egl_init", ErrorCode::GlUnavailable);
     return Result<GlContext>::failure(ErrorCode::GlUnavailable);
   }
-  impl->egl.bindApi(egl::kOpenGlApi);
   const egl::Int attrs[] = {
       egl::kContextMajorVersion, kGlMajor,
       egl::kContextMinorVersion, kGlMinor,
