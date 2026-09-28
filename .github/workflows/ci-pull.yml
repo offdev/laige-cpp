@@ -90,6 +90,84 @@ jobs:
             libx11-dev libxcursor-dev libxrandr-dev \
             libxinerama-dev libxi-dev libxext-dev \
             libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Probe runtime GL stack (temporary diagnostic)
+        # TEMPORARY (M2-GL-01): the headless GL smoke still skips with
+        # reason=egl_load although libegl1 is installed — this step
+        # prints the exact dlerror and walks the full EGL surfaceless
+        # chain (dlopen -> symbols -> surfaceless display -> init ->
+        # 3.3 core context -> makeCurrent -> GL version via the same
+        # glXGetProcAddressARB path GLAD's loader uses). Remove once
+        # the smoke runs green in CI.
+        continue-on-error: true
+        run: |
+          set -x
+          ls -la /usr/lib/x86_64-linux-gnu/libEGL* /usr/lib/x86_64-linux-gnu/libGL*
+          ldconfig -p | grep -Ei 'libegl|libgl'
+          ldd /usr/lib/x86_64-linux-gnu/libEGL.so.1
+          cat > /tmp/glprobe.cpp <<'EOF'
+          #include <dlfcn.h>
+          #include <cstdio>
+          #include <cstdlib>
+
+          typedef void* (*P_GetPlatformDisplay)(int, void*, const int*);
+          typedef int   (*P_Initialize)(void*, int*, int*);
+          typedef int   (*P_BindAPI)(int);
+          typedef void* (*P_CreateContext)(void*, void*, void*, const int*);
+          typedef int   (*P_MakeCurrent)(void*, void*, void*, void*);
+          typedef const char* (*P_QueryString)(void*, int);
+          typedef unsigned int (*P_GetError)();
+          typedef void* (*P_GLXGPA)(const char*);
+
+          int main() {
+            const char* disp = std::getenv("DISPLAY");
+            std::printf("DISPLAY=%s\n", disp ? disp : "(unset)");
+            void* h = dlopen("libEGL.so.1", RTLD_LAZY | RTLD_LOCAL);
+            if (!h) { std::printf("dlopen(libEGL.so.1) FAILED: %s\n", dlerror()); return 1; }
+            std::printf("dlopen(libEGL.so.1) ok\n");
+            auto gpd   = reinterpret_cast<P_GetPlatformDisplay>(dlsym(h, "eglGetPlatformDisplay"));
+            auto init  = reinterpret_cast<P_Initialize>(dlsym(h, "eglInitialize"));
+            auto bapi  = reinterpret_cast<P_BindAPI>(dlsym(h, "eglBindAPI"));
+            auto cctx  = reinterpret_cast<P_CreateContext>(dlsym(h, "eglCreateContext"));
+            auto mkcur = reinterpret_cast<P_MakeCurrent>(dlsym(h, "eglMakeCurrent"));
+            auto qstr  = reinterpret_cast<P_QueryString>(dlsym(h, "eglQueryString"));
+            auto err   = reinterpret_cast<P_GetError>(dlsym(h, "eglGetError"));
+            std::printf("symbols: gpd=%p init=%p bapi=%p cctx=%p mkcur=%p qstr=%p err=%p\n",
+                        reinterpret_cast<void*>(gpd), reinterpret_cast<void*>(init),
+                        reinterpret_cast<void*>(bapi), reinterpret_cast<void*>(cctx),
+                        reinterpret_cast<void*>(mkcur), reinterpret_cast<void*>(qstr),
+                        reinterpret_cast<void*>(err));
+            if (!gpd || !init || !bapi || !cctx || !mkcur || !qstr) return 2;
+            const int EGL_OPENGL_API = 0x202A;
+            const int EGL_CONTEXT_MAJOR_VERSION = 0x2091;
+            const int EGL_CONTEXT_MINOR_VERSION = 0x2092;
+            const int EGL_CONTEXT_OPENGL_PROFILE_MASK = 0x2096;
+            const int EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT = 0x00000001;
+            const int EGL_PLATFORM_SURFACELESS_MESA = 0x31DD;
+            void* dpy = gpd(EGL_PLATFORM_SURFACELESS_MESA, nullptr, nullptr);
+            if (!dpy) { std::printf("eglGetPlatformDisplay(SURFACELESS) FAILED err=0x%x\n", err ? err() : 0); return 3; }
+            int major = 0, minor = 0;
+            if (!init(dpy, &major, &minor)) { std::printf("eglInitialize FAILED err=0x%x\n", err ? err() : 0); return 4; }
+            std::printf("eglInitialize ok (%d.%d)\n", major, minor);
+            if (!bapi(EGL_OPENGL_API)) { std::printf("eglBindAPI(OPENGL) FAILED err=0x%x\n", err ? err() : 0); return 5; }
+            const int attrs[] = {EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 3,
+                                 EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT, 0};
+            void* ctx = cctx(dpy, nullptr, nullptr, attrs);
+            if (!ctx) { std::printf("eglCreateContext(3.3 core) FAILED err=0x%x\n", err ? err() : 0); return 6; }
+            if (!mkcur(dpy, nullptr, nullptr, ctx)) { std::printf("eglMakeCurrent FAILED err=0x%x\n", err ? err() : 0); return 7; }
+            const char* ver = qstr(dpy, 0x3053 /* EGL_VERSION */);
+            std::printf("EGL_VERSION=%s\n", ver ? ver : "(null)");
+            void* g = dlopen("libGL.so.1", RTLD_LAZY | RTLD_LOCAL);
+            if (!g) { std::printf("dlopen(libGL.so.1) FAILED: %s\n", dlerror()); return 8; }
+            auto glxgpa = reinterpret_cast<P_GLXGPA>(dlsym(g, "glXGetProcAddressARB"));
+            if (!glxgpa) { std::printf("glXGetProcAddressARB MISSING\n"); return 9; }
+            auto gsa = reinterpret_cast<const char* (*)(unsigned int)>(glxgpa("glGetString"));
+            if (!gsa) { std::printf("glXGetProcAddressARB(glGetString) returned NULL\n"); return 10; }
+            const char* gver = gsa(0x1F03 /* GL_VERSION */);
+            std::printf("GL_VERSION=%s — full chain OK\n", gver ? gver : "(null)");
+            return 0;
+          }
+          EOF
+          g++ -o /tmp/glprobe /tmp/glprobe.cpp -ldl && /tmp/glprobe
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
       - name: Build
