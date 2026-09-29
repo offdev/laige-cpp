@@ -67,6 +67,10 @@ using Int = std::int32_t;
 using Bool = std::int32_t;
 using Enum = std::int32_t;
 
+// These constants are referenced only from the Linux headless path
+// (the #else createHeadless branch); without the guard, AppleClang's
+// -Wunused-const-variable (-Werror, NFR-8.10) rejects them on macOS.
+#if !defined(__APPLE__) && !defined(_WIN32)
 constexpr Int kNone = 0x3038;
 // EGL_OPENGL_API — the eglBindAPI argument. Verified against the P0
 // distro's EGL headers (noble libglvnd 1.7.0): the GLVND dispatcher
@@ -80,6 +84,7 @@ constexpr Int kContextMinorVersion = 0x30FB;
 constexpr Int kContextProfileMask = 0x30FD;
 constexpr Int kCoreProfileBit = 0x00000001;
 constexpr Enum kPlatformSurfacelessMesa = 0x31DD;  // EGL_MESA_platform_surfaceless
+#endif
 
 struct FnTable {
   Display (*getPlatformDisplay)(Enum platform, void* nativeDisplay,
@@ -244,9 +249,15 @@ struct GlContext::Impl {
       if (egl.destroyDisplay != nullptr && eglDisplay != nullptr) {
         egl.destroyDisplay(eglDisplay);
       }
+      // libEGL is dlopened only on the Linux headless path (createHeadless
+      // #else branch); on Windows/macOS eglHandle is always null and
+      // <dlfcn.h> is not included (see the include guard above), so the
+      // close is compiled only where the handle can exist.
+#if !defined(__APPLE__) && !defined(_WIN32)
       if (eglHandle != nullptr) {
         dlclose(eglHandle);
       }
+#endif
     } else {
       if (window != nullptr) {
         glfwDestroyWindow(window);  // destroys the context with it
