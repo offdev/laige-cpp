@@ -174,6 +174,15 @@ class GlContext {
   [[nodiscard]] Status readPixel(std::int32_t x, std::int32_t y,
                                  std::uint8_t rgba[4]) const;
 
+  // The windowed context's display refresh rate (Hz); 0 when
+  // unavailable (a headless context — the FBO is the render target and
+  // nothing is ever presented — or a monitor/video-mode query failure).
+  // No GL call (a GLFW window query): the context need not be current
+  // on the calling thread. The M2-GL-02 frame clock uses this as the
+  // vsync pace (docs/api/frame_pipeline.md); 0 → the caller's target
+  // rate stands in. Precondition: valid(); O(1), no allocation.
+  [[nodiscard]] std::uint32_t refreshRateHz() const noexcept;
+
  private:
   struct Impl;
   // Construction goes through createWindowed/createHeadless only; the

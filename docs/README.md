@@ -179,10 +179,17 @@ still to land.
   M1-DET-04 — the baseline comparison and the CI matrix).
 - [GL context](api/gl_context.md) — `laige::render::GlContext`: the
   OpenGL 3.3 core context contract (windowed + headless offscreen, the
-  version gate, the capability snapshot, the offscreen FBO), the exact
-  per-OS headless mechanism (EGL surfaceless on Linux; never-shown GLFW
-  window on Windows/macOS), and the clean-failure contract (M2-GL-01;
-  ADR 0007; `laige-render`).
+  version gate, the capability snapshot, the offscreen FBO, the
+  display refresh rate query), the exact per-OS headless mechanism
+  (EGL surfaceless on Linux; never-shown GLFW window on Windows/macOS),
+  and the clean-failure contract (M2-GL-01; ADR 0007; `laige-render`).
+- [Frame pipeline](api/frame_pipeline.md) — `laige::render::RenderThread`
+  and `laige::render::FrameClock`: the render thread, the lock-free
+  single-slot frame handoff (one producer, one consumer; the seqlock
+  argument, the backpressure drop, the exact accounting), the
+  vsync-paced frame clock (the frame deadline grid and the
+  `render_time` provider for presentation/interpolation), and the
+  ordered idempotent shutdown (M2-GL-02; `laige-render`).
 
 ## Guides
 

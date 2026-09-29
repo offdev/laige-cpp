@@ -36,6 +36,7 @@ fallback profile, no silent version downgrade (PRD §6).
 | `makeCurrent()` | Bind the context to the calling thread (one thread current at a time, CONC-001). The M2-GL-02 render thread calls this on takeover; calling it on the already-current thread is a no-op success. Failure: `GlUnavailable` (one structured Error event, `gl/context_make_current_failed`) | O(1), no allocation |
 | `clear(r, g, b, a)` | Clear the render target (the FBO on headless contexts, the window frame buffer on windowed ones) to an RGBA color; components are clamped to `[0, 1]` before the RGBA8 conversion (1.0 → 255, 0.25 → 64, 0.75 → 191 — the conversion is exact for these values). Precondition: valid() **and** the context is current on the calling thread — otherwise `InvalidArgument` (a precondition violation, not an engine failure: no log, no GL work) | O(1), no allocation; one `glBindFramebuffer` per call (see Performance) |
 | `readPixel(x, y, rgba[4])` | Read one RGBA8 pixel; `(0, 0)` is bottom-left (the GL convention). Precondition: valid(), the context current, and `(x, y)` within `[0, w) x [0, h)` — otherwise `InvalidArgument` | O(1), no allocation (one `glReadPixels` of 4 bytes) |
+| `refreshRateHz()` | The windowed context's display refresh rate (Hz) — the M2-GL-02 frame clock's vsync pace (`docs/api/frame_pipeline.md`). Returns **0 when unavailable**: a headless context (the FBO is the render target and nothing is ever presented), a context detached from every monitor, or a video-mode query failure — the caller's target rate stands in. No GL call (a GLFW window query): the context need not be current on the calling thread. Precondition: valid() | O(1), no allocation |
 
 Move-only: `GlContext` is move-constructible/assignable; the source is
 stopped by the move (its native window/context — and, headless, its FBO —
@@ -57,9 +58,15 @@ returned `Status` plus exactly one structured Error event,
 machine-stable `reason` (`glfw_init`, `window_create`, `egl_load`,
 `egl_surfaceless`, `egl_init`, `egl_context`, `egl_make_current`,
 `gl_library_load`, `version_unsupported`, `fbo_incomplete`), and the
-registry line for the returned code. Success logs one Info event,
-`gl/context_created` (kind, version, size — driver strings are kept out
-of the log, LOG-005).
+registry line for the returned code — plus the driver's `egl_error`
+field when the reason is an EGL call (`egl_make_current` on the Linux
+path; the EGL error code of the calling thread, LOG-002). Success logs
+one Info event, `gl/context_created` (kind, version, size — driver
+strings are kept out of the log, LOG-005). A `makeCurrent` failure is
+one structured Error event, `gl/context_make_current_failed`, with the
+registry line for `GlUnavailable` and the driver's `egl_error` field
+(EGL path; the failure path is unreachable from the GLFW backend,
+whose bind sets success unconditionally).
 
 **Threading and phase.** Context creation is a setup-phase operation
 (one per process in the engine's design — M2-GL-02 runs exactly one
@@ -80,21 +87,24 @@ OS so that CI can run the GL smoke on every P0 runner:
   clean `GlUnavailable`, not a build failure) and resolves the small
   EGL 1.5 function set by name (`eglGetPlatformDisplay`,
   `eglInitialize`, `eglBindAPI`, `eglCreateContext`, `eglMakeCurrent`,
-  `eglGetCurrentContext`, `eglDestroyContext`, and `eglGetProcAddress`
-  — plus, **optional**, `eglDestroyDisplay`: the libglvnd dispatcher
-  that P0 Ubuntu exposes as `libEGL.so.1` does not export it, so its
-  absence is not a failure; when absent the display's resources are
-  released at process termination, which matches the engine's
-  one-display-per-process design (the display's lifetime is the
-  process's). Consequence for the ASan CI lane: that vendor state is
-  live at process exit by design, so the two render test entries run
+  `eglGetError`, `eglGetCurrentContext`, `eglDestroyContext`, and
+  `eglGetProcAddress` — plus, **optional**, `eglDestroyDisplay`: the
+  libglvnd dispatcher that P0 Ubuntu exposes as `libEGL.so.1` does not
+  export it, so its absence is not a failure; when absent the display's
+  resources are released at process termination, which matches the
+  engine's one-display-per-process design (the display's lifetime is
+  the process's). Consequence for the ASan CI lane: that vendor state
+  is live at process exit by design, so the render test entries run
   with `detect_leaks=0` there (`tests/laige-render/CMakeLists.txt`;
   in-run ASan/UBSan error detection stays fully active — the smoke
   still performs its GL work under the sanitizer). `eglGetProcAddress`
-  is required: both the libglvnd
-  dispatcher and Mesa's vendor library export it (verified against the
-  P0 distro's symbol tables), and the headless GL load resolves the GL
-  API through it (see "GL function access"). `eglBindAPI(EGL_OPENGL_API)`
+  and `eglGetError` are required: both are EGL 1.0/1.5 core exported by
+  the libglvnd dispatcher and Mesa's vendor library (verified against
+  the P0 distro's symbol tables); `eglGetProcAddress` is what the
+  headless GL load resolves the GL API through (see "GL function
+  access"), and `eglGetError` is the `egl_error` field of the
+  make-current failure diagnostics below (LOG-002: state the driver's
+  reason when known). `eglBindAPI(EGL_OPENGL_API)`
   is called **before** `eglInitialize` (the spec's API-selection
   order) and its result is checked: the spec guarantees no failure for
   a valid API enum, so a failure means a broken EGL stack (an ES-only
