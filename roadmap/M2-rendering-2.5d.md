@@ -50,7 +50,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** GL smoke test green in CI on all 3 P0 OSes (offscreen where headless); `deps.lock` hash check green.
   - **Size:** ~250 lines + wiring
 
-- [ ] **M2-GL-02 · Render thread + frame pipeline handoff**
+- [x] **M2-GL-02 · Render thread + frame pipeline handoff**
   - **Refs:** PRD §10.2 (render thread, lock-free handoff); CONC-002, CONC-006
   - **Depends:** M2-GL-01
   - **Scope:**

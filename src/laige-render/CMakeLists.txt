@@ -4,15 +4,20 @@
 # laige-core and laige-sim in the module stack and may include only
 # their PUBLIC headers — enforced by tools/laige-include-lint (R2,
 # arrows only downward). M2-GL-01 links laige-core (public headers use
-# laige::Result/Status); the render→sim edge lands with M2-GL-02, when
-# the frame handoff reads sim state (CORE-004: no speculative wiring).
+# laige::Result/Status). M2-GL-02 adds the frame pipeline (render
+# thread + lock-free handoff + frame clock) with NO render→sim edge:
+# the handoff carries a POD FrameDescriptor plus an opaque frameData
+# pointer (the sim state read — the PresentationSnapshot — happens in
+# the pipeline stages, M2-SPRITE-01/02 onward; CORE-004: no
+# speculative wiring).
 #
 # M2-GL-01 (roadmap/M2-rendering-2.5d.md, ADR 0007): the GL
 # infrastructure — GLFW 3.5.1 (windowing, compiled, vendored per PRD
 # §11) and the GLAD 2.0.8-generated GL 3.3 core loader (vendored
 # generated output). The target lands the GlContext (windowed +
 # headless offscreen, the 3.3 core gate, the capability query); the
-# sprite batcher and frame pipeline land in the remaining M2 steps.
+# render thread + frame handoff land with M2-GL-02, the sprite batcher
+# and draw submits with the remaining M2 steps.
 #
 # GLFW: added as a subdirectory with every dev-facing output disabled —
 # examples/tests/docs/install are off (vendored, never installed,
@@ -51,7 +56,7 @@ add_library(laige-glad STATIC ${CMAKE_SOURCE_DIR}/deps/glad/src/gl.c)
 target_include_directories(laige-glad PRIVATE
   ${CMAKE_SOURCE_DIR}/deps/glad/include)
 
-set(LAIGE_RENDER_SOURCES gl_context.cpp)
+set(LAIGE_RENDER_SOURCES gl_context.cpp frame_pipeline.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-render SHARED ${LAIGE_RENDER_SOURCES})

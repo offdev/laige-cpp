@@ -67,18 +67,22 @@ using Int = std::int32_t;
 using Bool = std::int32_t;
 using Enum = std::int32_t;
 
-// These constants are referenced only from the Linux headless path
-// (the #else createHeadless branch); without the guard, AppleClang's
-// -Wunused-const-variable (-Werror, NFR-8.10) rejects them on macOS.
-#if !defined(__APPLE__) && !defined(_WIN32)
-constexpr Int kNone = 0x3038;
 // EGL_OPENGL_API — the eglBindAPI argument. Verified against the P0
 // distro's EGL headers (noble libglvnd 1.7.0): the GLVND dispatcher
 // accepts only EGL_OPENGL_API (0x30A2) and EGL_OPENGL_ES_API (0x30A0)
 // and rejects every other value with EGL_BAD_PARAMETER (0x300C).
 // Note the confusion this value caused: 0x0008 is EGL_OPENGL_BIT, a
-// ClientAPIs mask bit, not an API enum.
+// ClientAPIs mask bit, not an API enum. It is used from createHeadless
+// (Linux only) AND from makeCurrent on every platform (the per-thread
+// API selection below), so it lives outside the Linux guard.
 constexpr Enum kOpenGlApi = 0x30A2;
+
+// These remaining constants are referenced only from the Linux
+// headless path (the #else createHeadless branch); without the guard,
+// AppleClang's -Wunused-const-variable (-Werror, NFR-8.10) rejects
+// them on macOS.
+#if !defined(__APPLE__) && !defined(_WIN32)
+constexpr Int kNone = 0x3038;
 constexpr Int kContextMajorVersion = 0x3098;
 constexpr Int kContextMinorVersion = 0x30FB;
 constexpr Int kContextProfileMask = 0x30FD;
@@ -95,6 +99,10 @@ struct FnTable {
                            const Int* attribs);
   Bool (*makeCurrent)(Display display, Surface draw, Surface read,
                       Context context);
+  // eglGetError — this thread's last EGL error (EGL 1.0 core; both the
+  // libglvnd dispatcher and the vendor library export it): reported
+  // with the make-current failure diagnostics (LOG-002).
+  Int (*getError)();
   Context (*getCurrentContext)();
   Bool (*destroyContext)(Display display, Context context);
   Bool (*destroyDisplay)(Display display);
@@ -424,7 +432,20 @@ Status GlContext::makeCurrent() const {
   }
   bool ok;
   if (impl_->backend == Impl::Backend::egl) {
-    ok = impl_->egl.makeCurrent(impl_->eglDisplay, nullptr, nullptr,
+    // libglvnd's client-API selection is PER-THREAD: a thread that has
+    // never selected an API cannot eglMakeCurrent an object created on
+    // another thread — the call fails with EGL_BAD_ACCESS (0x3002;
+    // the P0 CI log's egl_error=12290 on the render thread). The EGL
+    // spec makes a new thread's default API OpenGL, so this is a
+    // no-op success on stacks that honor the default (Mesa's native
+    // libEGL) and the required step on the libglvnd dispatcher (the
+    // P0 distro's libEGL.so.1). makeCurrent is the only cross-thread
+    // entry point: createHeadless binds the API on its own thread, and
+    // clear/readPixel require the context to be current ALREADY here.
+    // Not a hot path (a takeover, not a per-frame call) — one plain
+    // function-pointer call, no allocation.
+    ok = impl_->egl.bindApi(egl::kOpenGlApi) != 0 &&
+         impl_->egl.makeCurrent(impl_->eglDisplay, nullptr, nullptr,
                                 impl_->eglContext) != 0;
   } else {
     // The window exists and GLFW is initialized (both guaranteed by
@@ -433,10 +454,54 @@ Status GlContext::makeCurrent() const {
     ok = true;
   }
   if (!ok) {
+    // LOG-002: state the driver's reason when known — this thread's
+    // last EGL error (the failure path is reachable only from the EGL
+    // branch above; the GLFW bind sets ok unconditionally).
+    const egl::Int eglError =
+        (impl_->backend == Impl::Backend::egl) ? impl_->egl.getError() : 0;
     LAIGE_LOG_ERROR("gl", "context_make_current_failed",
                     "binding the GL context to the calling thread failed",
                     laige::log::field("error", std::string_view(
-                        errorText(ErrorCode::GlUnavailable))));
+                        errorText(ErrorCode::GlUnavailable))),
+                    laige::log::field("egl_error", eglError));
+    return Status(ErrorCode::GlUnavailable);
+  }
+  return Status();
+}
+
+Status GlContext::release() const {
+  if (impl_ == nullptr) {
+    return Status(ErrorCode::InvalidArgument);
+  }
+  // The handoff protocol's first step (the class preamble): the old
+  // owner unbinds the context from its own thread, so the new thread's
+  // makeCurrent is a FRESH bind — a context no thread holds. (On the
+  // P0 EGL stack, take-overs while the context is still current on
+  // another live thread fail with EGL_BAD_ACCESS.)
+  bool ok;
+  if (impl_->backend == Impl::Backend::egl) {
+    // EGL 1.5 §3.3.5: eglMakeCurrent with EGL_NO_CONTEXT releases the
+    // calling thread's current context (a no-op success when this
+    // thread holds none).
+    ok = impl_->egl.makeCurrent(impl_->eglDisplay, nullptr, nullptr,
+                                nullptr) != 0;
+  } else {
+    // The window exists and GLFW is initialized (both guaranteed by
+    // the creation path), so the release cannot fail.
+    glfwMakeContextCurrent(nullptr);
+    ok = true;
+  }
+  if (!ok) {
+    // LOG-002: state the driver's reason when known — this thread's
+    // last EGL error (the failure path is reachable only from the EGL
+    // branch above; the GLFW release sets ok unconditionally).
+    const egl::Int eglError =
+        (impl_->backend == Impl::Backend::egl) ? impl_->egl.getError() : 0;
+    LAIGE_LOG_ERROR("gl", "context_release_failed",
+                    "releasing the GL context from the calling thread failed",
+                    laige::log::field("error", std::string_view(
+                        errorText(ErrorCode::GlUnavailable))),
+                    laige::log::field("egl_error", eglError));
     return Status(ErrorCode::GlUnavailable);
   }
   return Status();
@@ -467,6 +532,30 @@ Status GlContext::readPixel(std::int32_t x, std::int32_t y,
   glad_glBindFramebuffer(GL_FRAMEBUFFER, impl_->fbo);
   glad_glReadPixels(x, y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
   return Status();
+}
+
+std::uint32_t GlContext::refreshRateHz() const noexcept {
+  // Stopped, or headless (the FBO is the render target — nothing is
+  // ever presented, so no display rate applies): 0 (a negative query —
+  // no log, no GL work).
+  if (impl_ == nullptr || impl_->fbo != 0) {
+    return 0;
+  }
+  // Windowed: the window's monitor's current video mode (a GLFW window
+  // query — no GL call, no current thread required). Both query
+  // failures (no attached monitor, no current video mode) yield 0 —
+  // the frame clock's documented fallback (frame_pipeline.md).
+  GLFWmonitor* monitor = glfwGetWindowMonitor(impl_->window);
+  if (monitor == nullptr) {
+    return 0;
+  }
+  const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+  if (mode == nullptr) {
+    return 0;
+  }
+  return mode->refreshRate > 0
+             ? static_cast<std::uint32_t>(mode->refreshRate)
+             : 0;
 }
 
 // ------------------------------------------------------------------------
@@ -592,6 +681,9 @@ Result<GlContext> GlContext::createHeadless(std::int32_t width,
       reinterpret_cast<egl::Bool (*)(egl::Display, egl::Surface, egl::Surface,
                                      egl::Context)>(
           dlsym(impl->eglHandle, "eglMakeCurrent"));
+  impl->egl.getError =
+      reinterpret_cast<egl::Int (*)(void)>(
+          dlsym(impl->eglHandle, "eglGetError"));
   impl->egl.getCurrentContext =
       reinterpret_cast<egl::Context (*)()>(
           dlsym(impl->eglHandle, "eglGetCurrentContext"));
@@ -615,10 +707,14 @@ Result<GlContext> GlContext::createHeadless(std::int32_t width,
   // eglGetProcAddress is REQUIRED: both the libglvnd dispatcher and
   // Mesa's vendor library export it (verified against the noble symbol
   // tables), and the headless GLAD load resolves the GL API through it.
+  // eglGetError is EGL 1.0 core — both the libglvnd dispatcher and the
+  // vendor libraries export it (verified against the noble symbol
+  // tables) — so it is required, unlike eglDestroyDisplay.
   const bool complete =
       impl->egl.getPlatformDisplay != nullptr &&
       impl->egl.initialize != nullptr && impl->egl.bindApi != nullptr &&
       impl->egl.createContext != nullptr && impl->egl.makeCurrent != nullptr &&
+      impl->egl.getError != nullptr &&
       impl->egl.getCurrentContext != nullptr &&
       impl->egl.destroyContext != nullptr &&
       impl->egl.getProcAddress != nullptr;
@@ -668,8 +764,16 @@ Result<GlContext> GlContext::createHeadless(std::int32_t width,
   }
   if (impl->egl.makeCurrent(impl->eglDisplay, nullptr, nullptr,
                             impl->eglContext) == 0) {
-    logCreationFailure("headless", "egl_make_current",
-                       ErrorCode::GlUnavailable);
+    // LOG-002: name the driver's error (the creation helper's fixed
+    // field set cannot carry it).
+    LAIGE_LOG_ERROR("gl", "context_creation_failed",
+                    "OpenGL context creation failed",
+                    laige::log::field("kind", std::string_view("headless")),
+                    laige::log::field("reason",
+                                      std::string_view("egl_make_current")),
+                    laige::log::field("error", std::string_view(
+                        errorText(ErrorCode::GlUnavailable))),
+                    laige::log::field("egl_error", impl->egl.getError()));
     return Result<GlContext>::failure(ErrorCode::GlUnavailable);
   }
   const Status finish =

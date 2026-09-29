@@ -22,5 +22,24 @@ the P0 CI runners). The GLFW/Glad targets compile the vendored C code
 (`laige-glad` C target; GLFW via `add_subdirectory`); the engine target
 stays C++-only behind the pimpl.
 
-The sprite batcher, frame pipeline, and sim→render handoff land in the
-remaining M2 steps (M2-GL-02 on).
+M2-GL-02 landed the frame pipeline — `laige::render::RenderThread`
+(the render thread + the lock-free single-slot frame handoff: one
+producer, one consumer, the atomic-slot handoff argument, the backpressure drop
+(PERF-008), the exact accounting, the ordered idempotent shutdown
+(CONC-006)) and `laige::render::FrameClock` (the vsync-paced frame
+deadline grid + the `render_time` provider for
+presentation/interpolation, M1-LOOP-02). Public header
+`include/laige/render/frame_pipeline.h`, implementation
+`frame_pipeline.cpp`; API contract in
+[docs/api/frame_pipeline.md](../docs/api/frame_pipeline.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `render_thread`;
+the GL-free `FrameClock`/`RenderThreadHandoff` suites run in every local
+tree, the `RenderThreadOffscreen` suite needs a usable GL and is
+verified on the P0 CI runners). No render→sim module edge was added:
+the handoff carries an opaque `frameData` pointer (the sim state read
+arrives with the sprite stages, M2-SPRITE-02; CORE-004). `GlContext`
+gained `refreshRateHz()` (the display refresh rate for the frame
+clock's vsync pace; 0 = headless or unavailable).
+
+The sprite batcher, draw submits, and sim→render wiring land in the
+remaining M2 steps (M2-SPRITE-01/02 on).

@@ -27,7 +27,12 @@
 //
 // Threading (CONC-001): one thread is current on a context at a time.
 // The creating thread is the default owner; the render thread takes
-// ownership with makeCurrent() (the frame pipeline, M2-GL-02).
+// ownership with makeCurrent() (the frame pipeline, M2-GL-02). The
+// handoff is RELEASE-THEN-BIND: the old owner calls release() on its
+// thread first, then the new thread makes the context current — on
+// the P0 EGL stack, take-overs while the context is still current on
+// another LIVE thread fail with EGL_BAD_ACCESS (see
+// docs/api/gl_context.md, Threading and phase).
 // createWindowed/createHeadless are single-threaded startup calls — the
 // engine creates its contexts before the frame pipeline starts.
 //
@@ -153,10 +158,21 @@ class GlContext {
   [[nodiscard]] std::int32_t height() const noexcept;
 
   // Bind this context to the calling thread (one thread current at a
-  // time, CONC-001). The M2-GL-02 render thread calls this on takeover;
-  // re-calling on the current thread is a no-op success.
+  // time, CONC-001). The M2-GL-02 render thread calls this on takeover
+  // AFTER the old owner has called release() (the P0 EGL stack rejects
+  // a takeover while the context is still current on another live
+  // thread); re-calling on the current thread is a no-op success.
   // Precondition: valid(). Failure: GlUnavailable.
   [[nodiscard]] Status makeCurrent() const;
+
+  // Unbind this context from the calling thread (the context stays
+  // valid and is no longer current on ANY thread). The first step of
+  // a cross-thread handoff — release here, makeCurrent on the new
+  // thread (the class preamble's handoff protocol). A no-op success
+  // when the calling thread holds no context. Not a hot path (a
+  // handoff/setup call, never per-frame).
+  // Precondition: valid(). Failure: GlUnavailable.
+  [[nodiscard]] Status release() const;
 
   // Clear the render target (the FBO on headless contexts, the window
   // frame buffer on windowed contexts) to an RGBA color; the float
@@ -173,6 +189,15 @@ class GlContext {
   // [0, width) x [0, height) (InvalidArgument otherwise).
   [[nodiscard]] Status readPixel(std::int32_t x, std::int32_t y,
                                  std::uint8_t rgba[4]) const;
+
+  // The windowed context's display refresh rate (Hz); 0 when
+  // unavailable (a headless context — the FBO is the render target and
+  // nothing is ever presented — or a monitor/video-mode query failure).
+  // No GL call (a GLFW window query): the context need not be current
+  // on the calling thread. The M2-GL-02 frame clock uses this as the
+  // vsync pace (docs/api/frame_pipeline.md); 0 → the caller's target
+  // rate stands in. Precondition: valid(); O(1), no allocation.
+  [[nodiscard]] std::uint32_t refreshRateHz() const noexcept;
 
  private:
   struct Impl;

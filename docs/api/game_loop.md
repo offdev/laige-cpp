@@ -71,7 +71,11 @@ sequence).
 The clock source is `Options::nowNs` — a function returning
 nanoseconds on a monotonic epoch time base; `nullptr` uses the
 headless monotonic clock (`steady_clock`). A synthetic clock (tests)
-or the M2 windowed clock (M2-GL-02) supplies its own.
+or the M2 windowed path supplies its own: M2-GL-02 landed
+`laige::render::FrameClock` (the vsync-paced frame deadline grid —
+[docs/api/frame_pipeline.md](frame_pipeline.md)), whose `waitFrame(N)`
+returns the frame's actual presentation time (`render_time`) for the
+`PresentationSnapshot::onRenderFrame` interpolation path below.
 
 `maxCatchUpTicks` bounds **per-frame work**, not rate: at 60 Hz one
 catch-up frame may run at most 5 ticks (~83 ms of simulation time).

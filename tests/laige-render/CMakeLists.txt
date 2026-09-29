@@ -1,25 +1,31 @@
-# laige-render tests (M2-GL-01): the GL context contract — the pure
+# laige-render tests: the GL context contract (M2-GL-01) — the pure
 # 3.3 core gate (GlContextGate), the creation argument validation and
 # the stopped-context state (GlContextArgs, no GL required), and the
 # offscreen render smoke (GlContextSmoke: the headless offscreen FBO
 # frame round trip, the move semantics, and the windowed path's clean
-# failure on a headless host).
+# failure on a headless host); and the frame pipeline (M2-GL-02) — the
+# vsync-paced frame clock (FrameClock, no GL), the single-slot lock-free
+# handoff (RenderThreadHandoff, no GL), and the offscreen pipeline runs
+# (RenderThreadOffscreen: the 3000-frame no-deadlock integration run and
+# the slowed-submit drop path).
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
 # whole module; the `gl_context` entry is the M2-GL-01 Verify command
-# (`ctest -R gl_context`), selecting exactly the GlContext* suites from
-# the shared executable.
+# (`ctest -R gl_context`) and the `render_thread` entry is the
+# M2-GL-02 Verify command (`ctest -R render_thread`), each selecting
+# exactly its suites from the shared executable.
 #
-# Environment note: the GlContextSmoke suite requires a usable OpenGL
-# 3.3 environment — always present on the P0 CI runners (Mesa/ANGLE/
-# Apple/Windows software or hardware drivers), where it must pass. On a
-# local machine without a GL driver the suite GTEST_SKIPs with the clean
-# Status reason — the documented environment contract (docs/api/
-# gl_context.md), not an engine failure. The GlContextGate and
-# GlContextArgs suites always run (they make no GL calls).
+# Environment note: the GlContextSmoke and RenderThreadOffscreen suites
+# require a usable OpenGL 3.3 environment — always present on the P0 CI
+# runners (Mesa/ANGLE/Apple/Windows software or hardware drivers), where
+# they must pass. On a local machine without a GL driver the suites
+# GTEST_SKIP with the clean Status reason — the documented environment
+# contract (docs/api/gl_context.md), not an engine failure. The
+# GlContextGate/GlContextArgs/FrameClock/RenderThreadHandoff suites
+# always run (they make no GL calls).
 
-add_executable(laige-render_tests gl_context_tests.cpp)
+add_executable(laige-render_tests gl_context_tests.cpp render_thread_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 
@@ -31,9 +37,20 @@ add_test(NAME laige-render_tests COMMAND laige-render_tests)
 add_test(NAME gl_context
          COMMAND laige-render_tests --gtest_filter=GlContextGate.*:GlContextArgs.*:GlContextSmoke.*)
 
+# M2-GL-02: the step's Verify command is `ctest -R render_thread`.
+# FrameClock + RenderThreadHandoff run without any GL environment;
+# RenderThreadOffscreen needs the same usable OpenGL 3.3 environment as
+# GlContextSmoke (GTEST_SKIPs where absent — the documented
+# environment contract).
+add_test(NAME render_thread
+         COMMAND laige-render_tests
+         --gtest_filter=FrameClock.*:RenderThreadHandoff.*:RenderThreadOffscreen.*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2).
-  set_tests_properties(laige-render_tests gl_context
+  # The M2-GL-02 `render_thread` entry is the step's TSan gate (the
+  # lock-free handoff's race-freedom, the 3000-frame no-deadlock run).
+  set_tests_properties(laige-render_tests gl_context render_thread
     PROPERTIES
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()
@@ -51,12 +68,13 @@ if(LAIGE_ASAN)
   # `leak:` suppression lines abort ASan's own suppression parser at
   # init (mutually exclusive formats in one file, verified against
   # compiler-rt), and the leak roots are libEGL-internal state objects
-  # the engine never holds a pointer to. detect_leaks=0 for the two
-  # render entries instead: in-run ASan/UBSan error detection stays
+  # the engine never holds a pointer to. detect_leaks=0 for the render
+  # entries instead (render_thread's RenderThreadOffscreen suite creates
+  # the same headless context): in-run ASan/UBSan error detection stays
   # fully active (the smoke still performs its GL work under the
   # sanitizer). The test-level ENVIRONMENT replaces the job-level
   # ASAN_OPTIONS (GitHub workflow), so mirror its options here.
-  set_tests_properties(laige-render_tests gl_context PROPERTIES
+  set_tests_properties(laige-render_tests gl_context render_thread PROPERTIES
     ENVIRONMENT
     "ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=${CMAKE_SOURCE_DIR}/asan-reports/asan")
 endif()
@@ -64,3 +82,4 @@ endif()
 # The offscreen smoke creates a real (software) context + FBO; give a
 # slow headless runner generous headroom.
 set_tests_properties(laige-render_tests gl_context PROPERTIES TIMEOUT 180)
+set_tests_properties(render_thread PROPERTIES TIMEOUT 300)
