@@ -552,6 +552,11 @@ TEST(RenderThreadOffscreen, LowRate_NoDrops_FullPipeline) {
   ASSERT_TRUE(ctx.valid());
   // Headless: no display rate (the frame clock's target rate stands in):
   EXPECT_EQ(ctx.refreshRateHz(), 0u);
+  // The handoff protocol (docs/api/gl_context.md): the old owner
+  // (main) releases the context, so the render thread's takeover in
+  // onStart is a FRESH bind — the P0 EGL stack rejects a takeover
+  // while the context is still current on another live thread.
+  ASSERT_TRUE(ctx.release().ok());
 
   GlStageState state;
   state.gl = &ctx;
@@ -609,6 +614,9 @@ TEST(RenderThreadOffscreen, ThreeThousandFrames_NoDeadlock) {
     GTEST_SKIP() << "no usable OpenGL 3.3 environment here: " << reason;
   }
   ASSERT_TRUE(ctx.valid());
+  // Handoff protocol: main releases the context before the render
+  // thread takes it over (a fresh bind — docs/api/gl_context.md).
+  ASSERT_TRUE(ctx.release().ok());
 
   GlStageState state;
   state.gl = &ctx;
@@ -660,6 +668,9 @@ TEST(RenderThreadOffscreen, SlowedSubmit_ExercisesDropPath) {
     GTEST_SKIP() << "no usable OpenGL 3.3 environment here: " << reason;
   }
   ASSERT_TRUE(ctx.valid());
+  // Handoff protocol: main releases the context before the render
+  // thread takes it over (a fresh bind — docs/api/gl_context.md).
+  ASSERT_TRUE(ctx.release().ok());
 
   GlStageState state;
   state.gl = &ctx;

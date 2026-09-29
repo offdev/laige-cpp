@@ -24,8 +24,9 @@ backpressure, and the shutdown; the pipeline's actual stages — the
 sprite batcher's cull/batch (M2-SPRITE-01) and the GPU submit
 (M2-SPRITE-02) — plug in as the plain function callbacks below. Nothing
 in this module depends on GL in the handoff itself (the `GlContext`
-render-thread takeover is the `onStart` hook; the window swap/present
-lands with the engine's windowed wiring, M2-SPRITE-02 onward).
+render-thread takeover is the `onStart` hook — release-then-bind per
+`docs/api/gl_context.md`; the window swap/present lands with the
+engine's windowed wiring, M2-SPRITE-02 onward).
 
 ## The frame handoff (PRD §10.2, CONC-002)
 
@@ -229,6 +230,11 @@ laige::render::FrameClockOptions co;
 co.frameRateHz = gl.refreshRateHz();  // 0 → the target rate stands in
 laige::render::FrameClock clock =
     std::move(laige::render::FrameClock::create(co)).takeValue();
+
+// Hand off the GL context (release-then-bind — docs/api/gl_context.md):
+// the P0 EGL stack rejects a takeover while the context is still
+// current on another live thread, so the old owner releases first.
+gl.release().ok();                     // main/sim thread: no longer current
 
 laige::render::RenderThreadOptions opts;
 opts.batchStage = &cullBatch;          // M2-SPRITE-01 (render thread)

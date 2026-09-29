@@ -27,7 +27,12 @@
 //
 // Threading (CONC-001): one thread is current on a context at a time.
 // The creating thread is the default owner; the render thread takes
-// ownership with makeCurrent() (the frame pipeline, M2-GL-02).
+// ownership with makeCurrent() (the frame pipeline, M2-GL-02). The
+// handoff is RELEASE-THEN-BIND: the old owner calls release() on its
+// thread first, then the new thread makes the context current — on
+// the P0 EGL stack, take-overs while the context is still current on
+// another LIVE thread fail with EGL_BAD_ACCESS (see
+// docs/api/gl_context.md, Threading and phase).
 // createWindowed/createHeadless are single-threaded startup calls — the
 // engine creates its contexts before the frame pipeline starts.
 //
@@ -153,10 +158,21 @@ class GlContext {
   [[nodiscard]] std::int32_t height() const noexcept;
 
   // Bind this context to the calling thread (one thread current at a
-  // time, CONC-001). The M2-GL-02 render thread calls this on takeover;
-  // re-calling on the current thread is a no-op success.
+  // time, CONC-001). The M2-GL-02 render thread calls this on takeover
+  // AFTER the old owner has called release() (the P0 EGL stack rejects
+  // a takeover while the context is still current on another live
+  // thread); re-calling on the current thread is a no-op success.
   // Precondition: valid(). Failure: GlUnavailable.
   [[nodiscard]] Status makeCurrent() const;
+
+  // Unbind this context from the calling thread (the context stays
+  // valid and is no longer current on ANY thread). The first step of
+  // a cross-thread handoff — release here, makeCurrent on the new
+  // thread (the class preamble's handoff protocol). A no-op success
+  // when the calling thread holds no context. Not a hot path (a
+  // handoff/setup call, never per-frame).
+  // Precondition: valid(). Failure: GlUnavailable.
+  [[nodiscard]] Status release() const;
 
   // Clear the render target (the FBO on headless contexts, the window
   // frame buffer on windowed contexts) to an RGBA color; the float

@@ -469,6 +469,44 @@ Status GlContext::makeCurrent() const {
   return Status();
 }
 
+Status GlContext::release() const {
+  if (impl_ == nullptr) {
+    return Status(ErrorCode::InvalidArgument);
+  }
+  // The handoff protocol's first step (the class preamble): the old
+  // owner unbinds the context from its own thread, so the new thread's
+  // makeCurrent is a FRESH bind — a context no thread holds. (On the
+  // P0 EGL stack, take-overs while the context is still current on
+  // another live thread fail with EGL_BAD_ACCESS.)
+  bool ok;
+  if (impl_->backend == Impl::Backend::egl) {
+    // EGL 1.5 §3.3.5: eglMakeCurrent with EGL_NO_CONTEXT releases the
+    // calling thread's current context (a no-op success when this
+    // thread holds none).
+    ok = impl_->egl.makeCurrent(impl_->eglDisplay, nullptr, nullptr,
+                                nullptr) != 0;
+  } else {
+    // The window exists and GLFW is initialized (both guaranteed by
+    // the creation path), so the release cannot fail.
+    glfwMakeContextCurrent(nullptr);
+    ok = true;
+  }
+  if (!ok) {
+    // LOG-002: state the driver's reason when known — this thread's
+    // last EGL error (the failure path is reachable only from the EGL
+    // branch above; the GLFW release sets ok unconditionally).
+    const egl::Int eglError =
+        (impl_->backend == Impl::Backend::egl) ? impl_->egl.getError() : 0;
+    LAIGE_LOG_ERROR("gl", "context_release_failed",
+                    "releasing the GL context from the calling thread failed",
+                    laige::log::field("error", std::string_view(
+                        errorText(ErrorCode::GlUnavailable))),
+                    laige::log::field("egl_error", eglError));
+    return Status(ErrorCode::GlUnavailable);
+  }
+  return Status();
+}
+
 Status GlContext::clear(float r, float g, float b, float a) const {
   if (impl_ == nullptr || !isCurrentOnThisThread(impl_.get())) {
     // Precondition violations (stopped, or the context is not current

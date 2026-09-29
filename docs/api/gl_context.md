@@ -33,7 +33,8 @@ fallback profile, no silent version downgrade (PRD §6).
 | `version()` | The version the driver realized (`GlVersion{major, minor}`), guaranteed ≥ 3.3 core when valid. Precondition: valid() | O(1) |
 | `capabilities()` | The creation-time snapshot: version, core-profile flag, `maxTextureSize` (GL 3.3 core guarantees ≥ 4096), and the driver's `vendor`/`renderer` strings (clamped to 127 chars — driver text is untrusted, LOG-005). Precondition: valid() | O(1) |
 | `width()` / `height()` | The render-target size (the window, or the FBO). Precondition: valid() | O(1) |
-| `makeCurrent()` | Bind the context to the calling thread (one thread current at a time, CONC-001). The M2-GL-02 render thread calls this on takeover; calling it on the already-current thread is a no-op success. Failure: `GlUnavailable` (one structured Error event, `gl/context_make_current_failed`) | O(1), no allocation |
+| `makeCurrent()` | Bind the context to the calling thread (one thread current at a time, CONC-001). The M2-GL-02 render thread calls this on takeover — **after the old owner has called `release()`** (the handoff protocol in Threading and phase); calling it on the already-current thread is a no-op success. Failure: `GlUnavailable` (one structured Error event, `gl/context_make_current_failed`) | O(1), no allocation |
+| `release()` | Unbind the context from the calling thread (the context stays valid and is no longer current on any thread). The first step of a cross-thread handoff — release here, `makeCurrent()` on the new thread. A no-op success when the calling thread holds no context. Not a hot path (a handoff/setup call, never per-frame). Failure: `GlUnavailable` (one structured Error event, `gl/context_release_failed`) | O(1), no allocation |
 | `clear(r, g, b, a)` | Clear the render target (the FBO on headless contexts, the window frame buffer on windowed ones) to an RGBA color; components are clamped to `[0, 1]` before the RGBA8 conversion (1.0 → 255, 0.25 → 64, 0.75 → 191 — the conversion is exact for these values). Precondition: valid() **and** the context is current on the calling thread — otherwise `InvalidArgument` (a precondition violation, not an engine failure: no log, no GL work) | O(1), no allocation; one `glBindFramebuffer` per call (see Performance) |
 | `readPixel(x, y, rgba[4])` | Read one RGBA8 pixel; `(0, 0)` is bottom-left (the GL convention). Precondition: valid(), the context current, and `(x, y)` within `[0, w) x [0, h)` — otherwise `InvalidArgument` | O(1), no allocation (one `glReadPixels` of 4 bytes) |
 | `refreshRateHz()` | The windowed context's display refresh rate (Hz) — the M2-GL-02 frame clock's vsync pace (`docs/api/frame_pipeline.md`). Returns **0 when unavailable**: a headless context (the FBO is the render target and nothing is ever presented), a context detached from every monitor, or a video-mode query failure — the caller's target rate stands in. No GL call (a GLFW window query): the context need not be current on the calling thread. Precondition: valid() | O(1), no allocation |
@@ -49,8 +50,9 @@ fully constructed object or a `Status`; the destructor (or a move)
 destroys the window/context and — headless — the FBO and its texture.
 GPU-side state (textures, framebuffers) dies with the context: there is
 no separate teardown step. The context is created on the creating
-thread and current on it by construction; any other thread must call
-`makeCurrent()` before use (CONC-001, one thread current at a time).
+thread and current on it by construction; handing it to another thread
+is the release-then-bind protocol below (CONC-001, one thread current
+at a time).
 
 **Failure behavior (NFR-008 / CORE-008).** Every creation failure is a
 returned `Status` plus exactly one structured Error event,
@@ -63,10 +65,11 @@ field when the reason is an EGL call (`egl_make_current` on the Linux
 path; the EGL error code of the calling thread, LOG-002). Success logs
 one Info event, `gl/context_created` (kind, version, size — driver
 strings are kept out of the log, LOG-005). A `makeCurrent` failure is
-one structured Error event, `gl/context_make_current_failed`, with the
+one structured Error event, `gl/context_make_current_failed`, and a
+`release` failure one, `gl/context_release_failed` — each with the
 registry line for `GlUnavailable` and the driver's `egl_error` field
 (EGL path; the failure path is unreachable from the GLFW backend,
-whose bind sets success unconditionally).
+whose bind/release set success unconditionally).
 
 **Threading and phase.** Context creation is a setup-phase operation
 (one per process in the engine's design — M2-GL-02 runs exactly one
@@ -77,12 +80,26 @@ GL contract `makeCurrent` enforces). No engine locks are held across
 GL calls (CONC-003). On the EGL backend, `makeCurrent` on a thread that
 has never used this display first selects the per-thread client API
 (`eglBindAPI(EGL_OPENGL_API)`): libglvnd's API selection is
-per-thread, and a new thread that has not selected one cannot
-`eglMakeCurrent` an object created on another thread (the call fails
-with `EGL_BAD_ACCESS` — the P0 CI log's `egl_error=12290`). The call is
-a no-op success on stacks that honor the EGL spec's per-thread OpenGL
-default (Mesa's native libEGL), so the explicit bind is required on
-the P0 distro's libglvnd dispatcher and harmless everywhere else.
+per-thread (the EGL spec's per-thread OpenGL default makes the call a
+no-op success on stacks that honor it — Mesa's native libEGL — while
+the P0 distro's libglvnd dispatcher requires it).
+
+**The cross-thread handoff is release-then-bind.** When a context
+moves from one thread to another (the M2-GL-02 render thread takes
+over the context the main/sim thread created), the old owner must
+call `release()` on its own thread FIRST, and the new thread then
+calls `makeCurrent()`. On the P0 EGL stack (Mesa surfaceless via
+libglvnd), making a context current on a new thread while it is still
+current on another **live** thread fails with `EGL_BAD_ACCESS`
+(the P0 CI log's `egl_error=12290` on exactly that call — reproduced
+with and without the per-thread `eglBindAPI` above, which fixes the
+API-selection half but not this one). After `release()`, no thread
+holds the context, so the new thread's `makeCurrent()` is a FRESH
+bind — the same shape as the creation-time bind that works. A dead
+thread holds no context (the per-thread current state dies with the
+thread), so `makeCurrent()` from any thread after the render thread's
+join — e.g. the owner-thread readback after an ordered shutdown — is
+likewise a fresh bind.
 
 ## Headless mechanism (the exact per-OS contract)
 
