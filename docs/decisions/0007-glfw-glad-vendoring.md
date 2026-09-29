@@ -46,10 +46,15 @@ configure (ADR 0004 machinery).
   What is vendored is the
   **generated output, not a source checkout**: regeneration from the same
   command is byte-identical (`--reproducible`), which is what the tree
-  hash pins. The loader self-loads the platform GL library
+  hash pins. The built-in loader self-loads the platform GL library
   (`gladLoaderLoadGL()`: `opengl32.dll` / `libGL.so.1` /
-   `OpenGL.framework`), so the engine has no GL header or link dependency
-  of its own.
+   `OpenGL.framework`) — used by the GLFW backends, whose native
+  interfaces (WGL / GLX / Cocoa) it matches. On the Linux headless path
+  (EGL surfaceless) the built-in loader is GLX-flavored and cannot serve
+  an EGL context, so the engine loads GLAD with its own userptr loader
+  (`gladLoadGLUserPtr`) backed by the context's `eglGetProcAddress`
+  (resolved from the engine's runtime-loaded `libEGL.so.1`). Either way
+  the engine has no GL header or link dependency of its own.
 - `gl.c` compiles in its own C target (`laige-glad`, `src/laige-render/
   CMakeLists.txt`), PRIVATE to `laige-render`; GLFW links PRIVATE as
   well. The public header (`laige/render/gl_context.h`) names no vendor
@@ -86,8 +91,9 @@ configure (ADR 0004 machinery).
   the identical `GlUnavailable`/`glfw_init` result with no GLFW state
   created. The CI jobs also install the runtime GL stack for the
   headless smoke (`libegl1 libgl1 libegl-mesa0 libglx-mesa0
-  libgl1-mesa-dri`: Mesa surfaceless EGL + llvmpipe software GL — both
-  loaded by dlopen at runtime, by the engine and by GLAD).
+  libgl1-mesa-dri`: Mesa surfaceless EGL + llvmpipe software GL —
+  `libEGL.so.1` is dlopened by the engine at runtime, and GLAD resolves
+  the GL functions through the context's `eglGetProcAddress`).
 
 ## DEP-003 justification
 
@@ -120,9 +126,11 @@ configure (ADR 0004 machinery).
 - **Transitive dependencies:** GLFW: none beyond the system windowing
   stacks it wraps (X11/Wayland on Linux, Win32 on Windows, Cocoa on macOS —
   system-provided on every P0 image). GLAD: none (one C file, no
-  dependencies; the loader `dlopen`s the system GL driver library at
-  runtime). Build impact: GLFW adds one static C library (≈160 files,
-  seconds of build time); GLAD adds one C object.
+  dependencies; on the GLFW backends the loader `dlopen`s the system GL
+  driver library at runtime, and on the EGL backend the engine's own
+  dlopened `libEGL.so.1` supplies the resolver). Build impact: GLFW adds
+  one static C library (≈160 files, seconds of build time); GLAD adds
+  one C object.
 - **Platforms / health / license:** GLFW — maintained by the GLFW project
   (15+ years, CMake-native, the de-facto standard C windowing library);
   zlib license (permissive, MIT-compatible). GLAD — the glad2 generator

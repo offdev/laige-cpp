@@ -90,22 +90,17 @@ jobs:
             libx11-dev libxcursor-dev libxrandr-dev \
             libxinerama-dev libxi-dev libxext-dev \
             libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
-      - name: Probe runtime GL stack (temporary diagnostic, v3)
-        # TEMPORARY (M2-GL-01): runs 36485613200/36492418121 established:
-        # dlopen OK, surfaceless display OK, eglInitialize OK (1.5), but
-        # eglBindAPI(EGL_OPENGL_API) fails with 0x300C (EGL_NOT_SUPPORTED)
-        # in BOTH bind orders. Source analysis of Mesa (noble 25.2.8):
-        # surfaceless on a DRM-less machine only loads the swrast
-        # (llvmpipe) driver through eglInitialize's ForceSoftware
-        # fallback; eglBindAPI then checks the display's ClientAPIs,
-        # which dri2_setup_screen derives from the loaded screen's
-        # api_mask. This probe: (a) prints EGL_VENDOR / EGL_CLIENT_APIS
-        # before and after initialize, (b) re-runs with
-        # EGL_LOG_LEVEL=debug to capture the driver-selection messages,
-        # (c) lists the DRI driver directory and /dev/dri, (d) re-runs
-        # the full chain under GALLIUM_DRIVER=llvmpipe and
-        # MESA_LOADER_DRIVER_OVERRIDE=llvmpipe. Remove once the smoke
-        # runs green in CI.
+      - name: Probe runtime GL stack (temporary diagnostic, v4)
+        # TEMPORARY (M2-GL-01): v3's 0x300C was a constant mix-up — 0x300C
+        # is EGL_BAD_PARAMETER (not EGL_NOT_SUPPORTED) and v3 passed the
+        # wrong API enum (0x202A; EGL_OPENGL_API is 0x30A2 per the P0
+        # headers). v4 mirrors the engine's exact sequence: surfaceless
+        # display, eglBindAPI(EGL_OPENGL_API=0x30A2) BEFORE eglInitialize,
+        # 3.3 core context, makeCurrent, then GL resolution through
+        # eglGetProcAddress (GLAD's built-in loader is GLX-flavored).
+        # Also re-runs under EGL_LOG_LEVEL=debug (driver selection),
+        # GALLIUM_DRIVER=llvmpipe, and MESA_LOADER_DRIVER_OVERRIDE=
+        # llvmpipe. Remove once the smoke runs green in CI.
         continue-on-error: true
         run: |
           set -x
@@ -124,120 +119,108 @@ jobs:
           typedef const char* (*P_QueryString)(void*, int);
           typedef unsigned int (*P_GetError)();
           typedef void  (*P_DestroyDisplay)(void*);
-          typedef void* (*P_GLXGPA)(const char*);
+          typedef void* (*P_EGLGPA)(const char*);
 
-          // EGL 1.5 spec constants.
+          // Verified against the P0 distro's EGL headers
+          // (noble libglvnd 1.7.0).
           constexpr int kEGLVendor = 0x3053;
           constexpr int kEGLVersion = 0x3054;
           constexpr int kEGLClientApis = 0x308D;
-          constexpr int kEGLOpenGLApi = 0x202A;
-          constexpr int kEGLOpenGLEs2Api = 0x30A5;
-          constexpr int kEGLContextMajor = 0x2091;
-          constexpr int kEGLContextMinor = 0x2092;
-          constexpr int kEGLContextProfileMask = 0x2096;
+          constexpr int kEGLOpenGLApi = 0x30A2;   // EGL_OPENGL_API
+          constexpr int kEGLOpenGLEsApi = 0x30A0; // EGL_OPENGL_ES_API
+          constexpr int kEGLContextMajor = 0x3098;
+          constexpr int kEGLContextMinor = 0x30FB;
+          constexpr int kEGLContextProfileMask = 0x30FD;
           constexpr int kEGLCoreProfileBit = 0x00000001;
           constexpr int kEGLSurfacelessMesa = 0x31DD;
           constexpr unsigned int kGLVersion = 0x1F03;
+          constexpr unsigned int kGLVendor = 0x1F00;
+          constexpr unsigned int kGLRenderer = 0x1F02;
 
           int runChain(const char* label,
-                       P_GetPlatformDisplay gpd, P_Initialize init,
-                       P_BindAPI bapi, P_CreateContext cctx,
-                       P_MakeCurrent mkcur, P_QueryString qstr,
-                       P_GetError err, P_DestroyDisplay dstd) {
-            auto apis = [qstr](void* d) {
-              const char* s = qstr(d, kEGLClientApis);
-              return s ? s : "(null)";
-            };
-            void* dpy = gpd(kEGLSurfacelessMesa, nullptr, nullptr);
-            if (!dpy) { std::printf("[%s] surfaceless display FAILED err=0x%x\n", label, err ? err() : 0); return 3; }
-            std::printf("[%s] pre-init vendor=%s client_apis=%s\n", label,
-                        qstr(dpy, kEGLVendor) ? qstr(dpy, kEGLVendor) : "(null)", apis(dpy));
-            // Order A: initialize, THEN bindAPI.
-            int major = 0, minor = 0;
-            if (!init(dpy, &major, &minor)) {
-              std::printf("[%s] A: eglInitialize FAILED err=0x%x\n", label, err ? err() : 0);
-              if (dstd) dstd(dpy);
-              return 4;
-            }
-            std::printf("[%s] A: initialize ok (%d.%d); client_apis=%s\n", label, major, minor, apis(dpy));
-            if (bapi(kEGLOpenGLApi)) {
-              std::printf("[%s] A: bindAPI(OPENGL) after init OK\n", label);
-            } else {
-              std::printf("[%s] A: bindAPI(OPENGL) after init FAILED err=0x%x; ES2 bind after init: %s\n",
-                          label, err ? err() : 0, bapi(kEGLOpenGLEs2Api) ? "ok" : "also failed");
-            }
-            if (dstd) dstd(dpy);
-            // Order B (EGL spec order, what the engine now uses): bindAPI,
-            // THEN initialize.
-            void* dpy2 = gpd(kEGLSurfacelessMesa, nullptr, nullptr);
-            if (!dpy2) { std::printf("[%s] B: surfaceless display FAILED err=0x%x\n", label, err ? err() : 0); return 5; }
-            if (!bapi(kEGLOpenGLApi)) {
-              std::printf("[%s] B: bindAPI(OPENGL) before init FAILED err=0x%x; client_apis=%s\n",
-                          label, err ? err() : 0, apis(dpy2));
-              if (dstd) dstd(dpy2);
-              return 6;
-            }
-            std::printf("[%s] B: bindAPI(OPENGL) before init OK\n", label);
-            if (!init(dpy2, &major, &minor)) {
-              std::printf("[%s] B: eglInitialize after bind FAILED err=0x%x\n", label, err ? err() : 0);
-              if (dstd) dstd(dpy2);
-              return 7;
-            }
-            const int attrs[] = {kEGLContextMajor, 3, kEGLContextMinor, 3,
-                                 kEGLContextProfileMask, kEGLCoreProfileBit, 0};
-            void* ctx = cctx(dpy2, nullptr, nullptr, attrs);
-            if (!ctx) { std::printf("[%s] B: eglCreateContext(3.3 core) FAILED err=0x%x\n", label, err ? err() : 0); if (dstd) dstd(dpy2); return 8; }
-            if (!mkcur(dpy2, nullptr, nullptr, ctx)) { std::printf("[%s] B: eglMakeCurrent FAILED err=0x%x\n", label, err ? err() : 0); if (dstd) dstd(dpy2); return 9; }
-            const char* eglver = qstr(dpy2, kEGLVersion);
-            std::printf("[%s] B: EGL_VERSION=%s; now checking the GLAD loader path (libGL.so.1 + glXGetProcAddressARB)\n",
-                        label, eglver ? eglver : "(null)");
-            void* g = dlopen("libGL.so.1", RTLD_LAZY | RTLD_LOCAL);
-            if (!g) { std::printf("[%s] B: dlopen(libGL.so.1) FAILED: %s\n", label, dlerror()); if (dstd) dstd(dpy2); return 10; }
-            auto glxgpa = reinterpret_cast<P_GLXGPA>(dlsym(g, "glXGetProcAddressARB"));
-            if (!glxgpa) { std::printf("[%s] B: glXGetProcAddressARB MISSING\n", label); if (dstd) dstd(dpy2); return 11; }
-            auto gsa = reinterpret_cast<const char* (*)(unsigned int)>(glxgpa("glGetString"));
-            if (!gsa) { std::printf("[%s] B: glXGetProcAddressARB(glGetString) returned NULL\n", label); if (dstd) dstd(dpy2); return 12; }
-            const char* gver = gsa(kGLVersion);
-            const char* gvendor = gsa(0x1F00 /* GL_VENDOR */);
-            const char* grenderer = gsa(0x1F02 /* GL_RENDERER */);
-            std::printf("[%s] B: GL_VERSION=%s GL_VENDOR=%s GL_RENDERER=%s — FULL CHAIN OK\n",
-                        label, gver ? gver : "(null)", gvendor ? gvendor : "(null)",
-                        grenderer ? grenderer : "(null)");
-            if (dstd) dstd(dpy2);
-            return 0;
-          }
+                        P_GetPlatformDisplay gpd, P_Initialize init,
+                        P_BindAPI bapi, P_CreateContext cctx,
+                        P_MakeCurrent mkcur, P_QueryString qstr,
+                        P_GetError err, P_DestroyDisplay dstd,
+                        P_EGLGPA egpgpa) {
+             auto apis = [qstr](void* d) {
+               const char* s = qstr(d, kEGLClientApis);
+               return s ? s : "(null)";
+             };
+             // The engine's exact sequence: surfaceless display,
+             // eglBindAPI BEFORE eglInitialize, 3.3 core context,
+             // makeCurrent.
+             void* dpy = gpd(kEGLSurfacelessMesa, nullptr, nullptr);
+             if (!dpy) { std::printf("[%s] surfaceless display FAILED err=0x%x\n", label, err ? err() : 0); return 3; }
+             std::printf("[%s] pre-init vendor=%s client_apis=%s\n", label,
+                         qstr(dpy, kEGLVendor) ? qstr(dpy, kEGLVendor) : "(null)", apis(dpy));
+             if (!bapi(kEGLOpenGLApi)) {
+               std::printf("[%s] bindAPI(OPENGL) before init FAILED err=0x%x (ES control: %s)\n",
+                           label, err ? err() : 0, bapi(kEGLOpenGLEsApi) ? "ES ok" : "ES failed too");
+               if (dstd) dstd(dpy);
+               return 4;
+             }
+             std::printf("[%s] bindAPI(OPENGL) before init OK\n", label);
+             int major = 0, minor = 0;
+             if (!init(dpy, &major, &minor)) {
+               std::printf("[%s] eglInitialize FAILED err=0x%x\n", label, err ? err() : 0);
+               if (dstd) dstd(dpy);
+               return 5;
+             }
+             std::printf("[%s] initialize ok (%d.%d); client_apis=%s\n", label, major, minor, apis(dpy));
+             const int attrs[] = {kEGLContextMajor, 3, kEGLContextMinor, 3,
+                                  kEGLContextProfileMask, kEGLCoreProfileBit, 0};
+             void* ctx = cctx(dpy, nullptr, nullptr, attrs);
+             if (!ctx) { std::printf("[%s] eglCreateContext(3.3 core) FAILED err=0x%x\n", label, err ? err() : 0); if (dstd) dstd(dpy); return 6; }
+             if (!mkcur(dpy, nullptr, nullptr, ctx)) { std::printf("[%s] eglMakeCurrent FAILED err=0x%x\n", label, err ? err() : 0); if (dstd) dstd(dpy); return 7; }
+             // GL function resolution the way the engine does it: through
+             // eglGetProcAddress (GLAD's built-in loader is GLX-flavored
+             // and cannot serve an EGL surfaceless context).
+             auto gsa = reinterpret_cast<const char* (*)(unsigned int)>(egpgpa("glGetString"));
+             if (!gsa) { std::printf("[%s] eglGetProcAddress(glGetString) returned NULL\n", label); if (dstd) dstd(dpy); return 8; }
+             const char* gver = gsa(kGLVersion);
+             const char* gvendor = gsa(kGLVendor);
+             const char* grenderer = gsa(kGLRenderer);
+             std::printf("[%s] GL_VERSION=%s GL_VENDOR=%s GL_RENDERER=%s — FULL CHAIN OK\n",
+                         label, gver ? gver : "(null)", gvendor ? gvendor : "(null)",
+                         grenderer ? grenderer : "(null)");
+             if (dstd) dstd(dpy);
+             return 0;
+           }
 
-          int main(int argc, char** argv) {
-            const char* label = (argc > 1) ? argv[1] : "baseline";
-            const char* disp = std::getenv("DISPLAY");
-            const char* gallium = std::getenv("GALLIUM_DRIVER");
-            const char* mesaOverride = std::getenv("MESA_LOADER_DRIVER_OVERRIDE");
-            const char* logLevel = std::getenv("EGL_LOG_LEVEL");
-            std::printf("=== probe %s: DISPLAY=%s GALLIUM_DRIVER=%s MESA_LOADER_DRIVER_OVERRIDE=%s EGL_LOG_LEVEL=%s\n",
-                        label, disp ? disp : "(unset)", gallium ? gallium : "(unset)",
-                        mesaOverride ? mesaOverride : "(unset)", logLevel ? logLevel : "(unset)");
-            void* h = dlopen("libEGL.so.1", RTLD_LAZY | RTLD_LOCAL);
-            if (!h) { std::printf("[%s] dlopen(libEGL.so.1) FAILED: %s\n", label, dlerror()); return 1; }
-            auto gpd   = reinterpret_cast<P_GetPlatformDisplay>(dlsym(h, "eglGetPlatformDisplay"));
-            auto init  = reinterpret_cast<P_Initialize>(dlsym(h, "eglInitialize"));
-            auto bapi  = reinterpret_cast<P_BindAPI>(dlsym(h, "eglBindAPI"));
-            auto cctx  = reinterpret_cast<P_CreateContext>(dlsym(h, "eglCreateContext"));
-            auto mkcur = reinterpret_cast<P_MakeCurrent>(dlsym(h, "eglMakeCurrent"));
-            auto qstr  = reinterpret_cast<P_QueryString>(dlsym(h, "eglQueryString"));
-            auto err   = reinterpret_cast<P_GetError>(dlsym(h, "eglGetError"));
-            auto dstd  = reinterpret_cast<P_DestroyDisplay>(dlsym(h, "eglDestroyDisplay"));  // optional: libglvnd does not export it
-            if (!gpd || !init || !bapi || !cctx || !mkcur || !qstr) {
-              std::printf("[%s] required symbol lookup FAILED (dstd=%p optional)\n", label,
-                          reinterpret_cast<void*>(dstd)); return 2;
-            }
-            return runChain(label, gpd, init, bapi, cctx, mkcur, qstr, err, dstd);
+           int main(int argc, char** argv) {
+             const char* label = (argc > 1) ? argv[1] : "baseline";
+             const char* disp = std::getenv("DISPLAY");
+             const char* gallium = std::getenv("GALLIUM_DRIVER");
+             const char* mesaOverride = std::getenv("MESA_LOADER_DRIVER_OVERRIDE");
+             const char* logLevel = std::getenv("EGL_LOG_LEVEL");
+             std::printf("=== probe %s: DISPLAY=%s GALLIUM_DRIVER=%s MESA_LOADER_DRIVER_OVERRIDE=%s EGL_LOG_LEVEL=%s\n",
+                         label, disp ? disp : "(unset)", gallium ? gallium : "(unset)",
+                         mesaOverride ? mesaOverride : "(unset)", logLevel ? logLevel : "(unset)");
+             void* h = dlopen("libEGL.so.1", RTLD_LAZY | RTLD_LOCAL);
+             if (!h) { std::printf("[%s] dlopen(libEGL.so.1) FAILED: %s\n", label, dlerror()); return 1; }
+             auto gpd    = reinterpret_cast<P_GetPlatformDisplay>(dlsym(h, "eglGetPlatformDisplay"));
+             auto init   = reinterpret_cast<P_Initialize>(dlsym(h, "eglInitialize"));
+             auto bapi   = reinterpret_cast<P_BindAPI>(dlsym(h, "eglBindAPI"));
+             auto cctx   = reinterpret_cast<P_CreateContext>(dlsym(h, "eglCreateContext"));
+             auto mkcur  = reinterpret_cast<P_MakeCurrent>(dlsym(h, "eglMakeCurrent"));
+             auto qstr   = reinterpret_cast<P_QueryString>(dlsym(h, "eglQueryString"));
+             auto err    = reinterpret_cast<P_GetError>(dlsym(h, "eglGetError"));
+             auto dstd   = reinterpret_cast<P_DestroyDisplay>(dlsym(h, "eglDestroyDisplay"));  // optional: libglvnd does not export it
+             auto egpgpa = reinterpret_cast<P_EGLGPA>(dlsym(h, "eglGetProcAddress"));
+             if (!gpd || !init || !bapi || !cctx || !mkcur || !qstr || !egpgpa) {
+               std::printf("[%s] required symbol lookup FAILED (dstd=%p optional)\n", label,
+                           reinterpret_cast<void*>(dstd)); return 2;
+             }
+             return runChain(label, gpd, init, bapi, cctx, mkcur, qstr, err, dstd, egpgpa);
           }
           EOF
           g++ -o /tmp/glprobe /tmp/glprobe.cpp -ldl
-          /tmp/glprobe baseline
-          EGL_LOG_LEVEL=debug /tmp/glprobe debug-log
-          GALLIUM_DRIVER=llvmpipe /tmp/glprobe gallium-llvmpipe
-          MESA_LOADER_DRIVER_OVERRIDE=llvmpipe /tmp/glprobe mesa-override-llvmpipe
+          set +e  # run every variant; report each exit code
+          /tmp/glprobe baseline; echo "baseline exit=$?"
+          EGL_LOG_LEVEL=debug /tmp/glprobe debug-log; echo "debug-log exit=$?"
+          GALLIUM_DRIVER=llvmpipe /tmp/glprobe gallium-llvmpipe; echo "gallium-llvmpipe exit=$?"
+          MESA_LOADER_DRIVER_OVERRIDE=llvmpipe /tmp/glprobe mesa-override-llvmpipe; echo "mesa-override-llvmpipe exit=$?"
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
       - name: Build

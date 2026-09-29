@@ -68,7 +68,13 @@ using Bool = std::int32_t;
 using Enum = std::int32_t;
 
 constexpr Int kNone = 0x3038;
-constexpr Enum kOpenGlApi = 0x0008;
+// EGL_OPENGL_API — the eglBindAPI argument. Verified against the P0
+// distro's EGL headers (noble libglvnd 1.7.0): the GLVND dispatcher
+// accepts only EGL_OPENGL_API (0x30A2) and EGL_OPENGL_ES_API (0x30A0)
+// and rejects every other value with EGL_BAD_PARAMETER (0x300C).
+// Note the confusion this value caused: 0x0008 is EGL_OPENGL_BIT, a
+// ClientAPIs mask bit, not an API enum.
+constexpr Enum kOpenGlApi = 0x30A2;
 constexpr Int kContextMajorVersion = 0x3098;
 constexpr Int kContextMinorVersion = 0x30FB;
 constexpr Int kContextProfileMask = 0x30FD;
@@ -87,9 +93,31 @@ struct FnTable {
   Context (*getCurrentContext)();
   Bool (*destroyContext)(Display display, Context context);
   Bool (*destroyDisplay)(Display display);
+  // eglGetProcAddress — resolves GL entry points for the current
+  // context (EGL 1.5). Required for the headless GLAD load below.
+  void* (*getProcAddress)(const char* name);
 };
 
 }  // namespace egl
+
+// GLAD's built-in loader (`gladLoaderLoadGL`) is GLX-flavored on Linux
+// (it dlopens libGL.so.1 and resolves through glXGetProcAddressARB),
+// which cannot serve an EGL surfaceless context: for the EGL backend
+// the engine feeds GLAD its own userptr loader (gladLoadGLUserPtr)
+// backed by the context's eglGetProcAddress — the EGL 1.5 mechanism for
+// resolving a context's GL API. The GLFW backends keep GLAD's built-in
+// loader (WGL/GLX/Cocoa), which is correct for their native interfaces.
+// GLAD's userptr loader contract (gl.h): the loader takes a user
+// pointer and a function name and returns GLADapiproc — a
+// `void (*)(void)` function pointer.
+void (*eglGladLoader(void* userptr, const char* name))(void) {
+  const auto proc =
+      *reinterpret_cast<void* (**)(const char*)>(userptr);
+  if (proc == nullptr) {
+    return nullptr;
+  }
+  return reinterpret_cast<void (*)(void)>(proc(name));
+}
 
 // GL_CONTEXT_PROFILE_BIT (the core-profile bit of the
 // GL_CONTEXT_PROFILE_MASK query): glad's core-3.3 generation emits the
@@ -287,10 +315,16 @@ Status GlContext::createFbo(Impl* impl) {
 }
 
 // The tail shared by every successful native-context creation: GLAD
-// load, capability query + gate, (headless) FBO, success event.
+// load, capability query + gate, (headless) FBO, success event. The
+// context is current on this thread (both creation paths make it
+// current first), as GLAD's version detection requires.
 Status GlContext::finishCreation(Impl* impl, const char* kind,
                                  bool headless) {
-  if (gladLoaderLoadGL() == 0) {
+  const int gladVersion =
+      (impl->backend == Impl::Backend::egl)
+          ? gladLoadGLUserPtr(eglGladLoader, &impl->egl.getProcAddress)
+          : gladLoaderLoadGL();
+  if (gladVersion == 0) {
     return Status(ErrorCode::GlUnavailable);
   }
   const Status caps = queryCapabilities(impl);
@@ -556,6 +590,8 @@ Result<GlContext> GlContext::createHeadless(std::int32_t width,
   impl->egl.destroyDisplay =
       reinterpret_cast<egl::Bool (*)(egl::Display)>(
           dlsym(impl->eglHandle, "eglDestroyDisplay"));
+  impl->egl.getProcAddress = reinterpret_cast<void* (*)(const char*)>(
+      dlsym(impl->eglHandle, "eglGetProcAddress"));
   // A partial table is unusable: any missing symbol is a clean failure —
   // except eglDestroyDisplay, which is OPTIONAL: the libglvnd dispatcher
   // (libEGL.so.1 on P0 Ubuntu, what the engine dlopens) does not export
@@ -565,12 +601,16 @@ Result<GlContext> GlContext::createHeadless(std::int32_t width,
   // engine's one-display-per-process design (CORE-009: the display's
   // lifetime is the process's, owned by this context object until then).
   // destroy() already skips the call when the pointer is null.
+  // eglGetProcAddress is REQUIRED: both the libglvnd dispatcher and
+  // Mesa's vendor library export it (verified against the noble symbol
+  // tables), and the headless GLAD load resolves the GL API through it.
   const bool complete =
       impl->egl.getPlatformDisplay != nullptr &&
       impl->egl.initialize != nullptr && impl->egl.bindApi != nullptr &&
       impl->egl.createContext != nullptr && impl->egl.makeCurrent != nullptr &&
       impl->egl.getCurrentContext != nullptr &&
-      impl->egl.destroyContext != nullptr;
+      impl->egl.destroyContext != nullptr &&
+      impl->egl.getProcAddress != nullptr;
   if (!complete) {
     logCreationFailure("headless", "egl_load", ErrorCode::GlUnavailable);
     return Result<GlContext>::failure(ErrorCode::GlUnavailable);
@@ -584,10 +624,13 @@ Result<GlContext> GlContext::createHeadless(std::int32_t width,
     return Result<GlContext>::failure(ErrorCode::GlUnavailable);
   }
 
-  // EGL 1.5 spec order: eglBindAPI binds the OpenGL API to the display
-  // and MUST be called before eglInitialize; its result is checked
-  // (CORE-008) — a display that cannot bind the desktop OpenGL API
-  // (an ES-only driver configuration) is a clean GlUnavailable, not a
+  // eglBindAPI selects the client API for this thread (the GLVND
+  // dispatcher sets its thread state plus the vendor's; the spec
+  // guarantees no failure for a valid API enum — the dispatcher
+  // rejects an unknown enum with EGL_BAD_PARAMETER). Called before
+  // eglInitialize per the spec's API-selection order; the result is
+  // still checked (CORE-008): a failure means a broken EGL stack (an
+  // ES-only or mismatched dispatcher), a clean GlUnavailable — never a
   // silent fallback.
   if (impl->egl.bindApi(egl::kOpenGlApi) == 0) {
     logCreationFailure("headless", "egl_context", ErrorCode::GlUnavailable);

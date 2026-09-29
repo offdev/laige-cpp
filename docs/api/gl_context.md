@@ -80,19 +80,24 @@ OS so that CI can run the GL smoke on every P0 runner:
   clean `GlUnavailable`, not a build failure) and resolves the small
   EGL 1.5 function set by name (`eglGetPlatformDisplay`,
   `eglInitialize`, `eglBindAPI`, `eglCreateContext`, `eglMakeCurrent`,
-  `eglGetCurrentContext`, `eglDestroyContext`, and — **optional** —
-  `eglDestroyDisplay`: the libglvnd dispatcher that P0 Ubuntu exposes
-  as `libEGL.so.1` does not export it, so its absence is not a
-  failure; when absent the display's resources are released at process
-  termination, which matches the engine's one-display-per-process
-  design (the display's lifetime is the process's).
-  `eglBindAPI(EGL_OPENGL_API)` is called **before** `eglInitialize` —
-  the order the EGL 1.5 spec requires — and its result is checked: a
-  display that cannot bind the desktop OpenGL API (an ES-only driver
-  configuration) is a clean `GlUnavailable` (`reason=egl_context`).
-  The display is created for **`EGL_PLATFORM_SURFACELESS_MESA`
-  (0x31DD, `EGL_MESA_platform_surfaceless`)** — no display server, no
-  window, no surface — and the context is created with no config and no
+  `eglGetCurrentContext`, `eglDestroyContext`, and `eglGetProcAddress`
+  — plus, **optional**, `eglDestroyDisplay`: the libglvnd dispatcher
+  that P0 Ubuntu exposes as `libEGL.so.1` does not export it, so its
+  absence is not a failure; when absent the display's resources are
+  released at process termination, which matches the engine's
+  one-display-per-process design (the display's lifetime is the
+  process's). `eglGetProcAddress` is required: both the libglvnd
+  dispatcher and Mesa's vendor library export it (verified against the
+  P0 distro's symbol tables), and the headless GL load resolves the GL
+  API through it (see "GL function access"). `eglBindAPI(EGL_OPENGL_API)`
+  is called **before** `eglInitialize` (the spec's API-selection
+  order) and its result is checked: the spec guarantees no failure for
+  a valid API enum, so a failure means a broken EGL stack (an ES-only
+  or mismatched dispatcher) — a clean `GlUnavailable`
+  (`reason=egl_context`), never a silent fallback. The display is
+  created for **`EGL_PLATFORM_SURFACELESS_MESA` (0x31DD,
+  `EGL_MESA_platform_surfaceless`)** — no display server, no window,
+  no surface — and the context is created with no config and no
   surface: `eglCreateContext(display, EGL_NO_CONFIG, NULL,
   {EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 3,
   EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
@@ -129,8 +134,23 @@ must be `GL_FRAMEBUFFER_COMPLETE` or creation fails with
 The engine calls GL through the GLAD 2.0.8-generated loader
 (`glad_glX` symbols; ADR 0007). `gl_context.cpp` is the only engine TU
 that includes `<glad/gl.h>` or `<GLFW/glfw3.h>` — public headers name
-no vendor type (CPP-010, DEP-004; include-lint R3). GLAD's
-`gl:core=3.3` generation deliberately contains no GL 3.2 "NP"
+no vendor type (CPP-010, DEP-004; include-lint R3). The GL entry
+points are resolved per backend:
+
+- **GLFW backends** (windowed on all P0 OSes; headless on
+  Windows/macOS): GLAD's built-in loader (`gladLoaderLoadGL()`) —
+  correct for the native interface of each platform (WGL / GLX /
+  Cocoa).
+- **EGL backend** (headless on Linux): GLAD's built-in loader is
+  GLX-flavored on Linux (it dlopens `libGL.so.1` and resolves through
+  `glXGetProcAddressARB`), which cannot serve an EGL surfaceless
+  context — so the engine loads GLAD with its own userptr loader
+  (`gladLoadGLUserPtr`) backed by the context's `eglGetProcAddress`,
+  the EGL 1.5 mechanism for resolving a context's GL API. The context
+  is current on the creating thread before the load (GLAD's version
+  detection requires it).
+
+GLAD's `gl:core=3.3` generation deliberately contains no GL 3.2 "NP"
 (meta-context) functions such as `glGetCurrentContext`; the
 "current-on-this-thread" check in `clear`/`readPixel` therefore uses
 the platform layer directly (`glfwGetCurrentContext()` for the GLFW
