@@ -45,7 +45,21 @@ set_tests_properties(laige_bench_smoke
 # from the sanitizer trees: instrumentation inflates the tick's absolute
 # cost (the m1-profiler-cost baseline precedent — a sanitizer measurement
 # would measure the instrumentation, not the sim).
-if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN)
+#
+# Platform scope (roadmap M1-BENCH-01: "the CI reference machine,
+# ubuntu-24.04, is the gate"; docs/benchmarks/methodology.md §5): the
+# absolute PRD §8.1 targets are calibrated on the CI reference machine —
+# the P0 Linux jobs, both of which run on ubuntu-24.04. The shared
+# GitHub macOS/Windows runners are slower and noisier than the reference
+# machine, and their tail latency is dominated by runner preemption
+# (a macos-15 merge-lane run measured p99 6.00 ms / max 136.92 ms on the
+# 10k sim-tick workload against the reference max of 0.81 ms, with the
+# run's final_hash bit-identical to the baseline — no engine regression),
+# so the absolute gate would flap there without tracking regressions.
+# The other P0 platforms keep the full ctest suite (determinism,
+# zero-alloc, fuzz, and API checks all still run); only the absolute
+# sim-tick budget gate is reference-platform-scoped.
+if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_test(NAME laige_bench_sim_tick_fpx16
            COMMAND laige-bench --suite=sim-tick --math=fixed_point_16_16
                                     --runs=3000 --warmup=1000

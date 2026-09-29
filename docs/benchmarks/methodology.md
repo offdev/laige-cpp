@@ -120,6 +120,24 @@ exact command and the commit it was measured on.
   against its last recorded value (**`before`**) — or breaches the
   absolute **`target`** — fails CI unless the budget is revised via a
   PRD revision.
+- **The absolute-target gate is scoped to the CI reference machine.**
+  The `budgets.json` targets are calibrated on the CI reference machine
+  (ubuntu-24.04 — the P0 Linux jobs; the M1-BENCH-01 Verify clause:
+  "if local machine differs, record measured value + CI is the gate").
+  The budget-gate ctest entries (`tools/bench`,
+  `laige_bench_sim_tick_fpx16` / `laige_bench_sim_tick_fp32`) therefore
+  run on the reference platform (Linux) only. The shared GitHub
+  macOS/Windows runners are slower and noisier than the reference
+  machine — their tail latency is dominated by runner preemption, and
+  the absolute p99 target would fail there without tracking an engine
+  regression (evidence: a macos-15 merge-lane run measured p99
+  6.00317 ms / max 136.92 ms on the 10k sim-tick workload against the
+  reference max of 0.81 ms, with the mean 1.66739 ms still inside the
+  3.0 ms gate and the run's `final_hash` bit-identical to the baseline;
+  the same run's Linux and macOS Intel jobs passed). The other P0
+  platforms keep the full ctest suite: determinism, zero-allocation,
+  fuzz, and API checks still run everywhere — only the absolute
+  sim-tick budget gate is reference-platform-scoped.
 - **CI-gateable:** `laige-bench --budget=<name>` exits `0` on pass and
   **`2` on a failed budget check** (`1` = usage or load failure); the
   CI lane asserts the exit code.

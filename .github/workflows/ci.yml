@@ -94,6 +94,19 @@
 # need the MSVC environment (INCLUDE/LIB/PATH) to find the CRT/STL
 # headers.
 #
+# Budget-gate scope (roadmap M1-BENCH-01: "the CI reference machine,
+# ubuntu-24.04, is the gate"; docs/benchmarks/methodology.md §5): the
+# sim-tick budget-gate ctest entries (laige_bench_sim_tick_fpx16 /
+# laige_bench_sim_tick_fp32, tools/bench) run ONLY on the reference
+# platform — the P0 Linux jobs, both of which run on ubuntu-24.04. The
+# macOS/Windows jobs run the same ctest suite minus those entries: the
+# absolute budgets.json targets are calibrated on the reference machine,
+# and the shared macOS/Windows runners' tail latency (runner
+# preemption) would flap the absolute p99 gate without tracking an
+# engine regression. Every other test — including determinism,
+# zero-alloc, fuzz, and the API/lint tooling jobs — still runs on all
+# P0 platforms.
+#
 # AC-6.1 (same source tree, same feature set, no per-OS feature flags): no
 # build job passes feature flags; every build job builds the identical
 # tree with the only variation being the platform/compiler (include-lint
