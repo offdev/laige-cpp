@@ -49,19 +49,24 @@ variable, no queue:
   before `submitStage`, once per rendered frame, **on the render
   thread**; `nullptr` skips the stage.
 - `RenderThreadOptions` — the stages, their context, and the
-  `onStart` hook.
+  `onStart`/`onStop` hooks.
 
-The full synchronization argument (the sequence lock — McIlroy/Dekker —
-memory orders, the torn-copy retry, the no-ABA case, the 2^64 wrap
-bound) is in the header preamble; the short form: the producer stores
-the descriptor plainly and publishes with
-`seq_.store(s + 2, release)`; the consumer acquire-loads `seq_`, copies
-the slot, and re-checks — an even, unchanged `seq_` means a complete
-frame, otherwise the copy is torn and retried. The diagnostic atomics
-(`consumedSeq_`, `inFlight_`, `stop_`, `submitted_`, `rendered_`)
-carry no correctness — `seq_` alone does; they exist for the
-accounting, `waitIdle`, and the ordered shutdown (CONC-002:
-partitioned ownership and an immutable snapshot, no shared locks).
+The full synchronization argument (the atomic-slot handoff — memory
+orders, the ordering re-check, the no-ABA case, the 2^64 wrap bound) is
+in the header preamble; the short form: the producer publishes with
+`slot_.store(frame, release)` then `seq_.store(s + 1, release)`; the
+consumer acquire-loads `seq_`, loads the atomic slot (a complete copy,
+never torn), and re-checks `seq_` — an unchanged value means the copy
+is a complete, current frame, otherwise a newer publication crossed
+the copy window and the copy is retried. The ATOMIC slot (not a
+plain-memory sequence lock) is what makes the handoff free of data
+races under the C++ memory model — a plain seqlock's concurrent
+plain read/write of the slot is the exact access pair the P0 CI TSan
+lane reports (CONC-007). The diagnostic atomics (`consumedSeq_`,
+`inFlight_`, `stop_`, `submitted_`, `rendered_`) carry no correctness —
+`seq_` and `slot_` alone do; they exist for the accounting, `waitIdle`,
+and the ordered shutdown (CONC-002: partitioned ownership and an
+immutable snapshot, no shared locks).
 
 **Backpressure (PERF-008, "never queue unboundedly").** The single slot
 means the consumer can lag by **at most one frame**. When the producer
@@ -197,10 +202,12 @@ The documented frame-rate range is `[kMinFrameRateHz, kMaxFrameRateHz]`
 
 ## Performance (PERF-003/002, DOC-004)
 
-**Hot path (`submitFrame`).** A few atomic loads + one plain 32-byte
-copy + one release store — no allocation, no lock, no virtual
-dispatch, no `std::function` (PERF-006), no logging on the healthy
-path (the drop path is cold: one rate-limited Warn). The consumer's
+**Hot path (`submitFrame`).** A few atomic loads + one 32-byte atomic
+release store (the single producer makes the store contend-free — one
+CAS attempt on every P0 compiler, no lock) + one release store — no
+allocation, no lock, no virtual dispatch, no `std::function`
+(PERF-006), no logging on the healthy path (the drop path is cold: one
+rate-limited Warn). The consumer's
 between-frame wait is a yield spin (no busy-burn: the OS reschedules
 during the ~16 ms vsync gap). `FrameClock`: `deadlineNs` is O(1)
 integer math; `waitFrame` is one bounded `sleep_until` (no spin — the
@@ -213,7 +220,8 @@ work (M2-SPRITE-02 budget, not this step's).
 **Misuse warnings.**
 
 - Never publish from a thread other than the owner (a second producer
-  races the seqlock) — the sim thread is the producer.
+  races the handoff's single-slot protocol — `seq_`/`slot_` are
+  producer-owned) — the sim thread is the producer.
 - Never release per-frame data the handoff still carries: `waitIdle()`
   + `shutdown()` first.
 - A stopped (destroyed/moved-from) `RenderThread` rejects `submitFrame`

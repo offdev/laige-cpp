@@ -24,7 +24,7 @@ stays C++-only behind the pimpl.
 
 M2-GL-02 landed the frame pipeline — `laige::render::RenderThread`
 (the render thread + the lock-free single-slot frame handoff: one
-producer, one consumer, the seqlock argument, the backpressure drop
+producer, one consumer, the atomic-slot handoff argument, the backpressure drop
 (PERF-008), the exact accounting, the ordered idempotent shutdown
 (CONC-006)) and `laige::render::FrameClock` (the vsync-paced frame
 deadline grid + the `render_time` provider for

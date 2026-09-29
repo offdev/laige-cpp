@@ -185,8 +185,8 @@ still to land.
   and the clean-failure contract (M2-GL-01; ADR 0007; `laige-render`).
 - [Frame pipeline](api/frame_pipeline.md) — `laige::render::RenderThread`
   and `laige::render::FrameClock`: the render thread, the lock-free
-  single-slot frame handoff (one producer, one consumer; the seqlock
-  argument, the backpressure drop, the exact accounting), the
+  single-slot frame handoff (one producer, one consumer; the atomic-slot
+  handoff argument, the backpressure drop, the exact accounting), the
   vsync-paced frame clock (the frame deadline grid and the
   `render_time` provider for presentation/interpolation), and the
   ordered idempotent shutdown (M2-GL-02; `laige-render`).

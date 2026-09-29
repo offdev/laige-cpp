@@ -66,6 +66,25 @@ endif()
 
 laige_apply_engine_policy(laige-render)
 
+# The frame handoff's 32-byte atomic slot (frame_pipeline.cpp) emits
+# __atomic_store/__atomic_load references on compilers that do not
+# inline large atomics (clang + the GNU libstdc++ — verified on the P0
+# clang lane); g++'s driver auto-links libatomic. libatomic is part of
+# the compiler toolchain (no external dependency, DEP-001); only this
+# target's objects reference it (a link-time detail, not API —
+# PRIVATE).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_CXX_COMPILER_ID MATCHES "^(Clang|GNU)$")
+  find_library(LAIGE_ATOMIC_LIB NAMES atomic)
+  if(LAIGE_ATOMIC_LIB)
+    target_link_libraries(laige-render PRIVATE "${LAIGE_ATOMIC_LIB}")
+  else()
+    message(WARNING
+      "laige-render: libatomic not found — the 32-byte atomic slot "
+      "will not link with this toolchain")
+  endif()
+endif()
+
 # Public internal dependency: laige-core (the public header uses
 # laige::Result/Status, CPP-010).
 target_link_libraries(laige-render PUBLIC laige-core)

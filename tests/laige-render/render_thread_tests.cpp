@@ -377,7 +377,7 @@ TEST(RenderThreadHandoff, BackpressureDropsOlderFrames) {
   EXPECT_GE(s.framesRendered, 1u);   // the first frame always renders
   EXPECT_GT(s.framesDropped, 0u);    // the drop path fired
   // The rendered frames are strictly ascending (no re-render, no gap in
-  // the seqlock accounting — the drops are the missing indices):
+  // the handoff accounting — the drops are the missing indices):
   for (std::size_t i = 1; i < state.recorded.size(); ++i) {
     EXPECT_GT(state.recorded[i], state.recorded[i - 1]);
   }

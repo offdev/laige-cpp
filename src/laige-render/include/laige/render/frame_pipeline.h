@@ -32,11 +32,12 @@
 // variable, no queue (PERF-008: the backlog is bounded to exactly one
 // pending frame by construction, never unbounded):
 //
-//   seq_          the monotonic publish sequence (u64). Even values are
-//                 idle (seq_/2 = the latest published frame's number);
-//                 an odd value marks a write in progress.
-//   slot_         the FrameDescriptor (a 32-byte POD in plain memory —
-//                 published through seq_)
+//   seq_          the monotonic publication counter (u64, 1-based):
+//                 the latest published frame's number; a frame is
+//                 pending iff seq_ > consumedSeq_
+//   slot_         the FrameDescriptor (a 32-byte POD) in an ATOMIC
+//                 slot — every load is a complete copy (no torn reads,
+//                 no sequence lock)
 //   consumedSeq_  the consumer's last fully-consumed seq (consumer →
 //                 producer diagnostic, a release store)
 //   inFlight_     true while a consumed frame's stages are running
@@ -53,27 +54,36 @@
 // CONC-002 synchronization argument (one producer, one consumer —
 // partitioned ownership, no shared locks):
 //
-//   producer publish:   slot_ = frame              (plain store)
-//                      seq_.store(s + 2, release)  (publishes slot_)
-//   consumer copy:      a = seq_.load(acquire)     (the publication
+//   producer publish:   slot_.store(frame, release)  (publishes slot_)
+//                      seq_.store(s + 1, release)    (publishes the
+//                                              publication)
+//   consumer copy:      a = seq_.load(acquire)       (the publication
 //                                              barrier: an acquire load
 //                                              synchronizes-with the
 //                                              producer's release store)
-//                      d = slot_                   (plain load — a
-//                                              complete frame is
-//                                              visible)
-//                      b = seq_.load(acquire)      (a != b → torn →
-//                                              retry)
+//                      d = slot_.load(relaxed)       (the atomic slot
+//                                              load — a complete frame,
+//                                              never torn)
+//                      b = seq_.load(relaxed)        (a != b → the copy
+//                                              crossed a newer
+//                                              publication → retry)
 //
-// The consumer copies under the classic sequence lock (McIlroy/Dekker):
-// the seq must be even before AND unchanged after the copy, so a frame
-// that reaches the pipeline is ALWAYS a complete snapshot — a
-// concurrent producer write may overlap the copy window, but it can
-// never produce a consumed torn value (the end-check discards it). No
-// ABA is possible: the seq only increases, and a 2^64 wrap would take
-// ~292 years of frames at the 1000 Hz maximum. The diagnostic atomics
+// The ATOMIC slot replaces the classic sequence lock (McIlroy/Dekker):
+// a plain-memory seqlock reader tolerates a torn copy by re-checking
+// the seq, but the concurrent plain read/write of the slot is a data
+// race under the C++ memory model — the P0 CI TSan lane reports
+// exactly that access pair — so the slot itself is the atomic (the
+// single producer makes the 32-byte store contend-free: one CAS
+// attempt, no lock, no allocation, PERF-003/006). The seq re-check is
+// kept as an ORDERING guard, not a torn-read guard: if a newer
+// publication lands between the consumer's seq load and its slot load,
+// the slot may already hold the newer frame — the a != b end-check
+// discards the crossed copy and the skipped frame is exactly the one
+// the producer's backpressure dropped in place (logged). No ABA is
+// possible: the seq only increases, and a 2^64 wrap would take ~292
+// years of frames at the 1000 Hz maximum. The diagnostic atomics
 // (consumedSeq_/inFlight_/stop_/submitted_/rendered_) carry no
-// correctness — seq_ alone does; they exist for the accounting,
+// correctness — seq_ and slot_ alone do; they exist for the accounting,
 // waitIdle, and the ordered shutdown.
 //
 // Backpressure (PERF-008, the scope's "never queue unboundedly"): the
@@ -218,7 +228,8 @@
 //
 // Misuse warnings:
 //   - never publish from a thread other than the owner (a second
-//     producer races the seqlock) — the sim thread is the producer;
+//     producer races the handoff's single-slot protocol) — the sim
+//     thread is the producer;
 //   - never release per-frame data the handoff still carries: waitIdle()
 //     + shutdown() first;
 //   - a stopped (destroyed/moved-from) RenderThread rejects
@@ -366,13 +377,13 @@ class RenderThread {
 
  private:
   // The consumer loop (the render thread body — the header preamble's
-  // seqlock argument).
+  // handoff argument).
   void runConsumer() noexcept;
 
   RenderThreadOptions options_;
   // The handoff state (the header preamble's synchronization argument).
-  std::atomic<std::uint64_t> seq_{0};        // even = idle; odd = writing
-  FrameDescriptor slot_{};                   // plain POD, seq_-published
+  std::atomic<std::uint64_t> seq_{0};        // publication counter (1-based)
+  std::atomic<FrameDescriptor> slot_{};      // atomic slot: complete copies
   std::atomic<std::uint64_t> consumedSeq_{0};
   std::atomic<bool> inFlight_{false};
   std::atomic<bool> stop_{false};
