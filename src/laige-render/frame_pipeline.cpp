@@ -323,6 +323,14 @@ void RenderThread::runConsumer() noexcept {
     rendered_.fetch_add(1u, std::memory_order_relaxed);
     inFlight_.store(false, std::memory_order_release);
   }
+  // The stop hook: AFTER the last frame and BEFORE the thread exits —
+  // resources the render thread owned (e.g. the GL context: the P0 EGL
+  // stack cannot rebind a context last held by a dead thread) must be
+  // handed back while this thread is still alive. Bounded, non-blocking
+  // (API-005).
+  if (options_.onStop != nullptr) {
+    options_.onStop(options_.onStopContext);
+  }
 }
 
 void RenderThread::waitIdle() noexcept {

@@ -186,6 +186,24 @@ void hookRecordStart(void* context) noexcept {
   h->done.store(true, std::memory_order_release);
 }
 
+struct StopOrderState {
+  std::thread::id owner;
+  std::thread::id stop;
+  std::vector<char> marks;  // 'f' per rendered frame, then 'x'
+  std::atomic<bool> done{false};
+};
+
+void stageMarkFrame(void* context, const FrameDescriptor&) noexcept {
+  static_cast<StopOrderState*>(context)->marks.push_back('f');
+}
+
+void hookRecordStopMark(void* context) noexcept {
+  auto* h = static_cast<StopOrderState*>(context);
+  h->marks.push_back('x');
+  h->stop = std::this_thread::get_id();
+  h->done.store(true, std::memory_order_release);
+}
+
 }  // namespace
 
 // ------------------------------------------------------------------------
@@ -424,6 +442,35 @@ TEST(RenderThreadHandoff, OnStartHookRunsOnTheRenderThread) {
   thread.shutdown();
 }
 
+TEST(RenderThreadHandoff, OnStopHookRunsAfterTheLastFrame) {
+  StopOrderState state;
+  state.owner = std::this_thread::get_id();
+  RenderThreadOptions opts;
+  opts.submitStage = &stageMarkFrame;
+  opts.stageContext = &state;
+  opts.onStop = &hookRecordStopMark;
+  opts.onStopContext = &state;
+  RenderThread thread(opts);
+  for (std::uint64_t i = 1; i <= 5; ++i) {
+    FrameDescriptor d;
+    d.frameIndex = i;
+    ASSERT_TRUE(thread.submitFrame(d).ok());
+    thread.waitIdle();
+  }
+  // The hook runs ONCE on the render thread, AFTER the last frame and
+  // BEFORE the thread exits: shutdown() joins the thread, so at its
+  // return the hook has completed (no racy check before the join).
+  thread.shutdown();
+  ASSERT_TRUE(state.done.load(std::memory_order_acquire));
+  EXPECT_NE(state.stop, state.owner);  // the hook ran off-owner
+  // ...and after the last frame: f,f,f,f,f,x:
+  ASSERT_EQ(state.marks.size(), 6u);
+  for (std::size_t i = 0; i < 5u; ++i) {
+    EXPECT_EQ(state.marks[i], 'f');
+  }
+  EXPECT_EQ(state.marks[5], 'x');
+}
+
 TEST(RenderThreadHandoff, ShutdownIsOrderedAndIdempotent) {
   HandoffState state;
   RenderThreadOptions opts;
@@ -528,6 +575,17 @@ void hookGlMakeCurrent(void* context) noexcept {
   }
 }
 
+// The render-thread hand-back hook (the GlContext::release contract,
+// M2-GL-02): the P0 EGL stack cannot rebind a context last held by a
+// DEAD thread, so the last holder releases it while still alive —
+// after the last frame, before the thread exits (onStop).
+void hookGlRelease(void* context) noexcept {
+  auto* s = static_cast<GlStageState*>(context);
+  if (!s->gl->release().ok()) {
+    s->glFailed = true;
+  }
+}
+
 // Creates the offscreen context; on failure records the clean Status
 // reason (the GTEST_SKIP with the message happens in the test body —
 // the GlContextSmoke precedent) and returns false.
@@ -565,6 +623,8 @@ TEST(RenderThreadOffscreen, LowRate_NoDrops_FullPipeline) {
   opts.stageContext = &state;
   opts.onStart = &hookGlMakeCurrent;
   opts.onStartContext = &state;
+  opts.onStop = &hookGlRelease;
+  opts.onStopContext = &state;
   RenderThread thread(opts);
 
   // 30 frames at 100 Hz (10 ms pace): the consumer (a µs-scale clear)
@@ -625,6 +685,8 @@ TEST(RenderThreadOffscreen, ThreeThousandFrames_NoDeadlock) {
   opts.stageContext = &state;
   opts.onStart = &hookGlMakeCurrent;
   opts.onStartContext = &state;
+  opts.onStop = &hookGlRelease;
+  opts.onStopContext = &state;
   RenderThread thread(opts);
 
   // The step's integration run: 3000 frames, offscreen, no deadlock.
@@ -680,6 +742,8 @@ TEST(RenderThreadOffscreen, SlowedSubmit_ExercisesDropPath) {
   opts.stageContext = &state;
   opts.onStart = &hookGlMakeCurrent;
   opts.onStartContext = &state;
+  opts.onStop = &hookGlRelease;
+  opts.onStopContext = &state;
   RenderThread thread(opts);
 
   // 15 back-to-back publishes against a 4 ms submit: the older frames

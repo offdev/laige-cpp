@@ -183,6 +183,11 @@
 //     frame (the GlContext::makeCurrent takeover hook — the render
 //     thread must own the context's current thread before any GL
 //     work); bounded and non-blocking.
+//   - Options::onStop runs ONCE on the render thread after the last
+//     frame and before the thread exits (the GlContext::release
+//     hand-back — the P0 EGL stack cannot rebind a context last held
+//     by a dead thread, so the last holder must release it while
+//     alive); bounded and non-blocking.
 //   - FrameDescriptor::frameData is a NON-owning per-frame payload
 //     pointer (e.g. the engine's PresentationSnapshot view); the
 //     producer owns it and it MUST outlive the frame's render —
@@ -270,12 +275,23 @@ struct RenderThreadOptions {
   // responsibility — e.g. the batcher's state).
   void* stageContext{nullptr};
   // The render-thread start hook: runs ONCE on the render thread
-  // before the first frame (the GlContext::makeCurrent takeover);
-  // nullptr = none. Bounded, non-blocking (API-005).
+  // before the first frame (the GlContext::makeCurrent takeover —
+  // release-then-bind per docs/api/gl_context.md); nullptr = none.
+  // Bounded, non-blocking (API-005).
   using StartFn = void (*)(void* context) noexcept;
   StartFn onStart{nullptr};
   // onStart's context (non-owning); nullptr when onStart is null.
   void* onStartContext{nullptr};
+  // The render-thread stop hook: runs ONCE on the render thread AFTER
+  // the last frame and before the thread exits — the mirror of onStart
+  // (the GlContext::release hand-back: the P0 EGL stack cannot rebind a
+  // context last held by a DEAD thread, so the thread that last held it
+  // must release it while still alive — docs/api/gl_context.md);
+  // nullptr = none. Bounded, non-blocking (API-005).
+  using StopFn = void (*)(void* context) noexcept;
+  StopFn onStop{nullptr};
+  // onStop's context (non-owning); nullptr when onStop is null.
+  void* onStopContext{nullptr};
 };
 
 // The since-construction counters (the cold snapshot; the authoritative
