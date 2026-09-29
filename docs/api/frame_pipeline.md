@@ -102,7 +102,7 @@ frame-drop field (M2-SPRITE-04, `docs/api/profiler.md`).
 
 | Operation | Behavior | Complexity / allocation |
 |---|---|---|
-| `RenderThread(options)` | Spawns the consumer thread and runs `options.onStart` on it (the `GlContext::makeCurrent` takeover hook). One Info event, `render_thread/thread_started`. A thread-spawn failure terminates the process (exceptions disabled, NFR-8.10 — a documented platform boundary, CORE-008: the failure is never silent) | one-time setup: one thread + one log line |
+| `RenderThread(options)` | Spawns the consumer thread **in the constructor body, after every state member is initialized** (`thread_` is declared last — see Threading and phase) and runs `options.onStart` on it (the `GlContext::makeCurrent` takeover hook). One Info event, `render_thread/thread_started`. A thread-spawn failure terminates the process (exceptions disabled, NFR-8.10 — a documented platform boundary, CORE-008: the failure is never silent) | one-time setup: one thread + one log line |
 | `submitFrame(frame)` | The owner-thread (main/sim) publish — the **hot path**: a few atomic loads + one plain 32-byte copy + one release store, no allocation, no lock, no log on the healthy path. Single-slot backpressure: a pending frame (the consumer more than one frame behind) is **dropped in place** — one rate-limited `render_thread/frame_dropped` warn. Stopped → `InvalidArgument` (no log — the stopped-state precedent) | O(1); no allocation; one release store |
 | `waitIdle()` | The owner-thread barrier: blocks until every published frame is fully processed (no pending frame, no in-flight pipeline). Bounded by the single slot plus the stage callbacks' bound (API-005). No-op on a stopped object | O(1) yield-spin; one bounded wait per frame |
 | `shutdown()` | Ordered idempotent shutdown (CONC-006): stop request + **join** + stopped mark; a second call is a no-op; safe on a stopped object. It does **not** flush a pending frame — the owner calls `waitIdle()` first when the last frame must render (the M1-HEAD-01 ordered-shutdown precedent). One Info event per actual stop, `render_thread/thread_stopped` | O(1) + the join (bounded by one frame's pipeline work) |
@@ -139,6 +139,16 @@ detached (CONC-005). The engine's shutdown calls `waitIdle()` then
 when it does not (CONC-006: ordered, testable, idempotent). No engine
 locks anywhere in the module (CONC-002); the only thread-join is the
 shutdown join.
+
+**The construction order is load-bearing.** C++ initializes members in
+declaration order; `thread_` is declared **last** and is started in
+the constructor **body** — never in a member initializer. The
+thread-start synchronization edge ([intro.multithread]) publishes only
+what happened *before* the start, so spawning from a member
+initializer would let the consumer read the state members before
+their in-class initializers ran (a data race caught by
+ThreadSanitizer in CI). With the thread started last, the consumer
+never observes a partially-initialized object.
 
 **Failure behavior (NFR-008 / CORE-008).** The handoff has no runtime
 failure to report: `submitFrame` on a stopped object returns

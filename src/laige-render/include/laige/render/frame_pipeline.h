@@ -162,11 +162,16 @@
 //     running thread when one is live) and the moved-to object is
 //     STOPPED — the GlContext/Engine moved-out precedent. Construct it
 //     in place (the constructor spawns the thread immediately).
-//   - The constructor spawns the consumer thread. A thread-spawn
-//     failure is a platform error: with exceptions disabled
-//     (NFR-8.10) the std::thread throw cannot be caught — the process
-//     terminates (a documented platform boundary, CORE-008: the
-//     failure is never silent).
+//   - The constructor spawns the consumer thread IN THE BODY, after
+//     every state member is initialized (`thread_` is declared LAST —
+//     member initializers run in declaration order, so spawning from a
+//     member initializer would let the consumer read members before
+//     their initializers ran: a ThreadSanitizer data race). The
+//     thread-start edge then publishes the fully-initialized state
+//     ([intro.multithread]). A thread-spawn failure is a platform
+//     error: with exceptions disabled (NFR-8.10) the std::thread throw
+//     cannot be caught — the process terminates (a documented
+//     platform boundary, CORE-008: the failure is never silent).
 //   - submitFrame/waitIdle/shutdown are OWNER-THREAD (main/sim thread)
 //     calls — the one producer of the handoff; the render thread only
 //     runs the stage callbacks.
@@ -290,14 +295,16 @@ struct RenderThreadStats {
 
 // The render thread + the single-slot lock-free frame handoff
 // (PRD §10.2; the synchronization argument is in the header preamble).
-// The constructor spawns the consumer thread immediately; shutdown()
-// joins it. Move-only.
+// The constructor spawns the consumer thread after all state members
+// are initialized; shutdown() joins it. Move-only.
 class RenderThread {
  public:
-  // Spawns the consumer thread and runs Options::onStart on it (the
-  // GL takeover hook). A thread-spawn failure terminates the process
-  // (exceptions disabled — a documented platform boundary, CORE-008).
-  // One Info lifecycle event (render_thread/thread_started).
+  // Spawns the consumer thread (in the body, after every state member
+  // is initialized — the ownership section's order argument) and runs
+  // Options::onStart on it (the GL takeover hook). A thread-spawn
+  // failure terminates the process (exceptions disabled — a documented
+  // platform boundary, CORE-008). One Info lifecycle event
+  // (render_thread/thread_started).
   explicit RenderThread(RenderThreadOptions options) noexcept;
   ~RenderThread();  // shuts down (joins the thread; CONC-006)
 
@@ -347,7 +354,6 @@ class RenderThread {
   void runConsumer() noexcept;
 
   RenderThreadOptions options_;
-  std::thread thread_;
   // The handoff state (the header preamble's synchronization argument).
   std::atomic<std::uint64_t> seq_{0};        // even = idle; odd = writing
   FrameDescriptor slot_{};                   // plain POD, seq_-published
@@ -357,6 +363,16 @@ class RenderThread {
   std::atomic<std::uint64_t> submitted_{0};
   std::atomic<std::uint64_t> rendered_{0};   // stages completed (consumer)
   bool valid_{true};
+  // Declared LAST, and started in the constructor BODY, never in a
+  // member initializer: C++ initializes members in DECLARATION order,
+  // so starting the thread while `thread_` was still mid-construction
+  // let the consumer read the members above before their in-class
+  // initializers ran (a ThreadSanitizer data race — Thread-start
+  // establishes the happens-before edge only for what happened BEFORE
+  // the start, [intro.multithread]). With `thread_` last, the thread
+  // start publishes the fully-initialized state. The order is
+  // load-bearing; do not reorder.
+  std::thread thread_;
 };
 
 // The documented frame-rate range (CORE-005; API-006): 1–1000 Hz.

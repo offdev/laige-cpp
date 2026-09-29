@@ -74,7 +74,15 @@ render thread against it). `makeCurrent`/`clear`/`readPixel` may be
 called from the thread that owns the context at the moment of the call;
 the GL functions they wrap are not reentrant across threads (that is the
 GL contract `makeCurrent` enforces). No engine locks are held across
-GL calls (CONC-003).
+GL calls (CONC-003). On the EGL backend, `makeCurrent` on a thread that
+has never used this display first selects the per-thread client API
+(`eglBindAPI(EGL_OPENGL_API)`): libglvnd's API selection is
+per-thread, and a new thread that has not selected one cannot
+`eglMakeCurrent` an object created on another thread (the call fails
+with `EGL_BAD_ACCESS` — the P0 CI log's `egl_error=12290`). The call is
+a no-op success on stacks that honor the EGL spec's per-thread OpenGL
+default (Mesa's native libEGL), so the explicit bind is required on
+the P0 distro's libglvnd dispatcher and harmless everywhere else.
 
 ## Headless mechanism (the exact per-OS contract)
 

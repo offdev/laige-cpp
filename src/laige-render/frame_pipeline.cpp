@@ -168,7 +168,14 @@ std::int64_t FrameClock::waitFrame(std::uint64_t frameIndex) noexcept {
 // ------------------------------------------------------------------------
 
 RenderThread::RenderThread(RenderThreadOptions options) noexcept
-    : options_(options), thread_(&RenderThread::runConsumer, this) {
+    : options_(options) {
+  // All state members are fully initialized before this line
+  // (`thread_` is declared LAST — see the header's member note), so
+  // the thread-start synchronization edge makes the whole state
+  // visible to the consumer ([intro.multithread]). A spawn failure
+  // throws std::system_error → terminate under -fno-exceptions (the
+  // header's failure section; the thread-join paths never run).
+  thread_ = std::thread(&RenderThread::runConsumer, this);
   LAIGE_LOG_INFO("render_thread", "thread_started",
                  "the render thread started");
 }

@@ -67,18 +67,22 @@ using Int = std::int32_t;
 using Bool = std::int32_t;
 using Enum = std::int32_t;
 
-// These constants are referenced only from the Linux headless path
-// (the #else createHeadless branch); without the guard, AppleClang's
-// -Wunused-const-variable (-Werror, NFR-8.10) rejects them on macOS.
-#if !defined(__APPLE__) && !defined(_WIN32)
-constexpr Int kNone = 0x3038;
 // EGL_OPENGL_API — the eglBindAPI argument. Verified against the P0
 // distro's EGL headers (noble libglvnd 1.7.0): the GLVND dispatcher
 // accepts only EGL_OPENGL_API (0x30A2) and EGL_OPENGL_ES_API (0x30A0)
 // and rejects every other value with EGL_BAD_PARAMETER (0x300C).
 // Note the confusion this value caused: 0x0008 is EGL_OPENGL_BIT, a
-// ClientAPIs mask bit, not an API enum.
+// ClientAPIs mask bit, not an API enum. It is used from createHeadless
+// (Linux only) AND from makeCurrent on every platform (the per-thread
+// API selection below), so it lives outside the Linux guard.
 constexpr Enum kOpenGlApi = 0x30A2;
+
+// These remaining constants are referenced only from the Linux
+// headless path (the #else createHeadless branch); without the guard,
+// AppleClang's -Wunused-const-variable (-Werror, NFR-8.10) rejects
+// them on macOS.
+#if !defined(__APPLE__) && !defined(_WIN32)
+constexpr Int kNone = 0x3038;
 constexpr Int kContextMajorVersion = 0x3098;
 constexpr Int kContextMinorVersion = 0x30FB;
 constexpr Int kContextProfileMask = 0x30FD;
@@ -428,7 +432,20 @@ Status GlContext::makeCurrent() const {
   }
   bool ok;
   if (impl_->backend == Impl::Backend::egl) {
-    ok = impl_->egl.makeCurrent(impl_->eglDisplay, nullptr, nullptr,
+    // libglvnd's client-API selection is PER-THREAD: a thread that has
+    // never selected an API cannot eglMakeCurrent an object created on
+    // another thread — the call fails with EGL_BAD_ACCESS (0x3002;
+    // the P0 CI log's egl_error=12290 on the render thread). The EGL
+    // spec makes a new thread's default API OpenGL, so this is a
+    // no-op success on stacks that honor the default (Mesa's native
+    // libEGL) and the required step on the libglvnd dispatcher (the
+    // P0 distro's libEGL.so.1). makeCurrent is the only cross-thread
+    // entry point: createHeadless binds the API on its own thread, and
+    // clear/readPixel require the context to be current ALREADY here.
+    // Not a hot path (a takeover, not a per-frame call) — one plain
+    // function-pointer call, no allocation.
+    ok = impl_->egl.bindApi(egl::kOpenGlApi) != 0 &&
+         impl_->egl.makeCurrent(impl_->eglDisplay, nullptr, nullptr,
                                 impl_->eglContext) != 0;
   } else {
     // The window exists and GLFW is initialized (both guaranteed by
