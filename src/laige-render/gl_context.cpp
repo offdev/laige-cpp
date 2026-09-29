@@ -244,9 +244,15 @@ struct GlContext::Impl {
       if (egl.destroyDisplay != nullptr && eglDisplay != nullptr) {
         egl.destroyDisplay(eglDisplay);
       }
+      // libEGL is dlopened only on the Linux headless path (createHeadless
+      // #else branch); on Windows/macOS eglHandle is always null and
+      // <dlfcn.h> is not included (see the include guard above), so the
+      // close is compiled only where the handle can exist.
+#if !defined(__APPLE__) && !defined(_WIN32)
       if (eglHandle != nullptr) {
         dlclose(eglHandle);
       }
+#endif
     } else {
       if (window != nullptr) {
         glfwDestroyWindow(window);  // destroys the context with it
