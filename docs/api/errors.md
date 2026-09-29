@@ -108,3 +108,25 @@ The step that needs a new code performs, in one change:
 | why | the file could not be opened, written, or flushed (missing path, permissions, full disk), or a system interface call (e.g. signal registration for crash handling) was rejected |
 | fix | check the path, permissions, and disk space; for logging, fall back to the current console sink (LOG-007 minimal fallback, `docs/api/logging.md`) |
 | doc anchor | `docs/api/errors.md#io-error` |
+
+### gl-unavailable
+
+- **Integer value:** `6` (added by M2-GL-01: GL context creation)
+
+| Field | Text |
+|---|---|
+| what | a usable OpenGL context could not be created |
+| why | the windowing backend is unavailable (no display for GLFW, no EGL surfaceless platform), the GL library failed to load, context creation failed, or the offscreen FBO failed its completeness check |
+| fix | verify the platform has an OpenGL 3.3 capable driver (the P0 CI runners do), and on headless Linux that Mesa provides EGL surfaceless; the gl/context_creation_failed event names the failing stage |
+| doc anchor | `docs/api/errors.md#gl-unavailable` |
+
+### gl-version-unsupported
+
+- **Integer value:** `7` (added by M2-GL-01: the 3.3 core gate)
+
+| Field | Text |
+|---|---|
+| what | the created GL context does not meet the engine's OpenGL 3.3 core requirement |
+| why | the driver's context is an older GL version or a compatibility-profile context (PRD §6 requires 3.3 core) |
+| fix | no fallback exists; install an OpenGL 3.3 core capable driver (the P0 CI runners do); the gl/context_created and gl/context_creation_failed events carry the realized version |
+| doc anchor | `docs/api/errors.md#gl-version-unsupported` |

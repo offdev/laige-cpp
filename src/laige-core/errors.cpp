@@ -20,7 +20,7 @@ namespace laige {
 namespace {
 
 constexpr std::size_t kLastCode =
-    static_cast<std::size_t>(ErrorCode::IoError);
+    static_cast<std::size_t>(ErrorCode::GlVersionUnsupported);
 
 const ErrorEntry kErrorRegistry[kLastCode + 1] = {
     {   // slot 0: no-error sentinel + unregistered-value fallback
@@ -117,6 +117,47 @@ const ErrorEntry kErrorRegistry[kLastCode + 1] = {
         "logging, fall back to the current console sink (LOG-007 "
         "minimal fallback, docs/api/logging.md) | "
         "docs/api/errors.md#io-error"},
+    {   // slot 6
+        ErrorCode::GlUnavailable,
+        "gl_unavailable",
+        "a usable OpenGL context could not be created",
+        "the windowing backend is unavailable (no display for GLFW, no "
+        "EGL surfaceless platform), the GL library failed to load, "
+        "context creation failed, or the offscreen FBO failed its "
+        "completeness check",
+        "verify the platform has an OpenGL 3.3 capable driver (the P0 "
+        "CI runners do), and on headless Linux that Mesa provides EGL "
+        "surfaceless; the gl/context_creation_failed event names the "
+        "failing stage",
+        "docs/api/errors.md#gl-unavailable",
+        "gl_unavailable | a usable OpenGL context could not be created "
+        "| the windowing backend is unavailable (no display for GLFW, "
+        "no EGL surfaceless platform), the GL library failed to load, "
+        "context creation failed, or the offscreen FBO failed its "
+        "completeness check | verify the platform has an OpenGL 3.3 "
+        "capable driver (the P0 CI runners do), and on headless Linux "
+        "that Mesa provides EGL surfaceless; the gl/context_creation_"
+        "failed event names the failing stage | "
+        "docs/api/errors.md#gl-unavailable"},
+    {   // slot 7
+        ErrorCode::GlVersionUnsupported,
+        "gl_version_unsupported",
+        "the created GL context does not meet the engine's OpenGL 3.3 "
+        "core requirement",
+        "the driver's context is an older GL version or a "
+        "compatibility-profile context (PRD §6 requires 3.3 core)",
+        "no fallback exists; install an OpenGL 3.3 core capable driver "
+        "(the P0 CI runners do); the gl/context_created and "
+        "gl/context_creation_failed events carry the realized version",
+        "docs/api/errors.md#gl-version-unsupported",
+        "gl_version_unsupported | the created GL context does not meet "
+        "the engine's OpenGL 3.3 core requirement | the driver's "
+        "context is an older GL version or a compatibility-profile "
+        "context (PRD §6 requires 3.3 core) | no fallback exists; "
+        "install an OpenGL 3.3 core capable driver (the P0 CI runners "
+        "do); the gl/context_created and gl/context_creation_failed "
+        "events carry the realized version | "
+        "docs/api/errors.md#gl-version-unsupported"},
 };
 
 }  // namespace

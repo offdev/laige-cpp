@@ -109,6 +109,14 @@ set(RECORD_SETUP
 set(REPLAY_CMD
     "<REPLAY> --log <OUT>/replay_smoke.log --config <FIXTURE>")
 
+# Tests 1–7 and 10–12 record via `laige-run --replay` — replay
+# recording is a debug-build feature (the engine's
+# startReplayRecording `#if defined(NDEBUG)` gate, M1-DET-02), so they
+# are registered only for debug builds (CI's P0 jobs are Debug),
+# pinned to the Debug configuration in multi-config trees (the
+# hello_replay precedent in tests/sample). Tests 8, 9, and 13 need no
+# recording and stay registered in every build.
+if(NOT CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
 # 1) record -> replay: exit 0, the stdout contract (33 lines; each
 #    '<tick> <hash>' with tick == line index and 16 hex digits — the
 #    template's structural validation), the summary line on stderr.
@@ -185,6 +193,11 @@ laige_replay_test(replay_identity_mismatch
   CMD "<REPLAY> --log <OUT>/replay_smoke.log --config <WRONGSEED>"
   EXPECT_EXIT 2
   CHECK_ERR "replay identity mismatch" "seed +DIFFERS" "config_hash +DIFFERS")
+  set_tests_properties(replay_smoke replay_deterministic replay_expect_match
+                       replay_expect_perturbed replay_expect_truncated
+                       replay_expect_malformed replay_identity_mismatch
+                       PROPERTIES CONFIGURATIONS Debug)
+endif()
 
 # 8) usage error: --config missing -> exit 2.
 laige_replay_test(replay_usage_error
@@ -212,6 +225,7 @@ set(DIFF_RECORD_16
 set(DIFF_RECORD_10
     "<RUN> --headless <FIXTURE> --ticks 10 --replay <OUT>/diff_10.log")
 
+if(NOT CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
 # 10) identical: two 16-tick recordings of the SAME fixture (same
 #     seed 42) -> the component state is bit-identical over all 16
 #     ticks: exit 0, result=identical, zero differing items, and the
@@ -250,6 +264,9 @@ laige_replay_test(replay_diff_identity
   CMD "<REPLAY> --diff <OUT>/diff_16.log <OUT>/diff_16.log --config <DIFFBUDGET>"
   EXPECT_EXIT 2
   CHECK_ERR "replay identity mismatch" "config_hash" "DIFFERS")
+  set_tests_properties(replay_diff_identical replay_diff_length
+                       replay_diff_identity PROPERTIES CONFIGURATIONS Debug)
+endif()
 
 # 13) usage error: --diff with a single log path (no second) -> exit 2.
 laige_replay_test(replay_diff_usage

@@ -25,8 +25,9 @@
 #
 # deps.lock is canonical JSON: one key/value pair per line, entry fields in
 # the fixed order above, the "entries" array spanning multiple lines, no
-# embedded quotes. The parser below relies on that layout; keep the file in
-# that order when editing it.
+# embedded quotes. Entries are separated exactly as JSON requires: a '},'
+# line after every entry except the last. The parser below relies on that
+# layout; keep the file in that order when editing it.
 #
 # Parser note: the lines are extracted with string(FIND)/string(SUBSTRING)
 # and never via semicolon-list splitting. CMake's list separator is ";", and
@@ -160,7 +161,9 @@ function(laige_deps_verify_lock)
         set(_f_name "" _f_version "" _f_path "" _f_owner ""
             _f_source_url "" _f_source_commit "" _f_sha256 ""
             _f_license "" _f_justification "")
-      elseif(_line MATCHES "^[ \t]*\\}[ \t]*$")
+      elseif(_line MATCHES "^[ \t]*\\},?[ \t]*$")
+        # A '}' (last entry) or '},' (entry separator, valid JSON) closes
+        # the current entry.
         if(NOT _in_entry)
           message(FATAL_ERROR "laige-deps: malformed deps.lock — stray "
                               "'}' on line ${_line_no} in the entries "

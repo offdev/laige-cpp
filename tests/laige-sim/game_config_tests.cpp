@@ -166,6 +166,11 @@ std::string tempPath(const char* name) {
   return std::string(::testing::TempDir()) + name;
 }
 
+// Debug builds only: the text-surgery helpers below serve the
+// ConfigHotReload suite (a debug-build feature — its release behavior
+// is pinned by ReleaseBuildsRejectTheFeature); in release trees they
+// are unused (they would trip -Werror=unused-function, NFR-8.10).
+#if !defined(NDEBUG)
 // Test-fixture text surgery: replace the first / every occurrence of a
 // literal substring (a parse failure or a missing marker is a test
 // bug).
@@ -199,6 +204,7 @@ std::string replaceAll(const std::string& text, const char* old,
   }
   return out;
 }
+#endif  // !defined(NDEBUG)
 
 // Portable file write (CPP-009 platform boundary; the
 // replay_record_tests.cpp precedent): MSVC's CRT deprecates plain
@@ -737,13 +743,24 @@ const char* kBaselineDocument = R"({
   "asset_roots": ["assets/"]
 })";
 
+// Debug builds only (serves the ConfigHotReload suite below); the
+// ReleaseBuildsRejectTheFeature test uses kBaselineDocument directly.
+#if !defined(NDEBUG)
 laige::EngineConfig baselineConfig() {
   const laige::EngineConfig config =
       laige::parseEngineConfig(parseDoc(kBaselineDocument)).value();
   return config;
 }
+#endif  // !defined(NDEBUG)
 }  // namespace
 
+// Debug builds only: ConfigHotReloader::create is a debug-build
+// feature (the #if defined(NDEBUG) gate in config.cpp — release builds
+// reject it with hot_reload_disabled before any file read), so these
+// tests exercise a compiled-out call in release trees. The release
+// behavior is pinned by the ReleaseBuildsRejectTheFeature test below
+// (the inverse #if), which is the one that runs there.
+#if !defined(NDEBUG)
 TEST(ConfigHotReload, CreateFailsOnMissingFile) {
   MemorySink* sink = installCaptureSink();
   const std::string path = tempPath("hot_reload_missing.json");
@@ -986,6 +1003,7 @@ TEST(ConfigHotReload, MovedFromReloaderFailsWithoutLogging) {
   restoreLogger();
   std::remove(path.c_str());
 }
+#endif  // !defined(NDEBUG)
 
 #if defined(NDEBUG)
 // Release builds (NDEBUG): hot reload is a debug-build feature — the

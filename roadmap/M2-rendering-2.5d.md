@@ -39,7 +39,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
 
 ## GL infrastructure
 
-- [ ] **M2-GL-01 · Vendor GLFW + GLAD; context + headless CI rendering**
+- [x] **M2-GL-01 · Vendor GLFW + GLAD; context + headless CI rendering**
   - **Refs:** PRD §6 (OpenGL 3.3 core), §11 (GLFW, GLAD rows); AC-6.1/AC-6.2
   - **Depends:** M0-DEP-01
   - **Scope:**
