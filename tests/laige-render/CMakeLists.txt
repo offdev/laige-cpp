@@ -38,6 +38,29 @@ if(LAIGE_TSAN)
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()
 
+if(LAIGE_ASAN)
+  # The headless smoke's EGL display is process-lifetime by design
+  # (docs/api/gl_context.md; CORE-009): the libglvnd dispatcher does not
+  # export eglDestroyDisplay, so the Mesa driver state reachable through
+  # the display is still live at process exit — LSan reports it as a leak
+  # (2026-09-29 CI run 36501951395: ~1.88 MB across 17,781 allocations,
+  # every stack allocated through createHeadless / createFbo /
+  # finishCreation / readPixel). That is vendor state, not engine
+  # memory: every engine-owned allocation in this module is freed by
+  # RAII before exit. It cannot be suppressed surgically — LSan's
+  # `leak:` suppression lines abort ASan's own suppression parser at
+  # init (mutually exclusive formats in one file, verified against
+  # compiler-rt), and the leak roots are libEGL-internal state objects
+  # the engine never holds a pointer to. detect_leaks=0 for the two
+  # render entries instead: in-run ASan/UBSan error detection stays
+  # fully active (the smoke still performs its GL work under the
+  # sanitizer). The test-level ENVIRONMENT replaces the job-level
+  # ASAN_OPTIONS (GitHub workflow), so mirror its options here.
+  set_tests_properties(laige-render_tests gl_context PROPERTIES
+    ENVIRONMENT
+    "ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=${CMAKE_SOURCE_DIR}/asan-reports/asan")
+endif()
+
 # The offscreen smoke creates a real (software) context + FBO; give a
 # slow headless runner generous headroom.
 set_tests_properties(laige-render_tests gl_context PROPERTIES TIMEOUT 180)

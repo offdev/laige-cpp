@@ -86,7 +86,12 @@ OS so that CI can run the GL smoke on every P0 runner:
   absence is not a failure; when absent the display's resources are
   released at process termination, which matches the engine's
   one-display-per-process design (the display's lifetime is the
-  process's). `eglGetProcAddress` is required: both the libglvnd
+  process's). Consequence for the ASan CI lane: that vendor state is
+  live at process exit by design, so the two render test entries run
+  with `detect_leaks=0` there (`tests/laige-render/CMakeLists.txt`;
+  in-run ASan/UBSan error detection stays fully active — the smoke
+  still performs its GL work under the sanitizer). `eglGetProcAddress`
+  is required: both the libglvnd
   dispatcher and Mesa's vendor library export it (verified against the
   P0 distro's symbol tables), and the headless GL load resolves the GL
   API through it (see "GL function access"). `eglBindAPI(EGL_OPENGL_API)`
