@@ -35,9 +35,12 @@
 //   seq_          the monotonic publication counter (u64, 1-based):
 //                 the latest published frame's number; a frame is
 //                 pending iff seq_ > consumedSeq_
-//   slot_         the FrameDescriptor (a 32-byte POD) in an ATOMIC
-//                 slot — every load is a complete copy (no torn reads,
-//                 no sequence lock)
+//   slot*         the FrameDescriptor in FOUR 8-byte atomic words
+//                 (frameIndex, simTick, renderTimeNs, frameData) —
+//                 8 bytes is natively single-copy-atomic on every P0
+//                 platform (no 32-byte atomic: that would require the
+//                 toolchain's libatomic on the P0 g++/clang lanes —
+//                 verified in CI)
 //   consumedSeq_  the consumer's last fully-consumed seq (consumer →
 //                 producer diagnostic, a release store)
 //   inFlight_     true while a consumed frame's stages are running
@@ -54,37 +57,40 @@
 // CONC-002 synchronization argument (one producer, one consumer —
 // partitioned ownership, no shared locks):
 //
-//   producer publish:   slot_.store(frame, release)  (publishes slot_)
-//                      seq_.store(s + 1, release)    (publishes the
+//   producer publish:   slotFrameIndex_/slotSimTick_/slotRenderTimeNs_/
+//                       slotFrameData_.store(..., release)
+//                                                 (publishes the words)
+//                      seq_.store(s + 1, release)  (publishes the
 //                                              publication)
-//   consumer copy:      a = seq_.load(acquire)       (the publication
+//   consumer copy:      a = seq_.load(acquire)     (the publication
 //                                              barrier: an acquire load
 //                                              synchronizes-with the
 //                                              producer's release store)
-//                      d = slot_.load(relaxed)       (the atomic slot
-//                                              load — a complete frame,
-//                                              never torn)
-//                      b = seq_.load(relaxed)        (a != b → the copy
+//                      the four slot-word loads (relaxed)
+//                      b = seq_.load(relaxed)      (a != b → the copy
 //                                              crossed a newer
 //                                              publication → retry)
 //
-// The ATOMIC slot replaces the classic sequence lock (McIlroy/Dekker):
-// a plain-memory seqlock reader tolerates a torn copy by re-checking
-// the seq, but the concurrent plain read/write of the slot is a data
-// race under the C++ memory model — the P0 CI TSan lane reports
-// exactly that access pair — so the slot itself is the atomic (the
-// single producer makes the 32-byte store contend-free: one CAS
-// attempt, no lock, no allocation, PERF-003/006). The seq re-check is
-// kept as an ORDERING guard, not a torn-read guard: if a newer
-// publication lands between the consumer's seq load and its slot load,
-// the slot may already hold the newer frame — the a != b end-check
-// discards the crossed copy and the skipped frame is exactly the one
-// the producer's backpressure dropped in place (logged). No ABA is
-// possible: the seq only increases, and a 2^64 wrap would take ~292
-// years of frames at the 1000 Hz maximum. The diagnostic atomics
-// (consumedSeq_/inFlight_/stop_/submitted_/rendered_) carry no
-// correctness — seq_ and slot_ alone do; they exist for the accounting,
-// waitIdle, and the ordered shutdown.
+// The ATOMIC slot words replace the classic sequence lock
+// (McIlroy/Dekker): a plain-memory seqlock reader tolerates a torn copy
+// by re-checking the seq, but the concurrent plain read/write of the
+// slot is a data race under the C++ memory model — the P0 CI TSan lane
+// reports exactly that access pair — so each 8-byte word of the
+// descriptor is its own atomic (8 bytes is natively single-copy-atomic
+// everywhere; a single 32-byte atomic would not be, and would need
+// the toolchain's libatomic on the P0 g++/clang lanes — verified in
+// CI). No lock, no allocation (PERF-003/006). The seq re-check is an
+// ORDERING guard across the words: a publication in the window [a, b]
+// increments seq, so a == b means NO publication crossed the window
+// and all four words are from publication a (the words are written
+// before that publication's seq store, and no later publication has
+// written them since) — a crossed copy is discarded, and the skipped
+// frame is exactly the one the producer's backpressure dropped in
+// place (logged). No ABA is possible: the seq only increases, and a
+// 2^64 wrap would take ~292 years of frames at the 1000 Hz maximum.
+// The diagnostic atomics (consumedSeq_/inFlight_/stop_/submitted_/
+// rendered_) carry no correctness — seq_ and the slot words alone do;
+// they exist for the accounting, waitIdle, and the ordered shutdown.
 //
 // Backpressure (PERF-008, the scope's "never queue unboundedly"): the
 // single slot means the consumer can lag by AT MOST one frame. When
@@ -383,7 +389,12 @@ class RenderThread {
   RenderThreadOptions options_;
   // The handoff state (the header preamble's synchronization argument).
   std::atomic<std::uint64_t> seq_{0};        // publication counter (1-based)
-  std::atomic<FrameDescriptor> slot_{};      // atomic slot: complete copies
+  // The FrameDescriptor in four 8-byte atomic words (natively
+  // single-copy-atomic on every P0 platform — the preamble's case).
+  std::atomic<std::uint64_t> slotFrameIndex_{0};
+  std::atomic<std::uint64_t> slotSimTick_{0};
+  std::atomic<std::int64_t> slotRenderTimeNs_{0};
+  std::atomic<void*> slotFrameData_{nullptr};
   std::atomic<std::uint64_t> consumedSeq_{0};
   std::atomic<bool> inFlight_{false};
   std::atomic<bool> stop_{false};

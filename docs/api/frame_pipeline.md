@@ -51,22 +51,25 @@ variable, no queue:
 - `RenderThreadOptions` — the stages, their context, and the
   `onStart`/`onStop` hooks.
 
-The full synchronization argument (the atomic-slot handoff — memory
-orders, the ordering re-check, the no-ABA case, the 2^64 wrap bound) is
-in the header preamble; the short form: the producer publishes with
-`slot_.store(frame, release)` then `seq_.store(s + 1, release)`; the
-consumer acquire-loads `seq_`, loads the atomic slot (a complete copy,
-never torn), and re-checks `seq_` — an unchanged value means the copy
-is a complete, current frame, otherwise a newer publication crossed
-the copy window and the copy is retried. The ATOMIC slot (not a
-plain-memory sequence lock) is what makes the handoff free of data
-races under the C++ memory model — a plain seqlock's concurrent
-plain read/write of the slot is the exact access pair the P0 CI TSan
-lane reports (CONC-007). The diagnostic atomics (`consumedSeq_`,
+The full synchronization argument (the atomic-slot-word handoff —
+memory orders, the ordering re-check, the no-ABA case, the 2^64 wrap
+bound) is in the header preamble; the short form: the producer
+publishes the descriptor's four 8-byte words (release) then
+`seq_.store(s + 1, release)`; the consumer acquire-loads `seq_`, loads
+the four words (8 bytes is natively single-copy-atomic on every P0
+platform — never torn), and re-checks `seq_` — an unchanged value
+means all four words are from the same publication, otherwise a newer
+publication crossed the copy window and the copy is retried. The
+ATOMIC words (not a plain-memory sequence lock) are what make the
+handoff free of data races under the C++ memory model — a plain
+seqlock's concurrent plain read/write of the slot is the exact access
+pair the P0 CI TSan lane reports (CONC-007); a single 32-byte atomic
+would add nothing but a libatomic dependency on the P0 g++/clang
+lanes (verified in CI). The diagnostic atomics (`consumedSeq_`,
 `inFlight_`, `stop_`, `submitted_`, `rendered_`) carry no correctness —
-`seq_` and `slot_` alone do; they exist for the accounting, `waitIdle`,
-and the ordered shutdown (CONC-002: partitioned ownership and an
-immutable snapshot, no shared locks).
+`seq_` and the slot words alone do; they exist for the accounting,
+`waitIdle`, and the ordered shutdown (CONC-002: partitioned ownership
+and an immutable snapshot, no shared locks).
 
 **Backpressure (PERF-008, "never queue unboundedly").** The single slot
 means the consumer can lag by **at most one frame**. When the producer
@@ -202,12 +205,10 @@ The documented frame-rate range is `[kMinFrameRateHz, kMaxFrameRateHz]`
 
 ## Performance (PERF-003/002, DOC-004)
 
-**Hot path (`submitFrame`).** A few atomic loads + one 32-byte atomic
-release store (the single producer makes the store contend-free — one
-CAS attempt on every P0 compiler, no lock) + one release store — no
-allocation, no lock, no virtual dispatch, no `std::function`
-(PERF-006), no logging on the healthy path (the drop path is cold: one
-rate-limited Warn). The consumer's
+**Hot path (`submitFrame`).** A few atomic loads + four 8-byte atomic
+release stores + one release store — no allocation, no lock, no
+virtual dispatch, no `std::function` (PERF-006), no logging on the
+healthy path (the drop path is cold: one rate-limited Warn). The consumer's
 between-frame wait is a yield spin (no busy-burn: the OS reschedules
 during the ~16 ms vsync gap). `FrameClock`: `deadlineNs` is O(1)
 integer math; `waitFrame` is one bounded `sleep_until` (no spin — the

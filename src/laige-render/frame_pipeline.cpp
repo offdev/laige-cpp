@@ -2,30 +2,31 @@
 //
 // The synchronization argument (CONC-002; the full case is in the
 // header preamble): one producer, one consumer; a single-slot handoff
-// published through the monotonic seq_ atomic (release/acquire) with an
-// ATOMIC slot — no mutex, no condition variable, no allocation in the
-// hot path (PERF-003/006). The memory-order case:
+// published through the monotonic seq_ atomic (release/acquire) over
+// FOUR 8-byte atomic slot words — no mutex, no condition variable, no
+// allocation in the hot path (PERF-003/006). The memory-order case:
 //
-//   producer publish:  slot_.store(frame, release) (publishes slot_)
-//                     seq_.store(s + 1, release)   (publishes the
+//   producer publish:  slotFrameIndex_/slotSimTick_/slotRenderTimeNs_/
+//                      slotFrameData_.store(..., release)
+//                     seq_.store(s + 1, release)  (publishes the
 //                                                 publication)
-//   consumer copy:     a = seq_.load(acquire)       (synchronizes-with
+//   consumer copy:     a = seq_.load(acquire)     (synchronizes-with
 //                                                 the producer's release
 //                                                 store)
-//                     d = slot_.load(relaxed)       (the atomic slot — a
-//                                                 complete frame, never
-//                                                 torn)
-//                     b = seq_.load(relaxed)        (a != b → a newer
+//                      the four slot-word loads (relaxed)
+//                      b = seq_.load(relaxed)     (a != b → a newer
 //                                                 publication crossed the
 //                                                 copy window → retry)
 //
-// A crossed copy can never be consumed (the end-check discards it — the
-// skipped frame is exactly the one the producer's backpressure dropped
-// in place); the seq only increases (no ABA) and wraps only after
-// ~292 years of frames. The consumedSeq_/inFlight_/stop_/submitted_
-// atomics carry the diagnostics, the waitIdle barrier, and the shutdown
-// request — none gates correctness; seq_ and slot_ alone do (CONC-002:
-// partitioned ownership + an immutable snapshot, no shared locks).
+// a == b means no publication crossed the window [a, b], so all four
+// words are from publication a (the end-check discards crossed copies —
+// the skipped frame is exactly the one the producer's backpressure
+// dropped in place); the seq only increases (no ABA) and wraps only
+// after ~292 years of frames. The consumedSeq_/inFlight_/stop_/
+// submitted_ atomics carry the diagnostics, the waitIdle barrier, and
+// the shutdown request — none gates correctness; seq_ and the slot
+// words alone do (CONC-002: partitioned ownership + an immutable
+// snapshot, no shared locks).
 
 #include <chrono>
 #include <cstdint>
@@ -198,8 +199,14 @@ RenderThread::RenderThread(RenderThread&& other) noexcept
   thread_ = std::move(other.thread_);
   seq_.store(other.seq_.load(std::memory_order_relaxed),
              std::memory_order_relaxed);
-  slot_.store(other.slot_.load(std::memory_order_relaxed),
-              std::memory_order_relaxed);
+  slotFrameIndex_.store(other.slotFrameIndex_.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+  slotSimTick_.store(other.slotSimTick_.load(std::memory_order_relaxed),
+                     std::memory_order_relaxed);
+  slotRenderTimeNs_.store(other.slotRenderTimeNs_.load(std::memory_order_relaxed),
+                          std::memory_order_relaxed);
+  slotFrameData_.store(other.slotFrameData_.load(std::memory_order_relaxed),
+                       std::memory_order_relaxed);
   consumedSeq_.store(other.consumedSeq_.load(std::memory_order_relaxed),
                      std::memory_order_relaxed);
   inFlight_.store(other.inFlight_.load(std::memory_order_relaxed),
@@ -221,8 +228,14 @@ RenderThread& RenderThread::operator=(RenderThread&& other) noexcept {
     thread_ = std::move(other.thread_);
     seq_.store(other.seq_.load(std::memory_order_relaxed),
                std::memory_order_relaxed);
-    slot_.store(other.slot_.load(std::memory_order_relaxed),
-              std::memory_order_relaxed);
+    slotFrameIndex_.store(other.slotFrameIndex_.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+  slotSimTick_.store(other.slotSimTick_.load(std::memory_order_relaxed),
+                     std::memory_order_relaxed);
+  slotRenderTimeNs_.store(other.slotRenderTimeNs_.load(std::memory_order_relaxed),
+                          std::memory_order_relaxed);
+  slotFrameData_.store(other.slotFrameData_.load(std::memory_order_relaxed),
+                       std::memory_order_relaxed);
     consumedSeq_.store(other.consumedSeq_.load(std::memory_order_relaxed),
                        std::memory_order_relaxed);
     inFlight_.store(other.inFlight_.load(std::memory_order_relaxed),
@@ -265,10 +278,13 @@ Status RenderThread::submitFrame(const FrameDescriptor& frame) noexcept {
                    laige::log::field("dropped_frame", s),
                    laige::log::field("new_frame", frame.frameIndex));
   }
-  // The publish (the preamble's argument): the atomic slot store, then
-  // the seq bump — both release, so the consumer's acquire seq load
-  // orders before the matching relaxed slot load (see runConsumer).
-  slot_.store(frame, std::memory_order_release);
+  // The publish (the preamble's argument): the four slot words, then
+  // the seq bump — all release, so the consumer's acquire seq load
+  // orders before its matching relaxed word loads (see runConsumer).
+  slotFrameIndex_.store(frame.frameIndex, std::memory_order_release);
+  slotSimTick_.store(frame.simTick, std::memory_order_release);
+  slotRenderTimeNs_.store(frame.renderTimeNs, std::memory_order_release);
+  slotFrameData_.store(frame.frameData, std::memory_order_release);
   seq_.store(s + 1u, std::memory_order_release);
   submitted_.fetch_add(1u, std::memory_order_relaxed);
   return Status();
@@ -294,15 +310,20 @@ void RenderThread::runConsumer() noexcept {
     if (stop_.load(std::memory_order_acquire)) {
       break;  // shutdown: a pending frame is NOT flushed (waitIdle first)
     }
-    // The consistent-pair copy (the preamble's argument): the atomic
-    // slot load can never tear; the seq re-check is an ORDERING guard —
-    // a != b means a newer publication crossed the copy window (the
-    // slot may already hold the newer frame) and the copy is retried.
+    // The consistent-pair copy (the preamble's argument): the 8-byte
+    // word loads can never tear; the seq re-check is an ORDERING guard
+    // across the words — a != b means a newer publication crossed the
+    // copy window (the words may already hold the newer frame) and the
+    // copy is retried. a == b ⇒ no publication in [a, b] ⇒ all four
+    // words are from publication a.
     FrameDescriptor d;
     std::uint64_t a;
     for (;;) {
       a = seq_.load(std::memory_order_acquire);
-      d = slot_.load(std::memory_order_relaxed);
+      d.frameIndex = slotFrameIndex_.load(std::memory_order_relaxed);
+      d.simTick = slotSimTick_.load(std::memory_order_relaxed);
+      d.renderTimeNs = slotRenderTimeNs_.load(std::memory_order_relaxed);
+      d.frameData = slotFrameData_.load(std::memory_order_relaxed);
       const std::uint64_t b = seq_.load(std::memory_order_relaxed);
       if (a == b) {
         break;
