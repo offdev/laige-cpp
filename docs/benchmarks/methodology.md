@@ -137,7 +137,13 @@ exact command and the commit it was measured on.
   the same run's Linux and macOS Intel jobs passed). The other P0
   platforms keep the full ctest suite: determinism, zero-allocation,
   fuzz, and API checks still run everywhere — only the absolute
-  sim-tick budget gate is reference-platform-scoped.
+  sim-tick budget gate is reference-platform-scoped. The ungated
+  `laige_bench_sim_tick_smoke` entry (`tools/bench`) keeps the
+  sim-tick workload exercised on every P0 platform: it runs the
+  canonical 4000-tick workload without any `--budget` check and
+  asserts the workload's bit-identical fpx16_16 `final_hash` (ADR
+  0002) and the G-R1 zero-allocation assertion — correctness, not
+  timing.
 - **CI-gateable:** `laige-bench --budget=<name>` exits `0` on pass and
   **`2` on a failed budget check** (`1` = usage or load failure); the
   CI lane asserts the exit code.

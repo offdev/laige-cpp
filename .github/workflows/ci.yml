@@ -105,7 +105,10 @@
 # preemption) would flap the absolute p99 gate without tracking an
 # engine regression. Every other test — including determinism,
 # zero-alloc, fuzz, and the API/lint tooling jobs — still runs on all
-# P0 platforms.
+# P0 platforms, as does the ungated sim-tick smoke
+# (laige_bench_sim_tick_smoke): it exercises the workload and asserts
+# its bit-identical fpx16_16 final_hash on every platform, without
+# checking timing.
 #
 # AC-6.1 (same source tree, same feature set, no per-OS feature flags): no
 # build job passes feature flags; every build job builds the identical

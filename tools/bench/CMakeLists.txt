@@ -58,7 +58,8 @@ set_tests_properties(laige_bench_smoke
 # so the absolute gate would flap there without tracking regressions.
 # The other P0 platforms keep the full ctest suite (determinism,
 # zero-alloc, fuzz, and API checks all still run); only the absolute
-# sim-tick budget gate is reference-platform-scoped.
+# sim-tick budget gate is reference-platform-scoped — and the ungated
+# sim-tick smoke below still exercises the workload on every platform.
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_test(NAME laige_bench_sim_tick_fpx16
            COMMAND laige-bench --suite=sim-tick --math=fixed_point_16_16
@@ -75,6 +76,30 @@ if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set_tests_properties(laige_bench_sim_tick_fpx16
                        laige_bench_sim_tick_fp32
     PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
+endif()
+
+# All-platform sim-tick smoke (no budget gate): the sim-tick workload
+# in its canonical 4000-tick shape (the default fpx16_16 backend), run
+# in EVERY P0 platform's ctest — including the platforms where the
+# absolute budget gate above is reference-scoped — so the workload's
+# code paths (BenchMove, BenchHash, the per-tick stateHash) stay
+# exercised and deterministic on every platform. Two assertions, no
+# timing: (1) the run completes and prints its determinism
+# fingerprint — the fpx16_16 4000-tick final_hash, bit-identical
+# across build types, compilers, and P0 platforms per ADR 0002 (the
+# M1-BENCH-01 baseline's fingerprint,
+# docs/benchmarks/baselines/m1-sim-tick.md; observed identical on the
+# AppleClang and MSVC CI jobs); (2) every measured tick in the debug
+# tree survives the engine's G-R1 per-tick zero-allocation assertion
+# (an allocating tick aborts the run, M1-ALLOC-01). No `--budget`:
+# the absolute targets are calibrated on the reference machine
+# (methodology §5) — this entry checks correctness, not speed.
+if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN)
+  add_test(NAME laige_bench_sim_tick_smoke
+           COMMAND laige-bench --suite=sim-tick
+                             --runs=3000 --warmup=1000)
+  set_tests_properties(laige_bench_sim_tick_smoke
+    PROPERTIES PASS_REGULAR_EXPRESSION "final_hash=0x7840644a24334cd0")
 endif()
 
 if(LAIGE_TSAN)
