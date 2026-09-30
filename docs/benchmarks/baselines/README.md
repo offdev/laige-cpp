@@ -37,5 +37,14 @@ Recorded so far:
   0.59 ms mean / 0.62 ms p99 on the canonical Debug tree, both
   backends PASS. **The first baseline to update `budgets.json`
   `measured`** (`sim_tick_avg`, `sim_tick_p99` — the worse of the two
-  backends). Every other `budgets.json` entry still has
-  `measured: 0` (its subsystem lands in a later milestone).
+  backends).
+- [m2-iso-depth-table.md](m2-iso-depth-table.md) (M2-ISO-02,
+  2026-09-30) — the PRD §8.1 isometric depth-key-rebuild workload
+  (10k dirty cells after a terrain edit, 128×128 grid, 100×100
+  block, both SimMath backends): 0.087 ms mean on the canonical
+  Debug tree, both backends PASS (2.3× inside the 0.2 ms gate); the
+  gate also passes on the reference-class clang -O0 tree (0.149 ms).
+  **The first M2 baseline** — updates `budgets.json` `measured` for
+  `iso_depthkey_rebuild` (the worse of the two backends). Every
+  other `budgets.json` entry still has `measured: 0` (its subsystem
+  lands in a later milestone).

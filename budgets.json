@@ -47,7 +47,7 @@
       "metric": "mean",
       "unit": "ms",
       "target": 0.2,
-      "measured": 0,
+      "measured": 0.087398,
       "workload": "10k dirty cells after a terrain edit (PRD 8.1)"
     },
     {

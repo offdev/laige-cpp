@@ -116,7 +116,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R iso_depth_key` green; formula documented in `docs/concepts/coordinates.md` (created/updated here — ARCH-008).
   - **Size:** ~150 lines + tests
 
-- [ ] **M2-ISO-02 · Depth key table + incremental updates**
+- [x] **M2-ISO-02 · Depth key table + incremental updates**
   - **Refs:** FR-2.2 (precomputed, incremental update), §8.1 (≤ 0.2 ms for 10k dirty cells)
   - **Depends:** M2-ISO-01
   - **Scope:**

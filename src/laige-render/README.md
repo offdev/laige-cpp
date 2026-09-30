@@ -94,5 +94,44 @@ random scene's back-to-front property against the M2-GL-03 iso matrices,
 the `(key, entity id)` total order and determinism, the domain/
 saturation contract, and the supported-shear checker).
 
+M2-ISO-02 landed the per-scene-chunk depth key table — the
+precomputed, incrementally-updated tile-grid → depth-key map (FR-2.2:
+"precomputed at scene build and incrementally updated on tile/height
+changes", PRD §8.1 "10k dirty cells ≤ 0.2 ms"; the PRD §10.1 module map
+places "isometric depth keys" in this module). Public header
+`include/laige/render/iso_depth_table.h` (header-only — a template over
+the SimMath backends, the `PresentationSnapshot` pattern):
+`IsoDepthKeyTable<Backend>::create(options)` (validates the options,
+pre-sizes one flat storage for the covered — chunk-aligned — region,
+flat-ground init; setup path), `rebuild(heights)` (the from-scratch
+load: every key through the full M2-ISO-01 function, so
+`rebuild(final grid) == any edit sequence reaching the same grid`),
+`setTile(gx, gy, h)` (the O(1) zero-allocation incremental update — the
+edited cell plus its documented neighborhood, radius 0 for the M2-ISO-01
+formula), `ensureChunk(gx, gy)` (bounded + logged growth, up to
+`maxChunks` — `BudgetExhausted` beyond, one Debug event per created
+chunk, one rate-limited Warn on the cap), `keyAt`/`tileHeightAt`/
+`covers` (the render read path). The table is world-space,
+presentation-only (ARCH-009), sim-phase writes / render-phase reads (the
+frame pipeline's phase ordering, M2-GL-02), and its cells agree with
+`isoDepthKey` bit-for-bit (the preamble derivation; the tests pin it).
+The canonical narrative is
+[docs/concepts/coordinates.md](../docs/concepts/coordinates.md) §4.5
+(created with this step); API contract in
+[docs/api/iso_depth_table.md](../docs/api/iso_depth_table.md); the PRD
+§8.1 budget is recorded in
+[docs/benchmarks/baselines/m2-iso-depth-table.md](../docs/benchmarks/baselines/m2-iso-depth-table.md)
+(`budgets.json` entry `iso_depthkey_rebuild` — gated on the reference
+platform, non-instrumented trees — methodology §4/§5; the sanitizer
+trees run the same workload ungated). Tests under
+[tests/laige-render](../tests/laige-render) (CTest entry
+`iso_depth_table` — pure data, no GL environment required: option
+validation, hand-computed golden keys for a 4×4 stepped scene on both
+backends with the cross-backend equality, the single-tile-edit contract
+(only the documented cell changes, last-write-wins, rejected edits
+unchanged, zero-allocation window), the bounded + logged growth, the
+rebuild-from-scratch == incremental property (64×64, 2k seeded edits),
+and the 10k-dirty-cell budget workload).
+
 The sprite batcher, draw submits, and sim→render wiring land in the
 remaining M2 steps (M2-SPRITE-01/02 on).
