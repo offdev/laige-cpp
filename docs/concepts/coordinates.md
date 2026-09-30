@@ -171,11 +171,50 @@ sorting (`isoShearSupported()` is the checker; M2-CAM-02 validates
 scene shears). An invertible shear that violates it still renders, but
 its depth-key order is not guaranteed.
 
+### 4.5 The depth key table: precomputation and incremental updates (M2-ISO-02)
+
+§4.1's per-sprite key is the *computation*; the scene's static tile
+grid has the *precomputed* form (FR-2.2: "precomputed at scene build
+and incrementally updated on tile/height changes"):
+`IsoDepthKeyTable<Backend>` (`laige/render/iso_depth_table.h`) holds
+one depth key per tile of the scene's tile grid, organized in square
+chunks (default 16×16 tiles — 256 cells each):
+
+- **Built at scene load** (setup path): one flat, pre-sized storage
+  for the covered — chunk-aligned — region (one allocation at
+  creation; growth re-allocates once, per growth). Every cell holds
+  `{key, qBase, height}` — `qBase` is the backend-quantized ground
+  contribution of the cell's *center* (a pure function of position,
+  computed once at creation/growth), and `height` is the tile's
+  current step height (0 = flat ground on a fresh table).
+- **Incremental updates**: `setTile(gx, gy, h)` stores the new height
+  and recomputes only the affected cells — the edited cell plus its
+  documented neighborhood (`kIsoDepthTableUpdateRadius`; radius 0 for
+  the §4.1 formula, which couples a cell's key to the cell's own
+  (x, y, height, layer) alone). O(1), zero allocation, no GL calls.
+- **Rebuild from scratch** (`rebuild`): the scene-load path; every key
+  through the full §4.1 function, so
+  `rebuild(final grid) == any edit sequence reaching the same grid`
+  (the property the tests pin).
+- **Bounded + logged growth** (`ensureChunk`): streamed regions extend
+  the covered region chunk by chunk, up to a documented cap
+  (`BudgetExhausted` beyond it).
+- **Budget**: 10k dirty cells ≤ 0.2 ms mean (PRD §8.1,
+  `iso_depthkey_rebuild`) —
+  [baselines/m2-iso-depth-table.md](../benchmarks/baselines/m2-iso-depth-table.md).
+
+Tiles are grid-locked (M2-TILE-01), so the table's cells agree with
+`isoDepthKey` at the same positions bit-for-bit — and across backends
+(dyadic centers in the exactness zone). *Moving* sprites keep the
+per-frame `isoDepthKey` (§4.1); the table serves the static tile grid
+(the tilemap, M2-TILE-01) only.
+
 ## 5. Conversion rules (the module boundaries, RENDER-006)
 
 | Conversion | Direction | Owner | Status |
 |---|---|---|---|
 | World → depth key | sim state → `uint32` key | `laige-render` (`isoDepthKey`, M2-ISO-01) | **This document / shipped** |
+| Tile grid → depth key table | tile heights → precomputed per-tile keys | `laige-render` (`IsoDepthKeyTable`, M2-ISO-02) | **This document / shipped** |
 | Depth key → render order | key (+ entity id) → sorted batches | M2-SORT-01 (stable radix sort), M2-SPRITE-01 (batcher) | planned |
 | Screen → world (per mode) | picking, screen↔world transforms | M2-PROJ-01 (`world_to_screen`, `screen_to_world_ray`), M2-ISO-03 (iso grid picking) | planned |
 | World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), sprite draw (M2-SPRITE-02) | partially shipped (matrices) |

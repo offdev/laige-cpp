@@ -212,6 +212,17 @@ still to land.
   formula, bit layout, domain and saturation contract, the
   Performance contract, and the determinism/replication scope
   (M2-ISO-01; `laige-render`).
+- [Isometric depth key table](api/iso_depth_table.md) — the
+  per-scene-chunk precomputed, incrementally-updated tile-grid →
+  depth-key map: `IsoDepthKeyTable<Backend>` (`create`/`rebuild`/
+  `setTile`/`ensureChunk` + `keyAt`/`tileHeightAt`/`covers`), the
+  cell model (one pre-sized `CellRecord` per covered cell — flat
+  storage, one allocation at creation), the O(1) zero-allocation
+  incremental update with its documented neighborhood (radius 0),
+  the bounded + logged growth, the PRD §8.1 budget (10k dirty cells
+  ≤ 0.2 ms — the `iso_depthkey_rebuild` entry), and the
+  sim-writes/render-reads threading contract (M2-ISO-02;
+  `laige-render`).
 
 ## Guides
 

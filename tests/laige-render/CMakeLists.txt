@@ -17,17 +17,25 @@
 # (IsoDepthKeyProperty), the (key, entity id) total order and
 # determinism (IsoDepthKeyTieBreak), the domain/saturation contract
 # (IsoDepthKeyDomain), and the supported-shear checker
-# (IsoDepthKeyShears) — pure math: no GL environment needed.
+# (IsoDepthKeyShears) — pure math: no GL environment needed; and the
+# per-scene-chunk depth key table (M2-ISO-02) — the precomputed,
+# incrementally-updated tile-grid -> depth-key map (IsoDepthTable*:
+# option validation + the flat-ground contract, the hand-computed
+# golden scene, the single-tile-edit / rejected-edit / zero-allocation
+# update contract, the bounded + logged chunk growth, the rebuild ==
+# incremental property, and the PRD §8.1 10k-dirty-cell budget gate)
+# — pure data: no GL environment needed.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
 # whole module; the `gl_context` entry is the M2-GL-01 Verify command
 # (`ctest -R gl_context`), the `render_thread` entry is the M2-GL-02
 # Verify command (`ctest -R render_thread`), the `matrices` entry is
-# the M2-GL-03 Verify command (`ctest -R matrices`), and the
+# the M2-GL-03 Verify command (`ctest -R matrices`), the
 # `iso_depth_key` entry is the M2-ISO-01 Verify command
-# (`ctest -R iso_depth_key`), each selecting exactly its suites from
-# the shared executable.
+# (`ctest -R iso_depth_key`), and the `iso_depth_table` entry is the
+# M2-ISO-02 Verify command (`ctest -R iso_depth_table`), each
+# selecting exactly its suites from the shared executable.
 #
 # Environment note: the GlContextSmoke and RenderThreadOffscreen suites
 # require a usable OpenGL 3.3 environment — always present on the P0 CI
@@ -40,7 +48,7 @@
 
 add_executable(laige-render_tests
   gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
-  iso_depth_key_tests.cpp)
+  iso_depth_key_tests.cpp iso_depth_table_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -49,6 +57,11 @@ target_include_directories(laige-render_tests PRIVATE
   ${CMAKE_SOURCE_DIR}/tests/support)
 
 add_test(NAME laige-render_tests COMMAND laige-render_tests)
+# The unfiltered entry also runs the M2-ISO-02 budget suite (in the
+# gated builds it checks the entry), so it carries the same budgets
+# path:
+set_tests_properties(laige-render_tests PROPERTIES
+  ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 
 # M2-GL-01: the step's Verify command is `ctest -R gl_context`. The
 # gtest filter is one UNQUOTED argument (see
@@ -75,16 +88,46 @@ add_test(NAME matrices
 add_test(NAME iso_depth_key
          COMMAND laige-render_tests --gtest_filter=IsoDepthKey*)
 
+# M2-ISO-02: the step's Verify command is `ctest -R iso_depth_table`.
+# Pure data (no GL calls) — runs in every local tree and CI. The
+# LAIGE_BUDGETS_PATH env var points the budget suite at the repo
+# budgets.json (the test falls back to the working directory when the
+# var is unset — the budget_harness_tests.cpp convention). The budget
+# suite runs ONLY on the non-instrumented trees (methodology §4: the
+# budget gates measure the canonical Debug tree — the sanitizer
+# runtimes inflate absolute cost and own operator new); it
+# GTEST_SKIPs elsewhere. The absolute 0.2 ms target is reference-
+# platform-scoped (methodology §5: the shared macOS/Windows runners
+# are slower and noisier than the ubuntu-24.04 reference — the
+# m1-sim-tick scoping), so the gate is compiled only on Linux in the
+# non-instrumented trees (the LAIGE_ISO_DEPTH_BUDGET define marks
+# them); other platforms still run the budget WORKLOAD (ungated —
+# the suite's other suites cover the same shapes, and the workload
+# itself runs leak-free under ASan/TSan):
+add_test(NAME iso_depth_table
+         COMMAND laige-render_tests --gtest_filter=IsoDepthTable*)
+set_tests_properties(iso_depth_table PROPERTIES
+  ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
+if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
+  if(NOT CMAKE_BUILD_TYPE STREQUAL "")
+    target_compile_definitions(laige-render_tests PRIVATE
+      LAIGE_ISO_DEPTH_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+  endif()
+endif()
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2).
   # The M2-GL-02 `render_thread` entry is the step's TSan gate (the
   # lock-free handoff's race-freedom, the 3000-frame no-deadlock run);
-  # the pure-math `matrices` and `iso_depth_key` entries carry the
-  # option for uniformity (they have no shared state, but the flag is
-  # harmless).
+  # the pure-math `matrices`, `iso_depth_key`, and `iso_depth_table`
+  # entries carry the option for uniformity (they have no shared state,
+  # but the flag is harmless). The test-level ENVIRONMENT replaces the
+  # job-level one, so the budgets path is restated here.
   set_tests_properties(laige-render_tests gl_context render_thread matrices
-    iso_depth_key PROPERTIES
-    ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
+    iso_depth_key iso_depth_table PROPERTIES
+    ENVIRONMENT
+    "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 endif()
 
 if(LAIGE_ASAN)
@@ -120,3 +163,8 @@ set_tests_properties(laige-render_tests gl_context PROPERTIES TIMEOUT 180)
 set_tests_properties(render_thread PROPERTIES TIMEOUT 300)
 set_tests_properties(matrices PROPERTIES TIMEOUT 60)
 set_tests_properties(iso_depth_key PROPERTIES TIMEOUT 60)
+# The `iso_depth_table` entry includes the budget gate: 2 backends x
+# (100 warm-up + 3000 measured) iterations of 10 000 setTile calls —
+# a few seconds on the canonical Debug tree; 120s is generous headroom
+# for a slow CI runner.
+set_tests_properties(iso_depth_table PROPERTIES TIMEOUT 120)
