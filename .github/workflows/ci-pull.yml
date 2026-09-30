@@ -191,7 +191,19 @@ jobs:
       !contains(github.event.pull_request.labels.*.name, 'ci:macos') &&
       !contains(github.event.pull_request.labels.*.name, 'ci:windows')
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # 30 min (not 10): TSan is the slowest lane by design (~5-15x
+    # instrumentation overhead), and the suite has grown past the old
+    # margin — the M2-ISO-01 10k-scene property suite (iso_depth_key
+    # entry) plus the M2-GL-02 3000-frame integration run. Evidence:
+    # the master merge run of PR #60 took 8.8 min (96 entries: setup +
+    # build ~1.7 min, the 96-entry TSan test step ~7.1 min); the
+    # M2-ISO-01 PR run needed ~11 min (setup + build 3.7 min on a
+    # slower runner, the 97-entry test step ~7.2 min — laige-sim_tests
+    # alone 177 s) and was CANCELLED at the 10-min cap ~50 s before
+    # completion. 30 min keeps a large margin for runner variance and
+    # the suite's continued growth without weakening the gate
+    # (M2-ISO-01, 2026-09-30).
+    timeout-minutes: 30
     # Job-scoped token: the archive step below needs actions:write (see
     # the linux-asan job comment).
     permissions:

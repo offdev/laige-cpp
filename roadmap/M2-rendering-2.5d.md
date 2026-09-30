@@ -106,9 +106,9 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
 
 ## Isometric core (primary projection)
 
-- [ ] **M2-ISO-01 · Isometric depth key computation**
+- [x] **M2-ISO-01 · Isometric depth key computation**
   - **Refs:** FR-2.2, AC-4.4, S-5 (engine-owned depth); RENDER-003
-  - **Depends:** M2-PROJ-01
+  - **Depends:** M2-PROJ-01 (implemented independently against the landed M2-GL-03 iso matrices — the projection step wraps them)
   - **Scope:**
     - Deterministic 32-bit sortable depth key from axis-aligned world state: key = f(x, y, tile/step height, layer) — document the exact formula and quantization (CORE-005); computed from sim coordinates, **never** from screen space (PRD §4).
     - Keys sort back-to-front for all supported iso shears; equal keys break ties by (layer, depth, entity id) — explicit stable order (RENDER-003).

@@ -9,15 +9,25 @@
 # (RenderThreadOffscreen: the 3000-frame no-deadlock integration run and
 # the slowed-submit drop path); and the matrix utilities (M2-GL-03) —
 # the camera/projection builders pinned against hand-computed golden
-# values (Matrices*, pure math: no GL environment needed).
+# values (Matrices*, pure math: no GL environment needed); and the
+# isometric depth key (M2-ISO-01) — the engine-owned 32-bit sortable
+# depth key pinned against hand-computed golden keys for a small
+# stepped-terrain scene (IsoDepthKeyGolden), the 10k random scene's
+# back-to-front property against the iso projection matrices
+# (IsoDepthKeyProperty), the (key, entity id) total order and
+# determinism (IsoDepthKeyTieBreak), the domain/saturation contract
+# (IsoDepthKeyDomain), and the supported-shear checker
+# (IsoDepthKeyShears) — pure math: no GL environment needed.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
 # whole module; the `gl_context` entry is the M2-GL-01 Verify command
 # (`ctest -R gl_context`), the `render_thread` entry is the M2-GL-02
-# Verify command (`ctest -R render_thread`), and the `matrices` entry
-# is the M2-GL-03 Verify command (`ctest -R matrices`), each selecting
-# exactly its suites from the shared executable.
+# Verify command (`ctest -R render_thread`), the `matrices` entry is
+# the M2-GL-03 Verify command (`ctest -R matrices`), and the
+# `iso_depth_key` entry is the M2-ISO-01 Verify command
+# (`ctest -R iso_depth_key`), each selecting exactly its suites from
+# the shared executable.
 #
 # Environment note: the GlContextSmoke and RenderThreadOffscreen suites
 # require a usable OpenGL 3.3 environment — always present on the P0 CI
@@ -29,9 +39,14 @@
 # always run (they make no GL calls).
 
 add_executable(laige-render_tests
-  gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp)
+  gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
+  iso_depth_key_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
+# The randomized suites draw through the test-only seed helper
+# (docs/testing.md §4; tests/support/laige_test_seed.h).
+target_include_directories(laige-render_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/tests/support)
 
 add_test(NAME laige-render_tests COMMAND laige-render_tests)
 
@@ -55,14 +70,20 @@ add_test(NAME render_thread
 add_test(NAME matrices
          COMMAND laige-render_tests --gtest_filter=Matrices*)
 
+# M2-ISO-01: the step's Verify command is `ctest -R iso_depth_key`.
+# Pure math (no GL calls) — runs in every local tree and CI.
+add_test(NAME iso_depth_key
+         COMMAND laige-render_tests --gtest_filter=IsoDepthKey*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2).
   # The M2-GL-02 `render_thread` entry is the step's TSan gate (the
   # lock-free handoff's race-freedom, the 3000-frame no-deadlock run);
-  # the pure-math `matrices` entry carries the option for uniformity
-  # (it has no shared state, but the flag is harmless).
+  # the pure-math `matrices` and `iso_depth_key` entries carry the
+  # option for uniformity (they have no shared state, but the flag is
+  # harmless).
   set_tests_properties(laige-render_tests gl_context render_thread matrices
-    PROPERTIES
+    iso_depth_key PROPERTIES
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()
 
@@ -91,8 +112,11 @@ if(LAIGE_ASAN)
 endif()
 
 # The offscreen smoke creates a real (software) context + FBO; give a
-# slow headless runner generous headroom. The pure-math `matrices`
-# entry is a few hundred flops — 60s is generous headroom.
+# slow headless runner generous headroom. The pure-math `matrices` and
+# `iso_depth_key` entries are small (the 10k-scene property test is a
+# few thousand O(1) key computations and comparisons) — 60s is
+# generous headroom.
 set_tests_properties(laige-render_tests gl_context PROPERTIES TIMEOUT 180)
 set_tests_properties(render_thread PROPERTIES TIMEOUT 300)
 set_tests_properties(matrices PROPERTIES TIMEOUT 60)
+set_tests_properties(iso_depth_key PROPERTIES TIMEOUT 60)

@@ -153,7 +153,12 @@ Mat4 isoMatrix(IsoAxes axes) noexcept {
   assert(std::isfinite(axes.dx.x) && std::isfinite(axes.dx.y) &&
          std::isfinite(axes.dy.x) && std::isfinite(axes.dy.y) &&
          std::isfinite(axes.zUnit) && "isoMatrix: all arguments must be finite");
-  const float det = axes.dx.x * axes.dy.y - axes.dx.y * axes.dy.x;
+  // [[maybe_unused]]: in Release (-DNDEBUG) the assert below is compiled
+  // out and det has no other use (the invertibility contract is a debug
+  // assert per docs/api/matrices.md — pre-existing Release -Werror break,
+  // surfaced by the M2-ISO-01 six-tree validation, 2026-09-30).
+  [[maybe_unused]] const float det =
+      axes.dx.x * axes.dy.y - axes.dx.y * axes.dy.x;
   assert(det != 0.0f &&
          "isoMatrix: requires the ground-plane map to be invertible "
          "(det(dx, dy) != 0 — the M2-ISO-03 picking inverse)");
