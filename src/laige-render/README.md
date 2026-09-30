@@ -41,5 +41,27 @@ arrives with the sprite stages, M2-SPRITE-02; CORE-004). `GlContext`
 gained `refreshRateHz()` (the display refresh rate for the frame
 clock's vsync pace; 0 = headless or unavailable).
 
+M2-GL-03 landed the camera/matrix utilities — the pure matrix builders in
+namespace `laige::render` (public header `include/laige/render/
+matrices.h`, implementation `matrices.cpp`): `ortho`, `perspective`,
+`lookAt`, the 2D-plane camera `planeOrtho` (the top_down/side_view modes),
+and the isometric family — `isoMatrix` (the general affine oblique form,
+i.e. the "custom shear" preset), `isoDimetric2To1` (the ADR 0005 default)
+and `isoTrueIso3060`. All are stateless, allocation-free, GL-free pure
+functions (no context, no state, callable from any thread — the
+set-up-phase camera objects M2-CAM-01/02 own the build cadence); NDC
+conventions (right-handed world, +z up, OpenGL NDC z ∈ [−1, +1]) are
+pinned in the header and the ADR-0005 preset tables are machine-checked
+by the tests. GLM (the PRD §11 "math foundation for the rendering side")
+is vendored at `deps/glm` and exposed through this module's public API
+(the value types `Vec2`/`Vec3`/`Mat4` are GLM aliases — a deliberate
+contrast to the GLFW/GLAD pimpl; the include edge is module-owned and
+`tools/laige-include-lint` R3 keeps GLM out of every other module,
+notably the sim). API contract in
+[docs/api/matrices.md](../docs/api/matrices.md), vendoring decision in
+[ADR 0008](../docs/decisions/0008-glm-vendoring.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `matrices` —
+pure math, runs in every local tree and CI).
+
 The sprite batcher, draw submits, and sim→render wiring land in the
 remaining M2 steps (M2-SPRITE-01/02 on).

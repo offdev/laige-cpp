@@ -56,7 +56,7 @@ add_library(laige-glad STATIC ${CMAKE_SOURCE_DIR}/deps/glad/src/gl.c)
 target_include_directories(laige-glad PRIVATE
   ${CMAKE_SOURCE_DIR}/deps/glad/include)
 
-set(LAIGE_RENDER_SOURCES gl_context.cpp frame_pipeline.cpp)
+set(LAIGE_RENDER_SOURCES gl_context.cpp frame_pipeline.cpp matrices.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-render SHARED ${LAIGE_RENDER_SOURCES})
@@ -76,6 +76,19 @@ target_link_libraries(laige-render PRIVATE glfw laige-glad)
 # headers), likewise PRIVATE.
 target_include_directories(laige-render PRIVATE
   ${CMAKE_SOURCE_DIR}/deps/glad/include)
+
+# GLM (M2-GL-03, ADR 0008): unlike GLFW/GLAD (opaque native resources
+# behind the pimpl), GLM is a pure value-type math library and is part
+# of the render-side public API (PRD §11: "math foundation for the
+# rendering side" — cameras, projection matrices). laige/render/
+# matrices.h includes GLM headers, so the GLM include root is PUBLIC
+# (build interface): consumers get GLM transitively, pinned by
+# deps.lock. The include edge stays module-owned: tools/laige-include-
+# lint (R3) records deps/glm as owned by laige-render, so no other
+# module (notably laige-sim, whose math stays SimMath per PRD §10.3)
+# may include GLM directly.
+target_include_directories(laige-render PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/deps/glm>)
 
 # Public header root. Only this directory is exposed to consumers
 # (CPP-010: no transitive leakage).
