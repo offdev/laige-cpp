@@ -277,12 +277,17 @@ struct IsoTableCenter<sim::Fpx16_16> {
 // division-free (the chunk side is a power of two). CPP-004: no
 // implementation-defined right shift of a negative value; the negative
 // branch rounds (-tile + 2^shift - 1) toward zero and negates (|tile|
-// <= 32767 in the table domain, so -tile cannot overflow).
+// <= 32767 in the table domain, so -tile cannot overflow). The shifted
+// result is converted to int32 BEFORE the negation (its max is
+// 32767 + 2^14 - 1 = 49150 < 2^31, so lossless; and the unary minus
+// applies to a signed type — MSVC /W4's C4146 would otherwise fire
+// on the unsigned operand).
 constexpr std::int32_t chunkCoord(std::int32_t tile, std::int32_t shift)
     noexcept {
   if (tile >= 0) return tile >> shift;
-  return -((static_cast<std::uint32_t>(-tile) +
-            static_cast<std::uint32_t>(1u << shift) - 1u) >> shift);
+  return -static_cast<std::int32_t>(
+      (static_cast<std::uint32_t>(-tile) +
+       static_cast<std::uint32_t>(1u << shift) - 1u) >> shift);
 }
 
 // log2 of a power of two (chunkTiles is validated a power of two >= 1).

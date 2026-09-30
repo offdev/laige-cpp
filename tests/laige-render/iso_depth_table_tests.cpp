@@ -228,7 +228,9 @@ constexpr char kCompilerId[] = "Clang " LAIGE_ISO_TABLE_STR(__clang_major__)
 #elif defined(__GNUC__)
 constexpr char kCompilerId[] = "GCC " __VERSION__;
 #elif defined(_MSC_VER)
-constexpr char kCompilerId[] = "MSVC " _MSC_FULL_VER;
+// _MSC_FULL_VER is an INTEGER literal (e.g. 194434433), not a string —
+// it must be stringified (the laige-bench kCompilerId pattern):
+constexpr char kCompilerId[] = "MSVC " LAIGE_ISO_TABLE_STR(_MSC_FULL_VER);
 #else
 constexpr char kCompilerId[] = "unknown compiler";
 #endif
