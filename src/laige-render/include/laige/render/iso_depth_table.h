@@ -277,12 +277,17 @@ struct IsoTableCenter<sim::Fpx16_16> {
 // division-free (the chunk side is a power of two). CPP-004: no
 // implementation-defined right shift of a negative value; the negative
 // branch rounds (-tile + 2^shift - 1) toward zero and negates (|tile|
-// <= 32767 in the table domain, so -tile cannot overflow).
+// <= 32767 in the table domain, so -tile cannot overflow). The shifted
+// result is converted to int32 BEFORE the negation (its max is
+// 32767 + 2^14 - 1 = 49150 < 2^31, so lossless; and the unary minus
+// applies to a signed type — MSVC /W4's C4146 would otherwise fire
+// on the unsigned operand).
 constexpr std::int32_t chunkCoord(std::int32_t tile, std::int32_t shift)
     noexcept {
   if (tile >= 0) return tile >> shift;
-  return -((static_cast<std::uint32_t>(-tile) +
-            static_cast<std::uint32_t>(1u << shift) - 1u) >> shift);
+  return -static_cast<std::int32_t>(
+      (static_cast<std::uint32_t>(-tile) +
+       static_cast<std::uint32_t>(1u << shift) - 1u) >> shift);
 }
 
 // log2 of a power of two (chunkTiles is validated a power of two >= 1).
@@ -759,7 +764,10 @@ Status IsoDepthKeyTable<Backend>::setTile(std::int32_t tileX,
   // future formula with radius R recomputes each covered neighbor from
   // its OWN stored height (uncovered neighbors have no cell); that
   // path is cold (a terrain formula change), so it may use the helpers.
-  if (kIsoDepthTableUpdateRadius > 0) {
+  // if constexpr, not if: the radius is a compile-time constant, and a
+  // plain if trips MSVC C4127 (fatal under /WX) — the entity.h
+  // resolveIoEntry precedent; the discarded branch is never emitted.
+  if constexpr (kIsoDepthTableUpdateRadius > 0) {
     for (std::int32_t dy = -kIsoDepthTableUpdateRadius;
          dy <= kIsoDepthTableUpdateRadius; ++dy) {
       for (std::int32_t dx = -kIsoDepthTableUpdateRadius;
