@@ -62,7 +62,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R render_thread` green under TSan; frame-drop counter observable via profiler (M2-SPRITE-04 field).
   - **Size:** ~250 lines + tests
 
-- [ ] **M2-GL-03 · Vendor GLM + camera/matrix utilities**
+- [x] **M2-GL-03 · Vendor GLM + camera/matrix utilities**
   - **Refs:** PRD §11 (GLM row — rendering side only)
   - **Depends:** M2-GL-01
   - **Scope:**

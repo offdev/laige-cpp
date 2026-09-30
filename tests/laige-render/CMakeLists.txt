@@ -7,13 +7,16 @@
 # vsync-paced frame clock (FrameClock, no GL), the single-slot lock-free
 # handoff (RenderThreadHandoff, no GL), and the offscreen pipeline runs
 # (RenderThreadOffscreen: the 3000-frame no-deadlock integration run and
-# the slowed-submit drop path).
+# the slowed-submit drop path); and the matrix utilities (M2-GL-03) —
+# the camera/projection builders pinned against hand-computed golden
+# values (Matrices*, pure math: no GL environment needed).
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
 # whole module; the `gl_context` entry is the M2-GL-01 Verify command
-# (`ctest -R gl_context`) and the `render_thread` entry is the
-# M2-GL-02 Verify command (`ctest -R render_thread`), each selecting
+# (`ctest -R gl_context`), the `render_thread` entry is the M2-GL-02
+# Verify command (`ctest -R render_thread`), and the `matrices` entry
+# is the M2-GL-03 Verify command (`ctest -R matrices`), each selecting
 # exactly its suites from the shared executable.
 #
 # Environment note: the GlContextSmoke and RenderThreadOffscreen suites
@@ -25,7 +28,8 @@
 # GlContextGate/GlContextArgs/FrameClock/RenderThreadHandoff suites
 # always run (they make no GL calls).
 
-add_executable(laige-render_tests gl_context_tests.cpp render_thread_tests.cpp)
+add_executable(laige-render_tests
+  gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 
@@ -46,11 +50,18 @@ add_test(NAME render_thread
          COMMAND laige-render_tests
          --gtest_filter=FrameClock.*:RenderThreadHandoff.*:RenderThreadOffscreen.*)
 
+# M2-GL-03: the step's Verify command is `ctest -R matrices`. Pure math
+# (no GL calls) — runs in every local tree and CI.
+add_test(NAME matrices
+         COMMAND laige-render_tests --gtest_filter=Matrices*)
+
 if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2).
   # The M2-GL-02 `render_thread` entry is the step's TSan gate (the
-  # lock-free handoff's race-freedom, the 3000-frame no-deadlock run).
-  set_tests_properties(laige-render_tests gl_context render_thread
+  # lock-free handoff's race-freedom, the 3000-frame no-deadlock run);
+  # the pure-math `matrices` entry carries the option for uniformity
+  # (it has no shared state, but the flag is harmless).
+  set_tests_properties(laige-render_tests gl_context render_thread matrices
     PROPERTIES
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()
@@ -80,6 +91,8 @@ if(LAIGE_ASAN)
 endif()
 
 # The offscreen smoke creates a real (software) context + FBO; give a
-# slow headless runner generous headroom.
+# slow headless runner generous headroom. The pure-math `matrices`
+# entry is a few hundred flops — 60s is generous headroom.
 set_tests_properties(laige-render_tests gl_context PROPERTIES TIMEOUT 180)
 set_tests_properties(render_thread PROPERTIES TIMEOUT 300)
+set_tests_properties(matrices PROPERTIES TIMEOUT 60)

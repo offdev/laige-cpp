@@ -33,6 +33,17 @@
       "sha256": "72a0b8ccd4bd9eb03bc5ba0f8a1992c74bba32ff3b4ec05133619c6f3f927927",
       "license": "WTFPL OR CC0-1.0 AND Apache-2.0",
       "justification": "PRD §11 (OpenGL loader for our GL version; header-only, vendored): generated with glad2 v2.0.8 for gl:core=3.3 with the internal dynamic loader (--reproducible); the vendored tree is the generated output of that pinned commit, not a source checkout (M2-GL-01, ADR 0007)"
+    },
+    {
+      "name": "glm",
+      "version": "1.0.3",
+      "path": "deps/glm",
+      "owner": "src/laige-render",
+      "source_url": "https://github.com/g-truc/glm",
+      "source_commit": "8d1fd52e5ab5590e2c81768ace50c72bae28f2ed",
+      "sha256": "f4785f292cafd2b6e060705cc81e22ebf5d5083e27f1f155493e0f252ab9b395",
+      "license": "MIT",
+      "justification": "PRD §11 (math foundation for the rendering side: cameras, projection matrices, incl. isometric camera matrices; sim keeps its own fixed-point math per §10.3 — the include-graph lint owner rule keeps GLM out of sim): header-only, vendored (the full glm/ library tree of the pinned tag; doc/test/cmake excluded; M2-GL-03, ADR 0008)"
     }
   ]
 }

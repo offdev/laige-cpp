@@ -190,6 +190,13 @@ still to land.
   vsync-paced frame clock (the frame deadline grid and the
   `render_time` provider for presentation/interpolation), and the
   ordered idempotent shutdown (M2-GL-02; `laige-render`).
+- [Matrix utilities](api/matrices.md) — the rendering-side camera and
+  projection matrix builders: `ortho`, `perspective`, `lookAt`, the
+  2D-plane camera `planeOrtho` (top_down/side_view), and the isometric
+  family (`isoMatrix`/`isoDimetric2To1`/`isoTrueIso3060`, the ADR 0005
+  presets): the pinned conventions (right-handed world, +z up, OpenGL
+  NDC), the element formulas, and the Performance contract (M2-GL-03;
+  ADR 0008; `laige-render`).
 
 ## Guides
 
