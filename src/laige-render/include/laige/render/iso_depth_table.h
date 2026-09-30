@@ -764,7 +764,10 @@ Status IsoDepthKeyTable<Backend>::setTile(std::int32_t tileX,
   // future formula with radius R recomputes each covered neighbor from
   // its OWN stored height (uncovered neighbors have no cell); that
   // path is cold (a terrain formula change), so it may use the helpers.
-  if (kIsoDepthTableUpdateRadius > 0) {
+  // if constexpr, not if: the radius is a compile-time constant, and a
+  // plain if trips MSVC C4127 (fatal under /WX) — the entity.h
+  // resolveIoEntry precedent; the discarded branch is never emitted.
+  if constexpr (kIsoDepthTableUpdateRadius > 0) {
     for (std::int32_t dy = -kIsoDepthTableUpdateRadius;
          dy <= kIsoDepthTableUpdateRadius; ++dy) {
       for (std::int32_t dx = -kIsoDepthTableUpdateRadius;
