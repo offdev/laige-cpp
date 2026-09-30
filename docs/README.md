@@ -60,8 +60,13 @@ still to land.
   (ARCH-008), lifecycle, threading, and determinism scope.
   [Determinism](concepts/determinism.md) is written (M1-DET-01: the
   same-build scope, the two-layer G-R8 enforcement, the exception
-  policy, the PRNG substreams); the other topics name their planned
-  document and interim home.
+  policy, the PRNG substreams);
+  [coordinates](concepts/coordinates.md) is written (M2-ISO-01: the
+  world axes/handedness/units, the NDC conventions, the isometric
+  projection family (ADR 0005), the depth key formula and 32-bit
+  layout, the (key, entity id) total render order, the
+  supported-iso-shear contract, and the sim↔render conversion rules);
+  the other topics name their planned document and interim home.
 
 ## API contracts (per public header)
 
@@ -197,6 +202,16 @@ still to land.
   presets): the pinned conventions (right-handed world, +z up, OpenGL
   NDC), the element formulas, and the Performance contract (M2-GL-03;
   ADR 0008; `laige-render`).
+- [Isometric depth keys](api/iso_depth_key.md) — the engine-owned
+  32-bit sortable depth key for isometric render ordering:
+  `isoDepthKey<Backend>(pos, stepHeight, layer)` (world-space by
+  contract — PRD §4), `isoDepthKeyParts` (the exact inverse),
+  `isoDepthOrderLess` (the explicit stable `(key, entity id)` total
+  render order — RENDER-003), and `isoShearSupported` (the
+  back-to-front shear contract; both built-in presets pass): the
+  formula, bit layout, domain and saturation contract, the
+  Performance contract, and the determinism/replication scope
+  (M2-ISO-01; `laige-render`).
 
 ## Guides
 
@@ -253,10 +268,11 @@ still to land.
 
 ## Not yet written (honest status)
 
-- `concepts/` — the architecture, coordinates, lifecycle, and
-  threading concept documents (the [index](concepts/README.md) names
-  each and its interim home). [Determinism](concepts/determinism.md)
-  is written (M1-DET-01).
+- `concepts/` — the architecture, lifecycle, and threading concept
+  documents (the [index](concepts/README.md) names each and its
+  interim home). [Determinism](concepts/determinism.md) is written
+  (M1-DET-01) and [coordinates](concepts/coordinates.md) is written
+  (M2-ISO-01).
 - `guides/` — task-oriented usage (first game, profiling, determinism)
   — see the [index](guides/README.md).
 - `debugging/` — the in-engine debug mode (AGENTS §15; profiling

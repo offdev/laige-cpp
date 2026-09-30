@@ -63,5 +63,36 @@ notably the sim). API contract in
 [tests/laige-render](../tests/laige-render) (CTest entry `matrices` —
 pure math, runs in every local tree and CI).
 
+M2-ISO-01 landed the isometric depth key — the engine-owned 32-bit
+sortable depth key for isometric render ordering (FR-2.2, PRD §4,
+RENDER-003; the PRD §10.1 module map places "isometric depth keys" in
+this module). Public header
+`include/laige/render/iso_depth_key.h` (header-only — a template over
+the SimMath backends, the `PresentationSnapshot` pattern):
+`isoDepthKey<Backend>(pos, stepHeight, layer)` (the formula, bit layout,
+domain, and shear contract live in the header preamble — the key is
+`v = (x + y) − z` quantized at 1/16 world units, packed with the layer:
+unsigned key order = back-to-front; the monotone ties-away rounding
+never inverts the painter's order), `isoDepthKeyParts` (the exact
+inverse — the diagnostics view), `isoDepthOrderLess` (the explicit
+stable total render order `(key, entity id)` — the stable sort's
+insertion order is the batcher's deterministic entity-id order, FR-1.2),
+and `isoShearSupported` (the back-to-front contract:
+`−dx.y == −dy.y == zUnit > 0` exactly — both built-in presets pass; a
+custom shear must pass to use isometric depth sorting). The key is
+world-space by contract (PRD §4: never screen space),
+presentation-only (ARCH-009), O(1), allocation-free, no GL, no
+per-call asserts (total; out-of-domain input saturates). The canonical
+coordinate/depth/ordering document (ARCH-008) is
+[docs/concepts/coordinates.md](../docs/concepts/coordinates.md) (created
+with this step); API contract in
+[docs/api/iso_depth_key.md](../docs/api/iso_depth_key.md); tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `iso_depth_key`
+— pure math, runs in every local tree and CI: hand-computed golden keys
+for a small stepped-terrain scene on both SimMath backends, the 10k
+random scene's back-to-front property against the M2-GL-03 iso matrices,
+the `(key, entity id)` total order and determinism, the domain/
+saturation contract, and the supported-shear checker).
+
 The sprite batcher, draw submits, and sim→render wiring land in the
 remaining M2 steps (M2-SPRITE-01/02 on).
