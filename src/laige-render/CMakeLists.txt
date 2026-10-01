@@ -59,9 +59,14 @@ target_include_directories(laige-glad PRIVATE
 # M2-CAM-01 adds camera.cpp (the 3D camera core: position/look-at,
 # ortho/perspective with clamped zoom, the rectangular bounds
 # constraint, the smooth follow, the bounded decaying shake — the
-# presentation-only camera of FR-2.4).
+# presentation-only camera of FR-2.4). M2-PROJ-01 adds projection.cpp
+# (the per-scene/view projection modes — iso default, side_view,
+# top_down, free_cinematic — and the screen<->world transforms:
+# worldToScreen / screenToWorldRay / screenToWorld, the FR-2.11
+# picking base; pure value math over the M2-GL-03 / M2-CAM-01
+# matrices, no GL calls).
 set(LAIGE_RENDER_SOURCES gl_context.cpp frame_pipeline.cpp matrices.cpp
-  camera.cpp)
+  camera.cpp projection.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-render SHARED ${LAIGE_RENDER_SOURCES})

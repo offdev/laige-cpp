@@ -83,7 +83,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R camera` green.
   - **Size:** ~250 lines + tests
 
-- [ ] **M2-PROJ-01 · Projection modes + screen↔world transforms**
+- [x] **M2-PROJ-01 · Projection modes + screen↔world transforms**
   - **Refs:** FR-2.5, FR-2.11 (base), PRD §4 (projection list)
   - **Depends:** M2-CAM-01
   - **Scope:**

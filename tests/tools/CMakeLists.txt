@@ -9,6 +9,9 @@
 #   include-lint-violations    one file per rule R1–R4      → exit 1
 #   include-lint-dep-budget    11 vendored deps             → exit 2
 #   include-lint-unknown-module  src/laige-audio present    → exit 2
+#   include-lint-sim-to-render sim includes a render        → exit 1
+#                          (projection) header (AC-4.2, the
+#                          M2-PROJ-01 lint rule: R2 blocks sim -> render)
 #   include-lint-real-tree     the live repository          → exit 0
 #
 # Each test is a generated `cmake -P` check script (see below) asserting
@@ -157,6 +160,25 @@ file(WRITE "${FX}/unknown-module/deps.lock" "{
 file(WRITE "${FX}/unknown-module/src/laige-audio/audio.cpp" "#include <cstdint>
 ")
 
+# --- fixture: sim includes a render (projection) header (expect exit 1) ---
+# The AC-4.2 rule (roadmap M2-PROJ-01/M2-AC-01: no projection code in the
+# sim modules): the include-graph lint's R2 rule (arrows only downward,
+# PRD §10.1 — laige-sim sits BELOW laige-render) blocks every
+# laige-sim -> laige-render include, projection headers included.
+# (M2-AC-01 adds the companion SURFACE check: no ProjectionMode in the
+# laige-sim/laige-net public surface — a different mechanism, later step.)
+file(MAKE_DIRECTORY "${FX}/sim-to-render/src/laige-sim")
+file(MAKE_DIRECTORY "${FX}/sim-to-render/src/laige-render/include/laige/render")
+file(WRITE "${FX}/sim-to-render/deps.lock" "{
+  \"version\": 1,
+  \"entries\": []
+}")
+file(WRITE "${FX}/sim-to-render/src/laige-render/include/laige/render/projection.h" "#pragma once
+")
+file(WRITE "${FX}/sim-to-render/src/laige-sim/pick.cpp"
+  "#include <laige/render/projection.h>
+")
+
 # --- the tests -------------------------------------------------------------
 # Each test runs a generated `cmake -P` check script
 # (expect-lint-result.cmake.in) that asserts the lint's exit code AND the
@@ -194,6 +216,10 @@ laige_add_lint_test(include-lint-dep-budget 2 "${FX}/budget"
   "count: 11" "exceed the PRD" "budget of 10")
 laige_add_lint_test(include-lint-unknown-module 2 "${FX}/unknown-module"
   "src/laige-audio: not a PRD")
+# M2-PROJ-01 (AC-4.2): the include-graph lint rule that keeps projection
+# code out of the sim modules — R2 blocks the sim -> render include.
+laige_add_lint_test(include-lint-sim-to-render 1 "${FX}/sim-to-render"
+  "R2: include of 'laige/render/projection.h' reaches module 'laige-render'")
 laige_add_lint_test(include-lint-real-tree 0 "${CMAKE_SOURCE_DIR}"
   "laige-include-lint: OK")
 

@@ -31,7 +31,19 @@
 # follow/shake input, the smooth follow's deterministic exact sequence,
 # the shake's bounded decay to exactly zero within the documented
 # tick count, and the matrix builds against the M2-GL-03 builders) —
-# pure value math: no GL environment needed.
+# pure value math: no GL environment needed; and the projection modes
+# + screen<->world transforms (M2-PROJ-01) — the ProjectionView
+# (projection_tests.cpp's Projection* suites: the mode/matrix defaults,
+# the hand-computed world->NDC goldens for every mode (2:1 dimetric,
+# true 30°/60°, a custom invertible shear, the side_view/top_down plane
+# cameras, the ortho and perspective cinematic cameras), the per-mode
+# preimage-ray geometry (the ground-plane origin + the (1,1,2)-ish
+# iso direction, the plane-mode reference-plane origins, the cinematic
+# near-plane origin + away-from-camera direction), the 10k-point
+# round trips against the documented precision per mode, and the
+# documented Result failure paths (parallel plane, zero normal,
+# intersection behind the camera)) — pure value math: no GL
+# environment needed.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -41,9 +53,11 @@
 # the M2-GL-03 Verify command (`ctest -R matrices`), the
 # `iso_depth_key` entry is the M2-ISO-01 Verify command
 # (`ctest -R iso_depth_key`), the `iso_depth_table` entry is the
-# M2-ISO-02 Verify command (`ctest -R iso_depth_table`), and the
-# `camera` entry is the M2-CAM-01 Verify command (`ctest -R camera`),
-# each selecting exactly its suites from the shared executable.
+# M2-ISO-02 Verify command (`ctest -R iso_depth_table`), the `camera`
+# entry is the M2-CAM-01 Verify command (`ctest -R camera`), and the
+# `projection` entry is the M2-PROJ-01 Verify command
+# (`ctest -R projection`), each selecting exactly its suites from the
+# shared executable.
 #
 # Environment note: the GlContextSmoke and RenderThreadOffscreen suites
 # require a usable OpenGL 3.3 environment — always present on the P0 CI
@@ -56,7 +70,8 @@
 
 add_executable(laige-render_tests
   gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
-  iso_depth_key_tests.cpp iso_depth_table_tests.cpp camera_tests.cpp)
+  iso_depth_key_tests.cpp iso_depth_table_tests.cpp camera_tests.cpp
+  projection_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -122,6 +137,12 @@ set_tests_properties(iso_depth_table PROPERTIES
 add_test(NAME camera
          COMMAND laige-render_tests --gtest_filter=Camera*)
 
+# M2-PROJ-01: the step's Verify command is `ctest -R projection`. Pure
+# value math over the M2-GL-03 / M2-CAM-01 matrices (no GL calls) — runs
+# in every local tree and in CI.
+add_test(NAME projection
+         COMMAND laige-render_tests --gtest_filter=Projection*)
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   if(NOT CMAKE_BUILD_TYPE STREQUAL "")
@@ -134,12 +155,13 @@ if(LAIGE_TSAN)
   # Make the first data race report fatal to the test process (NFR-8.2).
   # The M2-GL-02 `render_thread` entry is the step's TSan gate (the
   # lock-free handoff's race-freedom, the 3000-frame no-deadlock run);
-  # the pure-math `matrices`, `iso_depth_key`, and `iso_depth_table`
-  # entries carry the option for uniformity (they have no shared state,
-  # but the flag is harmless). The test-level ENVIRONMENT replaces the
-  # job-level one, so the budgets path is restated here.
+  # the pure-math `matrices`, `iso_depth_key`, `iso_depth_table`,
+  # `camera`, and `projection` entries carry the option for uniformity
+  # (they have no shared state, but the flag is harmless). The
+  # test-level ENVIRONMENT replaces the job-level one, so the budgets
+  # path is restated here.
   set_tests_properties(laige-render_tests gl_context render_thread matrices
-    iso_depth_key iso_depth_table camera PROPERTIES
+    iso_depth_key iso_depth_table camera projection PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 endif()
@@ -170,14 +192,16 @@ endif()
 
 # The offscreen smoke creates a real (software) context + FBO; give a
 # slow headless runner generous headroom. The pure-math `matrices`,
-# `iso_depth_key`, and `camera` entries are small (thousands of O(1)
-# computations, comparisons, and O(1) camera updates at most) — 60s is
+# `iso_depth_key`, `camera`, and `projection` entries are small
+# (thousands of O(1) computations, comparisons, and O(1) camera /
+# projection updates at most, plus 10k-point round trips) — 60s is
 # generous headroom.
 set_tests_properties(laige-render_tests gl_context PROPERTIES TIMEOUT 180)
 set_tests_properties(render_thread PROPERTIES TIMEOUT 300)
 set_tests_properties(matrices PROPERTIES TIMEOUT 60)
 set_tests_properties(iso_depth_key PROPERTIES TIMEOUT 60)
 set_tests_properties(camera PROPERTIES TIMEOUT 60)
+set_tests_properties(projection PROPERTIES TIMEOUT 60)
 # The `iso_depth_table` entry includes the budget gate: 2 backends x
 # (100 warm-up + 3000 measured) iterations of 10 000 setTile calls —
 # a few seconds on the canonical Debug tree; 120s is generous headroom
