@@ -45,6 +45,16 @@ Recorded so far:
   Debug tree, both backends PASS (2.3× inside the 0.2 ms gate); the
   gate also passes on the reference-class clang -O0 tree (0.149 ms).
   **The first M2 baseline** — updates `budgets.json` `measured` for
-  `iso_depthkey_rebuild` (the worse of the two backends). Every
-  other `budgets.json` entry still has `measured: 0` (its subsystem
-  lands in a later milestone).
+  `iso_depthkey_rebuild` (the worse of the two backends).
+- [m2-iso-depth-table-workload-fix.md](m2-iso-depth-table-workload-fix.md)
+  (M2-ISO-02 workload fix, 2026-10-01) — the same workload with the
+  measured window's `applyEdit` loop made division-free (the original
+  loop's three per-iteration `div`/`idiv` instructions at `-O0` — a
+  harness artifact — pushed the CI clang-18 reference lane to
+  0.209 ms, over the 0.2 ms bar): 0.0814 ms mean on the canonical
+  Debug tree, both backends PASS (2.5× inside the gate); 0.139 ms on
+  the local clang -O0 tree. Supersedes `m2-iso-depth-table.md` as
+  the latest recorded value — updates `budgets.json` `measured` for
+  `iso_depthkey_rebuild` to 0.0814067. Every other `budgets.json`
+  entry still has `measured: 0` (its subsystem lands in a later
+  milestone).
