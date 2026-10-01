@@ -24,7 +24,14 @@
 # golden scene, the single-tile-edit / rejected-edit / zero-allocation
 # update contract, the bounded + logged chunk growth, the rebuild ==
 # incremental property, and the PRD §8.1 10k-dirty-cell budget gate)
-# — pure data: no GL environment needed.
+# — pure data: no GL environment needed; and the 3D camera core
+# (M2-CAM-01) — the presentation-side Camera (camera_tests.cpp's
+# Camera* suites: the create validation and initial clamp, the zoom
+# clamp exact at the bounds, the rectangular bounds under adversarial
+# follow/shake input, the smooth follow's deterministic exact sequence,
+# the shake's bounded decay to exactly zero within the documented
+# tick count, and the matrix builds against the M2-GL-03 builders) —
+# pure value math: no GL environment needed.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -33,9 +40,10 @@
 # Verify command (`ctest -R render_thread`), the `matrices` entry is
 # the M2-GL-03 Verify command (`ctest -R matrices`), the
 # `iso_depth_key` entry is the M2-ISO-01 Verify command
-# (`ctest -R iso_depth_key`), and the `iso_depth_table` entry is the
-# M2-ISO-02 Verify command (`ctest -R iso_depth_table`), each
-# selecting exactly its suites from the shared executable.
+# (`ctest -R iso_depth_key`), the `iso_depth_table` entry is the
+# M2-ISO-02 Verify command (`ctest -R iso_depth_table`), and the
+# `camera` entry is the M2-CAM-01 Verify command (`ctest -R camera`),
+# each selecting exactly its suites from the shared executable.
 #
 # Environment note: the GlContextSmoke and RenderThreadOffscreen suites
 # require a usable OpenGL 3.3 environment — always present on the P0 CI
@@ -48,7 +56,7 @@
 
 add_executable(laige-render_tests
   gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
-  iso_depth_key_tests.cpp iso_depth_table_tests.cpp)
+  iso_depth_key_tests.cpp iso_depth_table_tests.cpp camera_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -108,6 +116,12 @@ add_test(NAME iso_depth_table
          COMMAND laige-render_tests --gtest_filter=IsoDepthTable*)
 set_tests_properties(iso_depth_table PROPERTIES
   ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
+
+# M2-CAM-01: the step's Verify command is `ctest -R camera`. Pure value
+# math (no GL calls) — runs in every local tree and in CI.
+add_test(NAME camera
+         COMMAND laige-render_tests --gtest_filter=Camera*)
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   if(NOT CMAKE_BUILD_TYPE STREQUAL "")
@@ -125,7 +139,7 @@ if(LAIGE_TSAN)
   # but the flag is harmless). The test-level ENVIRONMENT replaces the
   # job-level one, so the budgets path is restated here.
   set_tests_properties(laige-render_tests gl_context render_thread matrices
-    iso_depth_key iso_depth_table PROPERTIES
+    iso_depth_key iso_depth_table camera PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 endif()
@@ -155,14 +169,15 @@ if(LAIGE_ASAN)
 endif()
 
 # The offscreen smoke creates a real (software) context + FBO; give a
-# slow headless runner generous headroom. The pure-math `matrices` and
-# `iso_depth_key` entries are small (the 10k-scene property test is a
-# few thousand O(1) key computations and comparisons) — 60s is
+# slow headless runner generous headroom. The pure-math `matrices`,
+# `iso_depth_key`, and `camera` entries are small (thousands of O(1)
+# computations, comparisons, and O(1) camera updates at most) — 60s is
 # generous headroom.
 set_tests_properties(laige-render_tests gl_context PROPERTIES TIMEOUT 180)
 set_tests_properties(render_thread PROPERTIES TIMEOUT 300)
 set_tests_properties(matrices PROPERTIES TIMEOUT 60)
 set_tests_properties(iso_depth_key PROPERTIES TIMEOUT 60)
+set_tests_properties(camera PROPERTIES TIMEOUT 60)
 # The `iso_depth_table` entry includes the budget gate: 2 backends x
 # (100 warm-up + 3000 measured) iterations of 10 000 setTile calls —
 # a few seconds on the canonical Debug tree; 120s is generous headroom

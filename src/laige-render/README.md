@@ -133,5 +133,31 @@ unchanged, zero-allocation window), the bounded + logged growth, the
 rebuild-from-scratch == incremental property (64×64, 2k seeded edits),
 and the 10k-dirty-cell budget workload).
 
+M2-CAM-01 landed the 3D camera core — `laige::render::Camera`
+(public header `include/laige/render/camera.h`, implementation
+`camera.cpp`): the presentation-side camera of FR-2.4 — position,
+look-at, ortho or perspective (FOV), zoom with clamping exact at the
+bounds (min/max per scene config), the rectangular bounds constraint
+(the camera position is clamped into the rectangle at creation, on
+every `setPosition`, and after every follow step), smooth follow (the
+per-update lerp factor — a rigid translation that converges the
+look-at point to the follow target), and the bounded decaying shake
+(offset clamped to `maxShakeOffset`, decaying to exactly `0.0` within
+the documented 150-update bound at the default decay of 0.5). The
+matrices delegate to the M2-GL-03 builders (`lookAt`/`ortho`/
+`perspective`); the isometric presets and the grid-snap mode land on
+top of the camera in M2-CAM-02. ARCH-009: the camera never touches
+sim state (the follow target comes from the presentation state) and
+its state is never part of replay state. A pure value object — no
+heap storage, zero allocation on every operation, single owner (the
+render set-up phase), no internal synchronization. API contract in
+[docs/api/camera.md](../docs/api/camera.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `camera` —
+pure value math, no GL environment required: the create validation
+and initial clamp, the zoom clamp exact at the bounds, the bounds
+under adversarial follow/shake input, the follow's deterministic exact
+sequence, the shake's decay to exact zero at the documented tick
+count, and the matrix builds against the M2-GL-03 builders).
+
 The sprite batcher, draw submits, and sim→render wiring land in the
 remaining M2 steps (M2-SPRITE-01/02 on).

@@ -73,7 +73,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
 
 ## Camera & projection
 
-- [ ] **M2-CAM-01 · 3D camera core**
+- [x] **M2-CAM-01 · 3D camera core**
   - **Refs:** FR-2.4 (position, look-at, FOV/ortho, follow, shake, zoom, constraints)
   - **Depends:** M2-GL-03
   - **Scope:**

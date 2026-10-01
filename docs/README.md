@@ -202,6 +202,13 @@ still to land.
   presets): the pinned conventions (right-handed world, +z up, OpenGL
   NDC), the element formulas, and the Performance contract (M2-GL-03;
   ADR 0008; `laige-render`).
+- [Camera](api/camera.md) — `laige::render::Camera`: the
+  presentation-side 3D camera core (FR-2.4): position/look-at, ortho
+  or perspective (FOV), zoom with clamping exact at the bounds, the
+  rectangular bounds constraint, the smooth follow (per-update lerp),
+  the bounded decaying shake (exact-zero decay bound), the option
+  validation and stopped state, and the Performance contract
+  (M2-CAM-01; `laige-render`).
 - [Isometric depth keys](api/iso_depth_key.md) — the engine-owned
   32-bit sortable depth key for isometric render ordering:
   `isoDepthKey<Backend>(pos, stepHeight, layer)` (world-space by
