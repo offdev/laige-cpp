@@ -216,15 +216,17 @@ per-frame `isoDepthKey` (§4.1); the table serves the static tile grid
 | World → depth key | sim state → `uint32` key | `laige-render` (`isoDepthKey`, M2-ISO-01) | **This document / shipped** |
 | Tile grid → depth key table | tile heights → precomputed per-tile keys | `laige-render` (`IsoDepthKeyTable`, M2-ISO-02) | **This document / shipped** |
 | Depth key → render order | key (+ entity id) → sorted batches | M2-SORT-01 (stable radix sort), M2-SPRITE-01 (batcher) | planned |
-| Screen → world (per mode) | picking, screen↔world transforms | M2-PROJ-01 (`world_to_screen`, `screen_to_world_ray`), M2-ISO-03 (iso grid picking) | planned |
-| World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), sprite draw (M2-SPRITE-02) | partially shipped (matrices, camera core M2-CAM-01) |
+| Screen → world (per mode) | picking, screen↔world transforms | `laige-render` (`ProjectionView`: `worldToScreen`, `screenToWorldRay`, `screenToWorld`, M2-PROJ-01), M2-ISO-03 (iso grid picking) | **Shipped (M2-PROJ-01)** / M2-ISO-03 planned |
+| World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | partially shipped (matrices, camera core M2-CAM-01, world→screen transform M2-PROJ-01) |
 
 Rules:
 
 - **Sim never sees projection.** No projection mode, camera, or screen
   quantity appears in `laige-sim`/`laige-net` public surface
-  (AC-4.2; the include-graph lint + surface check land with
-  M2-PROJ-01/M2-AC-01).
+  (AC-4.2; the include-graph lint landed with M2-PROJ-01 — rule R2
+  blocks every `laige-sim` → `laige-render` include, fixture-tested by
+  the `include-lint-sim-to-render` CTest entry; the companion surface
+  check lands with M2-AC-01).
 - **Render reads sim state, never writes it** (ARCH-009): the depth
   key is computed from the presentation snapshot's interpolated
   position (M1-LOOP-02) — a read-only boundary.
@@ -246,6 +248,8 @@ state → same keys → same order, every frame (RENDER-003).
 
 - [`api/iso_depth_key.md`](../api/iso_depth_key.md) — the depth-key API
   contract (M2-ISO-01).
+- [`api/projection.md`](../api/projection.md) — the projection modes and
+  screen↔world transforms contract (M2-PROJ-01).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —

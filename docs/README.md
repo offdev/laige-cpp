@@ -230,6 +230,15 @@ still to land.
   ≤ 0.2 ms — the `iso_depthkey_rebuild` entry), and the
   sim-writes/render-reads threading contract (M2-ISO-02;
   `laige-render`).
+- [Projection modes + screen↔world
+  transforms](api/projection.md) — `laige::render::ProjectionView`:
+  the per-scene/view projection modes (`iso` default, `side_view`,
+  `top_down`, `free_cinematic` — FR-2.5) wrapping the M2-GL-03 /
+  M2-CAM-01 matrices, and the FR-2.11 picking base:
+  `worldToScreen` / `screenToWorldRay` / `screenToWorld` (pure, O(1),
+  allocation-free; the documented round-trip precision and the
+  per-mode preimage geometry; the NDC↔pixel boundary) (M2-PROJ-01;
+  `laige-render`).
 
 ## Guides
 
