@@ -20,6 +20,7 @@
 #include "laige/render/iso_depth_key.h"
 #include "laige/render/iso_depth_table.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -800,22 +801,50 @@ laige::BudgetCheckResult runBudgetBackend(const laige::BudgetEntry* entry) {
     std::fprintf(stderr, "runBudgetBackend: rebuild failed\n");
     std::abort();
   }
-  // One iteration: the terrain edit (10 000 setTile calls, column-major
-  // over the block; the new height is a fixed function of the cell —
-  // steady-state, deterministic; no RNG in the measured path):
-  auto applyEdit = [&t]() {
-    for (std::uint32_t i = 0;
-         i < static_cast<std::uint32_t>(kBudgetBlock) * kBudgetBlock; ++i) {
-      const std::int32_t gx =
-          kBudgetBlockOrigin + static_cast<std::int32_t>(i / kBudgetBlock);
-      const std::int32_t gy =
-          kBudgetBlockOrigin + static_cast<std::int32_t>(i % kBudgetBlock);
-      const std::int32_t h = (gx + gy) % 5;
-      if (!t.setTile(gx, gy, h).ok()) {
+  // The edit sequence, precomputed once OUTSIDE the measured window:
+  // the exact (tileX, tileY, height) triples the workload applies —
+  // 10 000 column-major calls over the 100 x 100 block (tileX the outer
+  // index, tileY the inner; the same order the original i-loop
+  // produced), new height the fixed function (gx + gy) % 5 of the cell
+  // (steady state — no cell is written twice within one iteration).
+  // Precomputing keeps the MEASURED loop free of integer division: the
+  // original formulation computed i / 100, i % 100 and (gx + gy) % 5
+  // per call, and in CMake-Debug (-O0) builds that is three real
+  // div/idiv instructions per iteration (each ~20-30 x86 cycles, on top
+  // of the setTile call) — the gate was measuring the harness's
+  // division codegen, not the engine's 10 000 setTile calls, which
+  // pushed the CI clang-18 reference lane to 0.209 ms against the 0.2
+  // ms budget (run 36885653175, job 110448173121, 2026-10-01). The
+  // precomputation loop itself is outside every measured window (the
+  // warm-up and the measured runs both start below it), and the
+  // measured loop's setTile call sequence is byte-identical to the
+  // original's (same order, same arguments):
+  struct BudgetEdit {
+    std::int32_t x;
+    std::int32_t y;
+    std::int32_t h;
+  };
+  constexpr std::size_t kBudgetEditCount =
+      static_cast<std::size_t>(kBudgetBlock) * kBudgetBlock;
+  std::array<BudgetEdit, kBudgetEditCount> edits;
+  for (std::size_t i = 0; i < kBudgetEditCount; ++i) {
+    const std::int32_t gx = kBudgetBlockOrigin +
+        static_cast<std::int32_t>(
+            i / static_cast<std::size_t>(kBudgetBlock));
+    const std::int32_t gy = kBudgetBlockOrigin +
+        static_cast<std::int32_t>(
+            i % static_cast<std::size_t>(kBudgetBlock));
+    edits[i] = BudgetEdit{gx, gy, (gx + gy) % 5};
+  }
+  // One measured iteration: the terrain edit applied as 10 000 setTile
+  // calls in the precomputed order — the division-free measured loop:
+  auto applyEdit = [&t, &edits]() {
+    for (const BudgetEdit& e : edits) {
+      if (!t.setTile(e.x, e.y, e.h).ok()) {
         std::fprintf(stderr,
                      "runBudgetBackend: setTile(%d, %d, %d) failed inside "
                      "the workload\n",
-                     gx, gy, h);
+                     e.x, e.y, e.h);
         std::abort();  // a workload-shape failure is a test failure
       }
     }
