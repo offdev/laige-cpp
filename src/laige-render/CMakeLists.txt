@@ -56,7 +56,12 @@ add_library(laige-glad STATIC ${CMAKE_SOURCE_DIR}/deps/glad/src/gl.c)
 target_include_directories(laige-glad PRIVATE
   ${CMAKE_SOURCE_DIR}/deps/glad/include)
 
-set(LAIGE_RENDER_SOURCES gl_context.cpp frame_pipeline.cpp matrices.cpp)
+# M2-CAM-01 adds camera.cpp (the 3D camera core: position/look-at,
+# ortho/perspective with clamped zoom, the rectangular bounds
+# constraint, the smooth follow, the bounded decaying shake — the
+# presentation-only camera of FR-2.4).
+set(LAIGE_RENDER_SOURCES gl_context.cpp frame_pipeline.cpp matrices.cpp
+  camera.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-render SHARED ${LAIGE_RENDER_SOURCES})

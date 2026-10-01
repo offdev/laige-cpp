@@ -217,7 +217,7 @@ per-frame `isoDepthKey` (§4.1); the table serves the static tile grid
 | Tile grid → depth key table | tile heights → precomputed per-tile keys | `laige-render` (`IsoDepthKeyTable`, M2-ISO-02) | **This document / shipped** |
 | Depth key → render order | key (+ entity id) → sorted batches | M2-SORT-01 (stable radix sort), M2-SPRITE-01 (batcher) | planned |
 | Screen → world (per mode) | picking, screen↔world transforms | M2-PROJ-01 (`world_to_screen`, `screen_to_world_ray`), M2-ISO-03 (iso grid picking) | planned |
-| World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), sprite draw (M2-SPRITE-02) | partially shipped (matrices) |
+| World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), sprite draw (M2-SPRITE-02) | partially shipped (matrices, camera core M2-CAM-01) |
 
 Rules:
 
