@@ -49,9 +49,14 @@ bool finite3(Vec3 v) noexcept {
 // v, g > 0 — a NaN v is rejected upstream), and floor/ceil of inf are
 // defined. The snapped value is non-finite ONLY when |v|/g exceeds the
 // float range — the callers reject that (snap_not_representable).
+// The C global-namespace floorf/ceilf are used (not std::floorf):
+// some CI g++ toolchains expose the float versions only in the global
+// namespace (PR #67 CI run 37006646480, linux-gcc lane) — the global
+// forms are guaranteed by <math.h>/<cmath> on every conforming
+// platform and are the exact float functions (no double promotion).
 float snapCoordLocal(float v, float g) noexcept {
   const float q = v / g;
-  const float n = (q > 0.0f) ? std::floorf(q + 0.5f) : std::ceilf(q - 0.5f);
+  const float n = (q > 0.0f) ? ::floorf(q + 0.5f) : ::ceilf(q - 0.5f);
   return g * n;
 }
 
