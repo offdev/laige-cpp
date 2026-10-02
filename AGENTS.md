@@ -555,21 +555,3 @@ A change is complete only when all applicable statements are true:
 
 When in doubt, preserve correctness, collect evidence, choose the simplest bounded
 design, and leave the code easier to measure than you found it.
-
-## 18. Working memory and context management
-
-- Maintain `.agent/state.md` during long tasks.
-- Record the current goal, user constraints, decisions and their reasons,
-  changed files, verification results, unresolved issues, and next actions.
-- Update it at meaningful milestones and before context compaction.
-- Preserve exact identifiers, paths, commands, and error messages when
-  their precise contents matter.
-- Distinguish verified facts from hypotheses. Record failed approaches
-  and why they failed.
-- Keep large logs and source material in separate files; record their
-  paths and relevant locations instead of copying them into the state.
-- After compaction or session recovery, read the state and verify
-  relevant files before continuing.
-- Only edit the active conversation through an explicitly supported
-  context-management mechanism. Writing notes does not clear context.
-  
