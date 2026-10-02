@@ -218,8 +218,59 @@ per-frame `isoDepthKey` (§4.1); the table serves the static tile grid
 | World → depth key | sim state → `uint32` key | `laige-render` (`isoDepthKey`, M2-ISO-01) | **This document / shipped** |
 | Tile grid → depth key table | tile heights → precomputed per-tile keys | `laige-render` (`IsoDepthKeyTable`, M2-ISO-02) | **This document / shipped** |
 | Depth key → render order | key (+ entity id) → sorted batches | M2-SORT-01 (stable radix sort), M2-SPRITE-01 (batcher) | planned |
-| Screen → world (per mode) | picking, screen↔world transforms | `laige-render` (`ProjectionView`: `worldToScreen`, `screenToWorldRay`, `screenToWorld`, M2-PROJ-01), M2-ISO-03 (iso grid picking) | **Shipped (M2-PROJ-01)** / M2-ISO-03 planned |
+| Screen → world (per mode) | picking, screen↔world transforms | `laige-render` (`ProjectionView`: `worldToScreen`, `screenToWorldRay`, `screenToWorld`, M2-PROJ-01; `screenToGrid` iso grid picking, M2-ISO-03) | **Shipped (M2-PROJ-01 + M2-ISO-03)** |
 | World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | shipped to NDC (matrices, camera core M2-CAM-01, iso presets + grid-snap M2-CAM-02, world→screen transform M2-PROJ-01); pixels: M2-SPRITE-02 planned |
+
+### 5.1 The isometric grid picking (M2-ISO-03)
+
+The safe screen → grid-cell transform (FR-2.11; PRD §4's
+click-to-select / click-to-move): `screenToGrid(screen, camera, grid)`
+in [`laige/render/iso_picking.h`](../../src/laige-render/include/laige/render/iso_picking.h)
+— engine-owned (S-5, G-R11: game code never inverts the iso matrix
+itself). The screen point is **NDC** (the projection.h convention —
+the documented pixel ↔ NDC conversion is the input boundary,
+RENDER-006); the grid plane is the ground plane (z = 0). The inverse
+is the O(1) 2×2 solve on the frame matrix's ground rows (no per-pick
+4×4 inverse):
+
+```
+det = a·d − b·c
+w.x = (d·(ndc.x − tx) − b·(ndc.y − ty)) / det
+w.y = (a·(ndc.y − ty) − c·(ndc.x − tx)) / det
+```
+
+- **The grid cells are half-open** (the documented boundary rule):
+  cell `(gx, gy)` is `[gx·g, (gx+1)·g) × [gy·g, (gy+1)·g)` — i.e.
+  `gx = floor(w.x / g)`. A point exactly on a cell's lower or left
+  boundary belongs to THAT cell; exactly on its upper or right
+  boundary to the cell beyond it; a corner to the cell to its upper
+  right. The grid is anchored at the world origin: the tile map's
+  tile `(gx, gy)` (M2-TILE-01) is exactly this cell at `g = 1`, with
+  center `(gx + 0.5, gy + 0.5)` — the grid the M2-CAM-02 grid-snap
+  camera locks to.
+- **Exact at all supported zoom levels:** the inverse is a fixed
+  sequence of float ops — zoom enters only through the matrix's
+  entries — so the same stored screen point resolves to the same
+  cell at every zoom the camera supports (the continuous
+  `[zoomMin, zoomMax]` range without snap, the dyadic ladder with
+  snap).
+- **Precision (the boundary zone):** the computed ground point
+  `ŵ` is within `16·2⁻²⁴·κ·(|e| + |w|)` world units of the exact
+  ground point (`κ` = the ∞-norm condition number of the ground 2×2:
+  4.5 for 2:1 dimetric, ~2.73 for 30/60 — constants in
+  `iso_picking.h`). A point is guaranteed to resolve to its exact
+  cell unless its exact ground coordinate lies within that bound of a
+  cell boundary; inside the zone either of the two adjacent cells may
+  be returned (the float rounding decides — deterministic per build).
+  Domain-worst zone: `kIsoPickDomainBoundaryEps` (~4 world units at
+  `|e| = |w| = 32767`, `κ` ≤ 64).
+- **Total function:** non-finite screen input saturates at the
+  documented world domain (±32767; NaN → lower bound — the
+  isoDepthKey convention) and the result cell fits int32 for every
+  valid cell size (`g >= kIsoPickMinCellSize = 1e-4`). A stopped
+  camera picks with the identity matrix (degenerate but total).
+- **Budget:** one pick mean ≤ 0.01 ms (PRD §8.1, `iso_picking`) —
+  [baselines/m2-iso-picking.md](../benchmarks/baselines/m2-iso-picking.md).
 
 Rules:
 
@@ -252,6 +303,9 @@ state → same keys → same order, every frame (RENDER-003).
   contract (M2-ISO-01).
 - [`api/projection.md`](../api/projection.md) — the projection modes and
   screen↔world transforms contract (M2-PROJ-01).
+- [`api/iso_picking.md`](../api/iso_picking.md) — the isometric grid
+  picking contract: `screenToGrid` (screen → ground → grid cell)
+  (M2-ISO-03).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —

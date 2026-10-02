@@ -43,7 +43,16 @@
 # round trips against the documented precision per mode, and the
 # documented Result failure paths (parallel plane, zero normal,
 # intersection behind the camera)) — pure value math: no GL
-# environment needed.
+# environment needed; and the isometric grid picking (M2-ISO-03) —
+# the engine-owned safe screen -> ground -> grid-cell transform
+# (iso_picking_tests.cpp's IsoPick* suites: the hand-computed golden
+# cells at 4 zoom levels for the 2:1 dimetric and true 30/60 presets,
+# the 10k-cell x 4-zoom center round-trip property (plus the
+# zero-allocation proof), the documented half-open boundary rule and
+# boundary zone, the supported-shear round trip, the total-function
+# saturation contract, the stopped-camera degenerate pick, the
+# ProjectionView overload parity, and the PRD §8.1 one-pick budget
+# gate) — pure float math: no GL environment needed.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -56,9 +65,10 @@
 # M2-ISO-02 Verify command (`ctest -R iso_depth_table`), the `camera`
 # entry is the M2-CAM-01 Verify command (`ctest -R camera`), the
 # `iso_camera` entry is the M2-CAM-02 Verify command
-# (`ctest -R iso_camera`), and the `projection` entry is the
-# M2-PROJ-01 Verify command (`ctest -R projection`), each selecting
-# exactly its suites from the shared executable.
+# (`ctest -R iso_camera`), the `projection` entry is the M2-PROJ-01
+# Verify command (`ctest -R projection`), and the `iso_picking` entry
+# is the M2-ISO-03 Verify command (`ctest -R iso_picking`), each
+# selecting exactly its suites from the shared executable.
 #
 # Environment note: the GlContextSmoke and RenderThreadOffscreen suites
 # require a usable OpenGL 3.3 environment — always present on the P0 CI
@@ -72,7 +82,7 @@
 add_executable(laige-render_tests
   gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
   iso_depth_key_tests.cpp iso_depth_table_tests.cpp camera_tests.cpp
-  iso_camera_tests.cpp projection_tests.cpp)
+  iso_camera_tests.cpp projection_tests.cpp iso_picking_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -150,11 +160,26 @@ add_test(NAME iso_camera
 add_test(NAME projection
          COMMAND laige-render_tests --gtest_filter=Projection*)
 
+# M2-ISO-03: the step's Verify command is `ctest -R iso_picking`. Pure
+# float math (no GL calls) — runs in every local tree and in CI. The
+# LAIGE_BUDGETS_PATH env var points the budget suite at the repo
+# budgets.json. The budget gate compiles only on Linux in the
+# non-instrumented trees (LAIGE_ISO_PICK_BUDGET — the
+# iso_depth_table_tests.cpp precedent); other platforms run the budget
+# WORKLOAD ungated.
+add_test(NAME iso_picking
+         COMMAND laige-render_tests --gtest_filter=IsoPick*)
+set_tests_properties(iso_picking PROPERTIES
+   ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
+  target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
   if(NOT CMAKE_BUILD_TYPE STREQUAL "")
     target_compile_definitions(laige-render_tests PRIVATE
       LAIGE_ISO_DEPTH_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+    target_compile_definitions(laige-render_tests PRIVATE
+      LAIGE_ISO_PICK_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
   endif()
 endif()
 
@@ -163,12 +188,13 @@ if(LAIGE_TSAN)
   # The M2-GL-02 `render_thread` entry is the step's TSan gate (the
   # lock-free handoff's race-freedom, the 3000-frame no-deadlock run);
   # the pure-math `matrices`, `iso_depth_key`, `iso_depth_table`,
-  # `camera`, `iso_camera`, and `projection` entries carry the option
-  # for uniformity (they have no shared state, but the flag is
-  # harmless). The test-level ENVIRONMENT replaces the job-level one,
-  # so the budgets path is restated here.
+  # `camera`, `iso_camera`, `projection`, and `iso_picking` entries
+  # carry the option for uniformity (they have no shared state, but
+  # the flag is harmless). The test-level ENVIRONMENT replaces the
+  # job-level one, so the budgets path is restated here.
   set_tests_properties(laige-render_tests gl_context render_thread matrices
-    iso_depth_key iso_depth_table camera iso_camera projection PROPERTIES
+    iso_depth_key iso_depth_table camera iso_camera projection
+    iso_picking PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 endif()
@@ -199,10 +225,10 @@ endif()
 
 # The offscreen smoke creates a real (software) context + FBO; give a
 # slow headless runner generous headroom. The pure-math `matrices`,
-# `iso_depth_key`, `camera`, `iso_camera`, and `projection` entries are
-# small (thousands of O(1) computations, comparisons, and O(1) camera /
-# projection updates at most, plus 10k-point round trips) — 60s is
-# generous headroom.
+# `iso_depth_key`, `camera`, `iso_camera`, `projection`, and
+# `iso_picking` entries are small (thousands of O(1) computations,
+# comparisons, and O(1) camera / projection updates and picks at most,
+# plus 10k-cell round trips) — 60s is generous headroom.
 set_tests_properties(laige-render_tests gl_context PROPERTIES TIMEOUT 180)
 set_tests_properties(render_thread PROPERTIES TIMEOUT 300)
 set_tests_properties(matrices PROPERTIES TIMEOUT 60)
@@ -210,6 +236,7 @@ set_tests_properties(iso_depth_key PROPERTIES TIMEOUT 60)
 set_tests_properties(camera PROPERTIES TIMEOUT 60)
 set_tests_properties(iso_camera PROPERTIES TIMEOUT 60)
 set_tests_properties(projection PROPERTIES TIMEOUT 60)
+set_tests_properties(iso_picking PROPERTIES TIMEOUT 60)
 # The `iso_depth_table` entry includes the budget gate: 2 backends x
 # (100 warm-up + 3000 measured) iterations of 10 000 setTile calls —
 # a few seconds on the canonical Debug tree; 120s is generous headroom

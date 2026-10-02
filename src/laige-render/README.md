@@ -192,5 +192,30 @@ against the M2-GL-03 builders, the create validation, the on-the-grid
 invariant under 2k adversarial mutation/follow inputs, the zoom-level
 set exactly, and the bit-identical determinism replay).
 
+M2-ISO-03 landed the isometric grid picking — the engine-owned, safe
+screen → ground-plane → grid-cell transform (FR-2.11, PRD §4
+click-to-select/move; S-5/G-R11: game code never inverts the iso
+matrix itself). Header-only public header `include/laige/render/
+iso_picking.h`: `IsoGridConfig` (the pick grid: `cellSize` world units
+per cell), `IsoGridPick` (the cell indices + the computed ground
+point), and `screenToGrid(screen, camera, grid)` — the O(1) inverse of
+the M2-CAM-02 camera matrix (a 2×2 solve on the ground rows; no
+per-pick 4×4 inverse, no allocation) with a `ProjectionView` overload
+for hand-stored iso matrices (the M2-PROJ-01 base). The grid cells are
+half-open (`[gx·g, (gx+1)·g)²`, the documented boundary rule); the
+pick is exact at all supported zoom levels (a fixed float sequence —
+zoom enters only through the matrix) with a documented precision zone
+(`16·2⁻²⁴·κ·(|e| + |w|)` — ~6e-4 world units at scene scale); a
+total function (non-finite screen saturates at ±32767; a stopped
+camera picks with the identity matrix). Presentation-only,
+deterministic per build, zero allocation. The PRD §8.1 `iso_picking`
+budget (one pick mean ≤ 0.01 ms) is gated by the `iso_picking` ctest
+entry (measured 0.000136262 ms — the sixth baseline,
+[docs/benchmarks/baselines/m2-iso-picking.md](../docs/benchmarks/baselines/m2-iso-picking.md)).
+API contract in
+[docs/api/iso_picking.md](../docs/api/iso_picking.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `iso_picking`
+— pure float math, no GL environment required).
+
 The sprite batcher, draw submits, and sim→render wiring land in the
 remaining M2 steps (M2-SPRITE-01/02 on).

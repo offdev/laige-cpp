@@ -55,7 +55,7 @@
       "metric": "mean",
       "unit": "ms",
       "target": 0.01,
-      "measured": 0,
+      "measured": 0.000136262,
       "workload": "one isometric screen-to-grid pick, O(1) (PRD 8.1)"
     },
     {
