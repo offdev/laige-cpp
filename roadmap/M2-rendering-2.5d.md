@@ -128,7 +128,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R iso_depth_table` green; baseline recorded in `docs/benchmarks/baselines/`.
   - **Size:** ~250 lines + tests
 
-- [ ] **M2-ISO-03 · Isometric picking (screen → grid cell)**
+- [x] **M2-ISO-03 · Isometric picking (screen → grid cell)**
   - **Refs:** FR-2.11 (O(1), exact at all zoom), AC-4.4; PRD §4 (click-to-select/move)
   - **Depends:** M2-ISO-01, M2-CAM-02
   - **Scope:**

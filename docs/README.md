@@ -247,6 +247,15 @@ still to land.
   allocation-free; the documented round-trip precision and the
   per-mode preimage geometry; the NDC↔pixel boundary) (M2-PROJ-01;
   `laige-render`).
+- [Isometric grid picking](api/iso_picking.md) —
+  `laige::render::screenToGrid`: the engine-owned safe screen →
+  ground-plane → grid-cell inverse of the isometric projection
+  (FR-2.11, on top of the M2-PROJ-01 transforms): the O(1) 2×2 inverse
+  of the M2-CAM-02 camera matrix, the documented half-open cell
+  boundary rule and precision zone (exact at all supported zoom
+  levels), the total-function saturation contract, and the PRD §8.1
+  budget (one pick mean ≤ 0.01 ms — the `iso_picking` entry)
+  (M2-ISO-03; `laige-render`).
 
 ## Guides
 
