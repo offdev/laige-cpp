@@ -5,9 +5,11 @@
 // clamping (min/max per scene config), rectangular bounds constraint,
 // smooth follow (target + lerp factor), shake (bounded, decaying,
 // deterministic given input). The matrices come from the M2-GL-03
-// builders (lookAt / ortho / perspective); the isometric camera
-// presets and the grid-snap mode land on top of this camera in
-// M2-CAM-02 (not here — CORE-004: no later-step features).
+// builders (lookAt / ortho / perspective). The isometric camera
+// presets and the grid-snap mode (M2-CAM-02) live in
+// laige/render/iso_camera.h, on top of this camera: the IsoCamera
+// owns a Camera by value and adds the preset matrix build, the grid
+// position snap, and the zoom-level snapping.
 //
 //   CameraProjection  Ortho | Perspective (vertical FOV)
 //   CameraBounds      The rectangular position constraint (ground plane)
@@ -288,6 +290,19 @@ class Camera {
   [[nodiscard]] CameraProjection projectionKind() const noexcept {
     return projection_;
   }
+  // The zoom clamp bounds (the preamble's zoom contract: zoom() is
+  // always in [zoomMin, zoomMax]). M2-CAM-02's grid-snap zoom levels
+  // are anchored at zoomMin.
+  [[nodiscard]] float zoomMin() const noexcept { return zoomMin_; }
+  [[nodiscard]] float zoomMax() const noexcept { return zoomMax_; }
+  // The rectangular-bounds state (the preamble's bounds contract):
+  // whether the rectangle is enabled and the rectangle itself (closed,
+  // min <= max per component). The camera's z is unconstrained.
+  [[nodiscard]] bool boundsEnabled() const noexcept { return boundsEnabled_; }
+  [[nodiscard]] CameraBounds bounds() const noexcept { return bounds_; }
+  // The shake offset bound (world units per component) — the look-at
+  // margin's bound term (the preamble's margin contract).
+  [[nodiscard]] float maxShakeOffset() const noexcept { return maxShakeOffset_; }
 
   // -----------------------------------------------------------------
   // Mutation (owner thread; validation per the header preamble)

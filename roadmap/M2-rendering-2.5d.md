@@ -94,7 +94,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R projection` green; lint rule blocks a sim→render include.
   - **Size:** ~250 lines + tests
 
-- [ ] **M2-CAM-02 · Isometric camera presets + grid-snap mode**
+- [x] **M2-CAM-02 · Isometric camera presets + grid-snap mode**
   - **Refs:** FR-2.4 (iso presets, grid-snap), PRD §4 (isometric first-class)
   - **Depends:** M2-DEC-01, M2-PROJ-01
   - **Scope:**
