@@ -54,10 +54,11 @@
 # `iso_depth_key` entry is the M2-ISO-01 Verify command
 # (`ctest -R iso_depth_key`), the `iso_depth_table` entry is the
 # M2-ISO-02 Verify command (`ctest -R iso_depth_table`), the `camera`
-# entry is the M2-CAM-01 Verify command (`ctest -R camera`), and the
-# `projection` entry is the M2-PROJ-01 Verify command
-# (`ctest -R projection`), each selecting exactly its suites from the
-# shared executable.
+# entry is the M2-CAM-01 Verify command (`ctest -R camera`), the
+# `iso_camera` entry is the M2-CAM-02 Verify command
+# (`ctest -R iso_camera`), and the `projection` entry is the
+# M2-PROJ-01 Verify command (`ctest -R projection`), each selecting
+# exactly its suites from the shared executable.
 #
 # Environment note: the GlContextSmoke and RenderThreadOffscreen suites
 # require a usable OpenGL 3.3 environment — always present on the P0 CI
@@ -71,7 +72,7 @@
 add_executable(laige-render_tests
   gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
   iso_depth_key_tests.cpp iso_depth_table_tests.cpp camera_tests.cpp
-  projection_tests.cpp)
+  iso_camera_tests.cpp projection_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -137,6 +138,12 @@ set_tests_properties(iso_depth_table PROPERTIES
 add_test(NAME camera
          COMMAND laige-render_tests --gtest_filter=Camera*)
 
+# M2-CAM-02: the step's Verify command is `ctest -R iso_camera`. Pure
+# value math over the M2-CAM-01 Camera + the M2-GL-03 preset matrices
+# (no GL calls) — runs in every local tree and in CI.
+add_test(NAME iso_camera
+         COMMAND laige-render_tests --gtest_filter=IsoCamera*)
+
 # M2-PROJ-01: the step's Verify command is `ctest -R projection`. Pure
 # value math over the M2-GL-03 / M2-CAM-01 matrices (no GL calls) — runs
 # in every local tree and in CI.
@@ -156,12 +163,12 @@ if(LAIGE_TSAN)
   # The M2-GL-02 `render_thread` entry is the step's TSan gate (the
   # lock-free handoff's race-freedom, the 3000-frame no-deadlock run);
   # the pure-math `matrices`, `iso_depth_key`, `iso_depth_table`,
-  # `camera`, and `projection` entries carry the option for uniformity
-  # (they have no shared state, but the flag is harmless). The
-  # test-level ENVIRONMENT replaces the job-level one, so the budgets
-  # path is restated here.
+  # `camera`, `iso_camera`, and `projection` entries carry the option
+  # for uniformity (they have no shared state, but the flag is
+  # harmless). The test-level ENVIRONMENT replaces the job-level one,
+  # so the budgets path is restated here.
   set_tests_properties(laige-render_tests gl_context render_thread matrices
-    iso_depth_key iso_depth_table camera projection PROPERTIES
+    iso_depth_key iso_depth_table camera iso_camera projection PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 endif()
@@ -192,8 +199,8 @@ endif()
 
 # The offscreen smoke creates a real (software) context + FBO; give a
 # slow headless runner generous headroom. The pure-math `matrices`,
-# `iso_depth_key`, `camera`, and `projection` entries are small
-# (thousands of O(1) computations, comparisons, and O(1) camera /
+# `iso_depth_key`, `camera`, `iso_camera`, and `projection` entries are
+# small (thousands of O(1) computations, comparisons, and O(1) camera /
 # projection updates at most, plus 10k-point round trips) — 60s is
 # generous headroom.
 set_tests_properties(laige-render_tests gl_context PROPERTIES TIMEOUT 180)
@@ -201,6 +208,7 @@ set_tests_properties(render_thread PROPERTIES TIMEOUT 300)
 set_tests_properties(matrices PROPERTIES TIMEOUT 60)
 set_tests_properties(iso_depth_key PROPERTIES TIMEOUT 60)
 set_tests_properties(camera PROPERTIES TIMEOUT 60)
+set_tests_properties(iso_camera PROPERTIES TIMEOUT 60)
 set_tests_properties(projection PROPERTIES TIMEOUT 60)
 # The `iso_depth_table` entry includes the budget gate: 2 backends x
 # (100 warm-up + 3000 measured) iterations of 10 000 setTile calls —

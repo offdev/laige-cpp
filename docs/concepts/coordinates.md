@@ -63,7 +63,8 @@ contribution) and a positive `(x + y)` screen-y contribution:
 
 `A` is the per-world-unit **downward** screen slope of the ground axes
 (`A = −dx.y = −dy.y = zUnit` for a depth-key-supported shear). The
-scene config selects the preset (M2-CAM-02; the matrix builders are
+scene config selects the preset via the M2-CAM-02 `IsoCamera` preset
+config (shipped — `docs/api/iso_camera.md`; the matrix builders are
 M2-GL-03's `isoDimetric2To1` / `isoTrueIso3060` / `isoMatrix`).
 
 ## 4. The depth convention: the isometric depth key (M2-ISO-01)
@@ -167,9 +168,10 @@ is invertible (`det ≠ 0`), and
 i.e. `A = C` (both ground axes project downward with the same slope and
 the height unit equals that slope). Both built-in presets satisfy it
 exactly; a custom shear must satisfy it to use isometric depth
-sorting (`isoShearSupported()` is the checker; M2-CAM-02 validates
-scene shears). An invertible shear that violates it still renders, but
-its depth-key order is not guaranteed.
+sorting (`isoShearSupported()` is the checker; the M2-CAM-02
+`IsoCamera` preset config validates scene shears —
+`docs/api/iso_camera.md`). An invertible shear that violates it still
+renders, but its depth-key order is not guaranteed.
 
 ### 4.5 The depth key table: precomputation and incremental updates (M2-ISO-02)
 
@@ -217,7 +219,7 @@ per-frame `isoDepthKey` (§4.1); the table serves the static tile grid
 | Tile grid → depth key table | tile heights → precomputed per-tile keys | `laige-render` (`IsoDepthKeyTable`, M2-ISO-02) | **This document / shipped** |
 | Depth key → render order | key (+ entity id) → sorted batches | M2-SORT-01 (stable radix sort), M2-SPRITE-01 (batcher) | planned |
 | Screen → world (per mode) | picking, screen↔world transforms | `laige-render` (`ProjectionView`: `worldToScreen`, `screenToWorldRay`, `screenToWorld`, M2-PROJ-01), M2-ISO-03 (iso grid picking) | **Shipped (M2-PROJ-01)** / M2-ISO-03 planned |
-| World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | partially shipped (matrices, camera core M2-CAM-01, world→screen transform M2-PROJ-01) |
+| World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | shipped to NDC (matrices, camera core M2-CAM-01, iso presets + grid-snap M2-CAM-02, world→screen transform M2-PROJ-01); pixels: M2-SPRITE-02 planned |
 
 Rules:
 

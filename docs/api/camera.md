@@ -13,8 +13,8 @@ The camera is the **presentation-side** view of the world (ARCH-009):
 it reads nothing from and writes nothing to sim state, and its state
 is never part of replay state or the simulation state hash. It builds
 on the M2-GL-03 matrix builders (`lookAt`, `ortho`, `perspective`);
-the isometric camera presets and the grid-snap mode land on top of it
-in M2-CAM-02.
+the isometric camera presets and the grid-snap mode live on top of it
+in the [isometric camera](iso_camera.md) (M2-CAM-02).
 
 ## The conventions (pinned)
 
@@ -61,6 +61,9 @@ conventions:
 | `position()` / `target()` / `up()` | `Vec3` | The camera state (world units). |
 | `shakeOffset()` / `effectivePosition()` | `Vec3` | The bounded shake offset; `position + shakeOffset` (the eye). |
 | `zoom()` | `float` | Always in `[zoomMin, zoomMax]`. |
+| `zoomMin()` / `zoomMax()` | `float` | The validated zoom range (the M2-CAM-02 additive accessors). |
+| `boundsEnabled()` / `bounds()` | `bool` / `CameraBounds` | The validated bounds rectangle (the M2-CAM-02 additive accessors). |
+| `maxShakeOffset()` | `float` | The validated shake bound. |
 | `following()` / `projectionKind()` | `bool` / `CameraProjection` | State accessors. |
 | `setPosition(p)` | `Status` | Clamps `(x, y)` into the rectangle (never an error). `InvalidArgument` + warn on non-finite input or a look-at-margin violation (state unchanged). |
 | `setTarget(t)` | `Status` | The mirror of `setPosition` (no rectangle clamp — the look-at is not constrained). |

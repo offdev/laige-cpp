@@ -209,6 +209,14 @@ still to land.
   the bounded decaying shake (exact-zero decay bound), the option
   validation and stopped state, and the Performance contract
   (M2-CAM-01; `laige-render`).
+- [Isometric camera](api/iso_camera.md) —
+  `laige::render::IsoCamera`: the isometric camera (FR-2.4) on top of
+  the M2-CAM-01 camera: the ADR 0005 preset selector (2:1 dimetric
+  default, true 30°/60°, custom shear validated against
+  `isoShearSupported`), the combined world→NDC matrix build from the
+  M2-GL-03 preset builders, and the grid-snap camera mode (the
+  continuous position snap to grid coordinates + the documented dyadic
+  zoom-level ladder) (M2-CAM-02; `laige-render`).
 - [Isometric depth keys](api/iso_depth_key.md) — the engine-owned
   32-bit sortable depth key for isometric render ordering:
   `isoDepthKey<Backend>(pos, stepHeight, layer)` (world-space by

@@ -59,14 +59,20 @@ target_include_directories(laige-glad PRIVATE
 # M2-CAM-01 adds camera.cpp (the 3D camera core: position/look-at,
 # ortho/perspective with clamped zoom, the rectangular bounds
 # constraint, the smooth follow, the bounded decaying shake — the
-# presentation-only camera of FR-2.4). M2-PROJ-01 adds projection.cpp
-# (the per-scene/view projection modes — iso default, side_view,
-# top_down, free_cinematic — and the screen<->world transforms:
-# worldToScreen / screenToWorldRay / screenToWorld, the FR-2.11
-# picking base; pure value math over the M2-GL-03 / M2-CAM-01
-# matrices, no GL calls).
+# presentation-only camera of FR-2.4). M2-CAM-02 adds iso_camera.cpp
+# (the isometric camera: the ADR 0005 preset selector — 2:1 dimetric
+# default, true 30°/60°, custom shear (validated against the M2-ISO-01
+# isoShearSupported checker) — the combined world->NDC matrix build
+# from the M2-GL-03 preset builders, and the grid-snap camera mode:
+# the continuous grid position snap + the documented dyadic zoom-level
+# ladder; pure value math over the M2-CAM-01 Camera, no GL calls).
+# M2-PROJ-01 adds projection.cpp (the per-scene/view projection modes
+# — iso default, side_view, top_down, free_cinematic — and the
+# screen<->world transforms: worldToScreen / screenToWorldRay /
+# screenToWorld, the FR-2.11 picking base; pure value math over the
+# M2-GL-03 / M2-CAM-01 matrices, no GL calls).
 set(LAIGE_RENDER_SOURCES gl_context.cpp frame_pipeline.cpp matrices.cpp
-  camera.cpp projection.cpp)
+  camera.cpp iso_camera.cpp projection.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-render SHARED ${LAIGE_RENDER_SOURCES})

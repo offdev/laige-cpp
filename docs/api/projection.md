@@ -146,8 +146,8 @@ ndc.y = 1 - py / height * 2
   G-R11): ordering is the M2-ISO-01 depth key, world-space by
   contract. An invertible shear that is not depth-key-supported
   (`isoShearSupported` = false) still transforms correctly — the depth
-  key order is simply not guaranteed for it (M2-CAM-02 validates scene
-  shears).
+  key order is simply not guaranteed for it (the M2-CAM-02 `IsoCamera`
+  preset config validates scene shears — `iso_camera.md`).
 - **`screenToWorld` is a query, not a per-frame call:** one per pick /
   per UI hover, never in a per-entity loop. A failed pick
   (`InvalidArgument`: parallel plane, or a behind-the-near-plane
@@ -182,6 +182,7 @@ if (hit.ok()) { /* *hit.valueIfOk() is the world ground point — grid cell
   mode uses (and whose budget convention the view refresh follows).
 - [`iso_depth_key.md`](iso_depth_key.md) — the render ordering these
   transforms do NOT define (world-space by contract, PRD §4).
-- Roadmap: M2-PROJ-01 (this), M2-CAM-02 (iso presets + grid-snap on the
-  camera), M2-ISO-03 (isometric grid picking on `screenToWorldRay`),
+- [`iso_camera.md`](iso_camera.md) — the M2-CAM-02 iso presets +
+  grid-snap on the camera (the scene-shear validation gate).
+- Roadmap: M2-ISO-03 (isometric grid picking on `screenToWorldRay`),
   M2-SPRITE-02 (the batcher consuming `view.matrix`).

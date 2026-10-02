@@ -145,8 +145,9 @@ look-at point to the follow target), and the bounded decaying shake
 (offset clamped to `maxShakeOffset`, decaying to exactly `0.0` within
 the documented 150-update bound at the default decay of 0.5). The
 matrices delegate to the M2-GL-03 builders (`lookAt`/`ortho`/
-`perspective`); the isometric presets and the grid-snap mode land on
-top of the camera in M2-CAM-02. ARCH-009: the camera never touches
+`perspective`); the isometric presets and the grid-snap mode live on
+top of the camera in the M2-CAM-02 isometric camera (below).
+ARCH-009: the camera never touches
 sim state (the follow target comes from the presentation state) and
 its state is never part of replay state. A pure value object — no
 heap storage, zero allocation on every operation, single owner (the
@@ -158,6 +159,38 @@ and initial clamp, the zoom clamp exact at the bounds, the bounds
 under adversarial follow/shake input, the follow's deterministic exact
 sequence, the shake's decay to exact zero at the documented tick
 count, and the matrix builds against the M2-GL-03 builders).
+
+M2-CAM-02 landed the isometric camera — `laige::render::IsoCamera`
+(public header `include/laige/render/iso_camera.h`, implementation
+`iso_camera.cpp`): the isometric camera of FR-2.4 on top of the
+M2-CAM-01 camera (owned by value). The preset is a single config
+value (the ADR 0005 config-only pattern) — 2:1 dimetric (the engine
+default), true 30°/60°, or a custom shear validated against the
+M2-ISO-01 `isoShearSupported()` checker at the config boundary
+(unsupported shears are rejected: they would break the engine-owned
+depth order, RENDER-003) — with the matrix constants from the M2-GL-03
+builders (no preset has its own matrix code). `matrix()` is the
+combined world→NDC affine matrix of the current state (the camera
+center projects to the NDC origin at every zoom/position; NDC-z is 0
+— depth is engine-owned, PRD §4). The grid-snap camera mode (the
+documented continuous choice): the camera position's `(x, y)` are
+quantized to the grid on create, on every `setPosition`, and after
+every follow step (the camera never rests off the grid, mid-follow
+included), with the documented dyadic zoom-level ladder
+(`L = {zoomMin·2ⁿ ≤ zoomMax}`, nearest level in log2 space, exact
+float tie to the higher zoom) — both invariants total inside the
+documented world domain by the inflated look-at margin
+(`maxShakeOffset + g·√2/2`); grid-snap + bounds require the bounds
+rectangle to be grid-aligned (validated at create). ARCH-009:
+presentation-only, never in sim/replay; determinism is bit-identical
+per build/platform. A pure value object — no heap storage, zero
+allocation on every operation. API contract in
+[docs/api/iso_camera.md](../docs/api/iso_camera.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `iso_camera`
+— pure value math, no GL environment required: the preset matrices
+against the M2-GL-03 builders, the create validation, the on-the-grid
+invariant under 2k adversarial mutation/follow inputs, the zoom-level
+set exactly, and the bit-identical determinism replay).
 
 The sprite batcher, draw submits, and sim→render wiring land in the
 remaining M2 steps (M2-SPRITE-01/02 on).
