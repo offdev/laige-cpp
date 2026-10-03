@@ -58,3 +58,17 @@ Recorded so far:
   `iso_depthkey_rebuild` to 0.0814067. Every other `budgets.json`
   entry still has `measured: 0` (its subsystem lands in a later
   milestone).
+- [m2-iso-picking.md](m2-iso-picking.md) (M2-ISO-03, 2026-10-02) — the
+  PRD §8.1 isometric-picking workload (one screen-to-grid pick, O(1)):
+  0.000136 ms mean on the canonical Debug tree (73× inside the 0.01 ms
+  gate); 0.000189 ms on the clang -O0 cross-run. **The sixth
+  baseline** — updates `budgets.json` `measured` for `iso_picking` to
+  0.000136262 (index entry added retroactively 2026-10-03 by the
+  M2-SORT-01 PR — the M2-ISO-03 step landed the baseline file without
+  updating this list).
+- [m2-depth-sort.md](m2-depth-sort.md) (M2-SORT-01, 2026-10-03) — the
+  PRD §8.1 10k-sort workload (10 000 32-bit depth keys, one stable
+  radix sort, the 3 000-frame stress): 0.225852 ms mean on the
+  canonical Debug tree (4.4× inside the 1.0 ms gate); 0.161389 ms on
+  the clang -O0 cross-run. **The seventh baseline** — updates
+  `budgets.json` `measured` for `depth_sort_10k` to 0.225852.

@@ -217,5 +217,34 @@ API contract in
 [tests/laige-render](../tests/laige-render) (CTest entry `iso_picking`
 — pure float math, no GL environment required).
 
+M2-SORT-01 landed the deterministic depth sort — the stable,
+deterministic, pre-allocated sorter for the frame's 32-bit isometric
+depth keys (FR-2.2 "no per-frame allocation"; RENDER-003; S-5/G-R11:
+the engine owns the render ordering). Header-only public header
+`include/laige/render/depth_sort.h`: `DepthSort` (`create(capacity)`
+— one flat 16 B/slot allocation at scene set-up — and `sort(keys)` —
+O(4n + 4·256) per frame, zero allocation, no logging, no GL). The
+algorithm is 4 × 8-bit LSD radix (stable bucket) passes (one stable
+256-bucket counting sort per 8-bit digit, LSB first — Knuth TAOCP
+Vol. 3 §7.2.1); the stable tie-break (RENDER-003) is the sort's
+stability plus the batcher's deterministic entity-id insertion order
+(the (key, entity id) total order of `iso_depth_key.h`, without the
+sorter ever seeing the ids). The sorted order is read back as
+`sortedKeys()`/`sortedIndices()` (parallel spans: the i-th key in
+back-to-front order + its original input position) — payload-
+agnostic, the M2-SPRITE-01 batcher maps indices to its sprite pool.
+Overflow is `BudgetExhausted` with the sorter unchanged; the default
+state is the empty (capacity-0) stopped sorter. Presentation-only,
+bit-identical deterministic per platform/build. The PRD §8.1
+`depth_sort_10k` budget (10k keys sorted mean ≤ 1.0 ms — 6% of the
+60 FPS frame budget, half of the 2 ms 50k render-CPU budget) is gated
+by the `depth_sort` ctest entry (measured 0.225852 ms — the seventh
+baseline,
+[docs/benchmarks/baselines/m2-depth-sort.md](../docs/benchmarks/baselines/m2-depth-sort.md)).
+API contract in
+[docs/api/depth_sort.md](../docs/api/depth_sort.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `depth_sort`
+— pure integer math, no GL environment required).
+
 The sprite batcher, draw submits, and sim→render wiring land in the
 remaining M2 steps (M2-SPRITE-01/02 on).
