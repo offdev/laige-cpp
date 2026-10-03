@@ -158,7 +158,9 @@ if (posOk.ok()) {
   const std::uint32_t key = laige::render::isoDepthKey<M>(
       pos, /*stepHeight=*/tileHeight,  // the tile the entity stands on
       /*layer=*/laige::render::kIsoDepthGroundLayer);
-  batcher.add(key, entity, /*sprite data...*/);  // M2-SPRITE-01
+  laige::render::SpriteItem item;       // the declared sprite (world pos,
+  item.depthKey = key;                  //   uv, rotation, scale, tint, ...
+  batcher.add(item);                    // M2-SPRITE-01, in entity order
 }
 // Equal keys: the stable sort (M2-SORT-01) + the entity-id insertion
 // order below fix the order — laige::render::isoDepthOrderLess is the
@@ -172,8 +174,9 @@ if (posOk.ok()) {
   shears, and camera motion, and is exactly what this API exists to
   prevent (S-5, G-R11: engine-owned depth).
 - **Do not hand-roll per-sprite z-ordering in game code** (G-R11): the
-  per-sprite depth override lands with M2-SPRITE-01 as a counted +
-  warned escape hatch ("prefer tile height").
+  per-sprite depth override is the M2-SPRITE-01 batcher's counted +
+  warned escape hatch ("prefer tile height" —
+  [`api/sprite_batcher.md`](sprite_batcher.md)).
 - **Pass the standing-surface height, not the sprite's top.** A tree 3
   units tall standing on ground passes `stepHeight = 0`, not `3` —
   the key anchors the object's BASE (its standing surface).

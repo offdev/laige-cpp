@@ -180,8 +180,9 @@
 //     camera motion, and is exactly what this API exists to prevent
 //     (S-5, G-R11).
 //   - Do not hand-roll per-sprite z-ordering in game code (G-R11):
-//     the per-sprite depth override lands with M2-SPRITE-01 as a
-//     counted + warned escape hatch ("prefer tile height").
+//     the per-sprite depth override is the M2-SPRITE-01 batcher's
+//     counted + warned escape hatch ("prefer tile height",
+//     sprite_batcher.h).
 //   - z is the object's STANDING SURFACE elevation (the tile height),
 //     not the object's height — passing the sprite's top elevation
 //     pushes it behind its own base's row.

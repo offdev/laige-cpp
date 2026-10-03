@@ -240,13 +240,44 @@ deterministic, pre-allocated sorter for the frame's 32-bit keys:
   `depth_sort_10k`) —
   [baselines/m2-depth-sort.md](../benchmarks/baselines/m2-depth-sort.md).
 
+### 4.7 The sprite batcher (M2-SPRITE-01)
+
+The frame's sorted keys become the frame's draw groups by
+`laige::render::SpriteBatcher` (`laige/render/sprite_batcher.h`) — the
+engine-owned "declare, don't draw" window (S-5): the game DECLARES the
+frame's sprites (`beginFrame` → `add(item)` × n → `build()`), the
+engine batches:
+
+- **Declare, don't draw**: the game declares `SpriteItem`s (world
+  position, the M2-ISO-01 depth key, UV sub-rect, rotation, scale,
+  tint, blend, atlas/material refs); there is no "draw this quad now"
+  in the safe API (S-5).
+- **Grouping (FR-2.1)**: `build()` produces one group per DISTINCT
+  (atlas, material, blend) combination — the submit stage (M2-SPRITE-02)
+  makes ONE instanced draw call per group, so texture binds and blend
+  changes are O(group count), not O(sprite count) (RENDER-001).
+- **Order (RENDER-003)**: the group order is ascending
+  (atlas, material, blend) (a function of the distinct group keys
+  alone); each group's instances keep the frame's GLOBAL
+  back-to-front order (§4.6's stable sort RESTRICTED to the group) —
+  the (key, entity id) total order per group.
+- **Overflow (PERF-008, S-2)**: the frame budget is fixed at set-up
+  (`Options::maxSprites`); a frame beyond it drops the OLDEST
+  declaration + warns (never grows, never silent).
+- **G-R11**: a manually-set depth key (`depthOverride`) is counted per
+  frame + warned once per frame ("prefer tile height") — the escape
+  hatch, not the default path.
+- **Zero per-frame allocation** (FR-2.2, PERF-003): the batch is pure
+  integer bookkeeping over the pre-allocated storage (~132 B per
+  capacity slot — 6.6 MB at the 50k stress budget).
+
 ## 5. Conversion rules (the module boundaries, RENDER-006)
 
 | Conversion | Direction | Owner | Status |
 |---|---|---|---|
 | World → depth key | sim state → `uint32` key | `laige-render` (`isoDepthKey`, M2-ISO-01) | **This document / shipped** |
 | Tile grid → depth key table | tile heights → precomputed per-tile keys | `laige-render` (`IsoDepthKeyTable`, M2-ISO-02) | **This document / shipped** |
-| Depth key → render order | key (+ entity id) → sorted order | `laige-render` (`DepthSort`, M2-SORT-01 stable radix sort; the batcher M2-SPRITE-01) | **Shipped (M2-SORT-01)** |
+| Depth key → render order | key (+ entity id) → sorted order → groups | `laige-render` (`DepthSort`, M2-SORT-01 stable radix sort; `SpriteBatcher`, M2-SPRITE-01 batcher) | **Shipped (M2-SORT-01 + M2-SPRITE-01)** |
 | Screen → world (per mode) | picking, screen↔world transforms | `laige-render` (`ProjectionView`: `worldToScreen`, `screenToWorldRay`, `screenToWorld`, M2-PROJ-01; `screenToGrid` iso grid picking, M2-ISO-03) | **Shipped (M2-PROJ-01 + M2-ISO-03)** |
 | World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | shipped to NDC (matrices, camera core M2-CAM-01, iso presets + grid-snap M2-CAM-02, world→screen transform M2-PROJ-01); pixels: M2-SPRITE-02 planned |
 
@@ -339,6 +370,9 @@ state → same keys → same order, every frame (RENDER-003).
 - [`api/depth_sort.md`](../api/depth_sort.md) — the deterministic
   stable depth sort contract: `DepthSort` (keys → sorted order)
   (M2-SORT-01).
+- [`api/sprite_batcher.md`](../api/sprite_batcher.md) — the declare,
+  don't draw batcher contract: `SpriteBatcher` (declared sprites →
+  (atlas, material, blend) groups) (M2-SPRITE-01).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —

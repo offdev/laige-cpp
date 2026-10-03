@@ -206,7 +206,9 @@ if (!edited.ok()) { /* log: uncovered cell or out-of-domain height */ }
 // only covered tiles (the batch culls against the covered region):
 if (table.value().covers(gx, gy)) {
   const std::uint32_t key = table.value().keyAt(gx, gy);
-  batcher.add(key, /*tile sprite data...*/);  // M2-SPRITE-01
+  laige::render::SpriteItem item;       // the declared tile sprite
+  item.depthKey = key;                  // (the tile grid's precomputed key)
+  batcher.add(item);                    // M2-SPRITE-01, in tile order
 }
 // Equal keys: the stable sort (M2-SORT-01) + the entity-id insertion
 // order fix the order — isoDepthOrderLess (M2-ISO-01) is the

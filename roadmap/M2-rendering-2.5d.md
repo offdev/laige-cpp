@@ -151,7 +151,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R depth_sort` green; 10k-sort cost recorded in baseline.
   - **Size:** ~250 lines + tests
 
-- [ ] **M2-SPRITE-01 · Sprite item + batcher API (declare, don't draw)**
+- [x] **M2-SPRITE-01 · Sprite item + batcher API (declare, don't draw)**
   - **Refs:** FR-2.1 (batched quads, one draw call per (atlas, material, blend) group), S-5
   - **Depends:** M2-SORT-01
   - **Scope:**

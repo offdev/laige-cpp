@@ -246,5 +246,35 @@ API contract in
 [tests/laige-render](../tests/laige-render) (CTest entry `depth_sort`
 — pure integer math, no GL environment required).
 
-The sprite batcher, draw submits, and sim→render wiring land in the
-remaining M2 steps (M2-SPRITE-01/02 on).
+M2-SPRITE-01 landed the sprite item + batcher — the engine-owned
+"declare, don't draw" declaration window + batch builder (S-5: scene
+content is declared, the engine batches; FR-2.1: one draw call per
+(atlas, material, blend) group per frame). Header-only public header
+`include/laige/render/sprite_batcher.h`: `SpriteItem` (the declared
+sprite — world position, the M2-ISO-01 depth key, UV sub-rect,
+rotation, scale, tint, blend, atlas/material refs, the G-R11
+depth-override flag) in a budgeted, accounted `ArenaPool`
+(`SpriteBatcher`, `create(Options{maxSprites})` — ~132 B per capacity
+slot, 6.6 MB at the 50k stress budget); the frame protocol
+`beginFrame()` → `add(item) × n` → `build()`. `build()` sorts the
+frame's depth keys with the M2-SORT-01 `DepthSort`, groups into
+(atlas, material, blend) batches in deterministic order (ascending
+(atlas, material, blend) — RENDER-003), and scatters each group's
+instances in global back-to-front order (the sorted order restricted
+to the group — the (key, entity id) total order per group, the
+entity-id insertion order FR-1.2 carries). The overflow policy is
+bounded drop-oldest + warn (PERF-008, S-2); the per-sprite depth
+override is counted + warned per frame (G-R11, "prefer tile height");
+every per-frame path allocates nothing (PERF-003 — the
+zero-allocation proof). The submit stage (M2-SPRITE-02) reads
+`batches()` — one instanced draw call per group. No standalone
+`budgets.json` entry: the sort cost is the `depth_sort_10k` budget and
+the composite 50k render-CPU budget is measured with the submit stage
+(M2-PERF-01). API contract in
+[docs/api/sprite_batcher.md](../docs/api/sprite_batcher.md), tests
+under [tests/laige-render](../tests/laige-render) (CTest entry
+`batcher` — pure integer bookkeeping, no GL environment required).
+
+The GPU instanced draw submits (M2-SPRITE-02), atlas UV animation
+(M2-SPRITE-03), render observability (M2-SPRITE-04), and sim→render
+wiring land in the remaining M2 steps.
