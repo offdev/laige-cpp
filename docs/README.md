@@ -266,6 +266,17 @@ still to land.
   `BudgetExhausted`-when-overflowing contract, and the PRD §8.1
   budget (10k keys sorted mean ≤ 1.0 ms — the `depth_sort_10k`
   entry) (M2-SORT-01; `laige-render`).
+- [Sprite batcher](api/sprite_batcher.md) —
+  `laige::render::SpriteBatcher`: the engine-owned "declare, don't
+  draw" sprite declaration window + batch builder (S-5, FR-2.1): the
+  frame protocol (`beginFrame` → `add` × n → `build`), the pool-backed
+  `SpriteItem` (position, depth key, UV sub-rect, rotation, scale,
+  tint, blend, atlas/material refs), the (atlas, material, blend)
+  grouping with deterministic group order and the M2-SORT-01 sorted
+  instance order per group (one draw call per group at submit,
+  M2-SPRITE-02), the bounded drop-oldest + warn overflow policy, the
+  G-R11 counted + warned per-sprite depth override, and the
+  zero-per-frame-allocation contract (M2-SPRITE-01; `laige-render`).
 
 ## Guides
 

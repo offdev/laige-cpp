@@ -61,7 +61,19 @@
 # 10k-key oracle comparison + the zero-allocation proof, and the PRD
 # §8.1 `depth_sort_10k` budget gate — 10 000 keys sorted per frame,
 # 3 000 frames, mean <= 1.0 ms) — pure integer math: no GL
-# environment needed.
+# environment needed; and the sprite item + batcher (M2-SPRITE-01) —
+# the engine-owned "declare, don't draw" declaration window + batch
+# builder (sprite_batcher_tests.cpp's SpriteBatcher* suites: the
+# grouping correctness (N atlases x materials x blends -> the exact
+# group count, the deterministic group order, the per-group
+# membership), the in-group instance order against hand-computed
+# expected orders (the M2-SORT-01 sorted order restricted to the
+# group, stable on equal keys), the bounded drop-oldest + warn
+# overflow policy, the G-R11 counted + warned depth-override escape
+# hatch, the stopped state / create validation / frame protocol /
+# slot access edges, the determinism property on 3 000-sprite frames
+# against the stable-sort oracle, and the 1 000-frame zero-allocation
+# proof) — pure integer bookkeeping: no GL environment needed.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -76,10 +88,11 @@
 # `iso_camera` entry is the M2-CAM-02 Verify command
 # (`ctest -R iso_camera`), the `projection` entry is the M2-PROJ-01
 # Verify command (`ctest -R projection`), the `iso_picking` entry is
-# the M2-ISO-03 Verify command (`ctest -R iso_picking`), and the
+# the M2-ISO-03 Verify command (`ctest -R iso_picking`), the
 # `depth_sort` entry is the M2-SORT-01 Verify command
-# (`ctest -R depth_sort`), each selecting exactly its suites from the
-# shared executable.
+# (`ctest -R depth_sort`), and the `batcher` entry is the
+# M2-SPRITE-01 Verify command (`ctest -R batcher`), each selecting
+# exactly its suites from the shared executable.
 #
 # Environment note: the GlContextSmoke and RenderThreadOffscreen suites
 # require a usable OpenGL 3.3 environment — always present on the P0 CI
@@ -94,7 +107,7 @@ add_executable(laige-render_tests
   gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
   iso_depth_key_tests.cpp iso_depth_table_tests.cpp camera_tests.cpp
   iso_camera_tests.cpp projection_tests.cpp iso_picking_tests.cpp
-  depth_sort_tests.cpp)
+  depth_sort_tests.cpp sprite_batcher_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -196,6 +209,15 @@ add_test(NAME depth_sort
 set_tests_properties(depth_sort PROPERTIES
    ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 
+# M2-SPRITE-01: the step's Verify command is `ctest -R batcher`. Pure
+# integer bookkeeping over pre-allocated storage (no GL calls) —
+# runs in every local tree and in CI. No budget gate: the step's
+# roadmap scope has no standalone budget entry (the composite 50k
+# render-CPU budget of PRD §8.1 is measured with the submit stage,
+# M2-PERF-01).
+add_test(NAME batcher
+         COMMAND laige-render_tests --gtest_filter=SpriteBatcher*)
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
@@ -215,14 +237,14 @@ if(LAIGE_TSAN)
   # The M2-GL-02 `render_thread` entry is the step's TSan gate (the
   # lock-free handoff's race-freedom, the 3000-frame no-deadlock run);
   # the pure-math `matrices`, `iso_depth_key`, `iso_depth_table`,
-  # `camera`, `iso_camera`, `projection`, `iso_picking`, and
-  # `depth_sort` entries carry the option for uniformity (they have
+  # `camera`, `iso_camera`, `projection`, `iso_picking`, `depth_sort`,
+  # and `batcher` entries carry the option for uniformity (they have
   # no shared state, but the flag is harmless). The test-level
   # ENVIRONMENT replaces the job-level one, so the budgets path is
   # restated here.
   set_tests_properties(laige-render_tests gl_context render_thread matrices
     iso_depth_key iso_depth_table camera iso_camera projection
-    iso_picking depth_sort PROPERTIES
+    iso_picking depth_sort batcher PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 endif()
@@ -253,10 +275,11 @@ endif()
 
 # The offscreen smoke creates a real (software) context + FBO; give a
 # slow headless runner generous headroom. The pure-math `matrices`,
-# `iso_depth_key`, `camera`, `iso_camera`, `projection`, and
-# `iso_picking` entries are small (thousands of O(1) computations,
+# `iso_depth_key`, `camera`, `iso_camera`, `projection`, `iso_picking`,
+# and `batcher` entries are small (thousands of O(1) computations,
 # comparisons, and O(1) camera / projection updates and picks at most,
-# plus 10k-cell round trips) — 60s is generous headroom.
+# plus 10k-cell round trips and a few hundred-sprite batch builds) —
+# 60s is generous headroom.
 set_tests_properties(laige-render_tests gl_context PROPERTIES TIMEOUT 180)
 set_tests_properties(render_thread PROPERTIES TIMEOUT 300)
 set_tests_properties(matrices PROPERTIES TIMEOUT 60)
@@ -265,6 +288,7 @@ set_tests_properties(camera PROPERTIES TIMEOUT 60)
 set_tests_properties(iso_camera PROPERTIES TIMEOUT 60)
 set_tests_properties(projection PROPERTIES TIMEOUT 60)
 set_tests_properties(iso_picking PROPERTIES TIMEOUT 60)
+set_tests_properties(batcher PROPERTIES TIMEOUT 60)
 # The `iso_depth_table` and `depth_sort` entries include their budget
 # gates: 2 backends x (100 warm-up + 3000 measured) iterations of 10 000
 # setTile calls, and 3 000 sorts of 10 000 keys respectively — a few
