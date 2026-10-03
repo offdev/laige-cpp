@@ -211,13 +211,42 @@ Tiles are grid-locked (M2-TILE-01), so the table's cells agree with
 per-frame `isoDepthKey` (§4.1); the table serves the static tile grid
 (the tilemap, M2-TILE-01) only.
 
+### 4.6 The deterministic depth sort (M2-SORT-01)
+
+§4.3's total render order is realized per frame by
+`laige::render::DepthSort` (`laige/render/depth_sort.h`) — the stable,
+deterministic, pre-allocated sorter for the frame's 32-bit keys:
+
+- **Pre-allocated, zero per-frame allocation**: `create(capacity)` at
+  scene set-up owns one flat storage (16 B/slot); `sort(keys)` per
+  frame is O(4n + 4·256) over pre-allocated buffers — no heap, no
+  logging, no GL (PERF-003; FR-2.2 "no per-frame allocation").
+- **Stable**: equal keys keep their INPUT order. The batcher
+  (M2-SPRITE-01) inserts the frame's keys in the deterministic
+  entity-id iteration order (FR-1.2), so the sorted output is the
+  §4.3 (key, entity id) total order — without the sorter ever seeing
+  the ids (the input position IS the entity order). RENDER-003's
+  "tie-breaking explicit and stable" is this stability plus the
+  insertion order.
+- **Algorithm**: 4 × 8-bit LSD radix (stable bucket) passes — one
+  stable 256-bucket counting sort per 8-bit digit, least significant
+  digit first (Knuth, TAOCP Vol. 3 §7.2.1). Pure integer arithmetic:
+  same key sequence → bit-identical sorted order on every platform
+  and build (RENDER-003; presentation-only — ARCH-009/010 scope).
+- **Failure**: `sort(n > capacity)` → `BudgetExhausted`, the sorter
+  unchanged (the previous frame's order is intact); the batcher
+  handles and logs it (LOG-002).
+- **Budget**: 10k keys sorted, mean ≤ 1.0 ms (PRD §8.1,
+  `depth_sort_10k`) —
+  [baselines/m2-depth-sort.md](../benchmarks/baselines/m2-depth-sort.md).
+
 ## 5. Conversion rules (the module boundaries, RENDER-006)
 
 | Conversion | Direction | Owner | Status |
 |---|---|---|---|
 | World → depth key | sim state → `uint32` key | `laige-render` (`isoDepthKey`, M2-ISO-01) | **This document / shipped** |
 | Tile grid → depth key table | tile heights → precomputed per-tile keys | `laige-render` (`IsoDepthKeyTable`, M2-ISO-02) | **This document / shipped** |
-| Depth key → render order | key (+ entity id) → sorted batches | M2-SORT-01 (stable radix sort), M2-SPRITE-01 (batcher) | planned |
+| Depth key → render order | key (+ entity id) → sorted order | `laige-render` (`DepthSort`, M2-SORT-01 stable radix sort; the batcher M2-SPRITE-01) | **Shipped (M2-SORT-01)** |
 | Screen → world (per mode) | picking, screen↔world transforms | `laige-render` (`ProjectionView`: `worldToScreen`, `screenToWorldRay`, `screenToWorld`, M2-PROJ-01; `screenToGrid` iso grid picking, M2-ISO-03) | **Shipped (M2-PROJ-01 + M2-ISO-03)** |
 | World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | shipped to NDC (matrices, camera core M2-CAM-01, iso presets + grid-snap M2-CAM-02, world→screen transform M2-PROJ-01); pixels: M2-SPRITE-02 planned |
 
@@ -291,7 +320,8 @@ Rules:
 
 For one isometric frame, objects render in ascending
 `(key, entity id)` order (back to front), drawn by the sprite batcher
-(M2-SPRITE-02) through the batcher's stable depth sort (M2-SORT-01).
+(M2-SPRITE-02) through the engine's stable depth sort
+(`DepthSort`, §4.6, M2-SORT-01).
 Parallax layers (M2-PAR-01) render background-first via their layer
 values; the UI pass (M2-UI-02) is a separate screen-space pass rendered
 after all world passes. Determinism of the order is total: same world
@@ -306,6 +336,9 @@ state → same keys → same order, every frame (RENDER-003).
 - [`api/iso_picking.md`](../api/iso_picking.md) — the isometric grid
   picking contract: `screenToGrid` (screen → ground → grid cell)
   (M2-ISO-03).
+- [`api/depth_sort.md`](../api/depth_sort.md) — the deterministic
+  stable depth sort contract: `DepthSort` (keys → sorted order)
+  (M2-SORT-01).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —

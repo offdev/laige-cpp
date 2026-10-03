@@ -256,6 +256,16 @@ still to land.
   levels), the total-function saturation contract, and the PRD §8.1
   budget (one pick mean ≤ 0.01 ms — the `iso_picking` entry)
   (M2-ISO-03; `laige-render`).
+- [Deterministic depth sort](api/depth_sort.md) —
+  `laige::render::DepthSort`: the stable, deterministic,
+  pre-allocated sorter for the frame's 32-bit isometric depth keys
+  (FR-2.2, RENDER-003): `create` (one flat 16 B/slot allocation) +
+  `sort` (O(4n + 4·256), zero per-frame allocation, the stable
+  (key, entity id) tie-break via the batcher's insertion order),
+  4 × 8-bit LSD radix (bucket) passes, the
+  `BudgetExhausted`-when-overflowing contract, and the PRD §8.1
+  budget (10k keys sorted mean ≤ 1.0 ms — the `depth_sort_10k`
+  entry) (M2-SORT-01; `laige-render`).
 
 ## Guides
 

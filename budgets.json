@@ -59,6 +59,14 @@
       "workload": "one isometric screen-to-grid pick, O(1) (PRD 8.1)"
     },
     {
+      "name": "depth_sort_10k",
+      "metric": "mean",
+      "unit": "ms",
+      "target": 1.0,
+      "measured": 0.225852,
+      "workload": "10 000 32-bit depth keys, one stable radix sort (M2-SORT-01, PRD 8.1)"
+    },
+    {
       "name": "sim_heap_allocs",
       "metric": "max",
       "unit": "allocs_per_frame",

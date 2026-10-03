@@ -140,7 +140,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
 
 ## Sorting & sprite batcher
 
-- [ ] **M2-SORT-01 · Deterministic depth sort (radix/bucket)**
+- [x] **M2-SORT-01 · Deterministic depth sort (radix/bucket)**
   - **Refs:** FR-2.2 (bucket/radix, no per-frame alloc), RENDER-003, AC-4.3
   - **Depends:** M2-ISO-01
   - **Scope:**

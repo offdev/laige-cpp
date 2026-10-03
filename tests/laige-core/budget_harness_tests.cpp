@@ -457,9 +457,11 @@ TEST(BudgetHarnessTable, LoadsTheRepoBudgetsFile) {
   ASSERT_TRUE(table.ok()) << laige::errorText(table.error());
   const BudgetTable& t = table.value();
 
-  // One entry per PRD 8.1 target (15 rows: sim tick, 50k sprites, cold
-  // start, build time, and zone server each carry two budgets).
-  EXPECT_EQ(std::size_t(15), t.size());
+  // One entry per PRD 8.1 target (16 rows: sim tick, 50k sprites,
+  // cold start, build time, and zone server each carry two budgets,
+  // plus the single-budget M2 render targets — iso_depthkey_rebuild,
+  // iso_picking, depth_sort_10k).
+  EXPECT_EQ(std::size_t(16), t.size());
 
   const BudgetEntry* frame = t.find("frame_time_render");
   ASSERT_NE(frame, nullptr);
