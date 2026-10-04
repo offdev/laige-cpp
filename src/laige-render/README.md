@@ -275,6 +275,39 @@ the composite 50k render-CPU budget is measured with the submit stage
 under [tests/laige-render](../tests/laige-render) (CTest entry
 `batcher` — pure integer bookkeeping, no GL environment required).
 
-The GPU instanced draw submits (M2-SPRITE-02), atlas UV animation
-(M2-SPRITE-03), render observability (M2-SPRITE-04), and sim→render
-wiring land in the remaining M2 steps.
+M2-SPRITE-02 landed the GPU instanced draw submits — the frame
+pipeline's SUBMIT stage: the minimal GLSL 3.30 sprite shader (per
+instance: world position + world-unit scale, UV sub-rect, screen-space
+rotation, multiplicative tint; one atlas texture) and ONE
+`glDrawArraysInstanced` per (atlas, material, blend) group per frame
+(FR-2.1, RENDER-001). `SpriteRenderer` (`include/laige/render/sprite_renderer.h`,
+`sprite_renderer.cpp`): `create(const GlContext&, Options{maxInstances,
+maxAtlases, primitiveQuery})` (one shader program, one quad VBO, one
+per-frame instance buffer sized `maxInstances * 52` B, one VAO — no
+per-frame allocation, PERF-003), `bindAtlas(id, w, h, rgba)` (the
+set-up/asset path — one GL texture per atlas, `GL_NEAREST`,
+`GL_CLAMP_TO_EDGE`), and `submit(batcher, worldToNdc)` (the per-frame
+draw: frame validation — the batcher's `frameBuilt()`, the instance
+budget, every group's atlas bound — the one `glBufferSubData` upload,
+then the per-group texture bind / blend function / instanced draw; a
+failed submit draws nothing, counts nothing, and leaves no stale
+sprite-pass state). The observable counters (`SpriteDrawStats` /
+`SpriteDrawTotals`: draw calls == group count, texture binds, blend
+changes, instances, the opt-in `PRIMITIVES_GENERATED` primitives) feed
+the M2-SPRITE-04 profiler. `GlContext::frameBuffer()` exposes the
+offscreen FBO the pass binds per frame (the surfaceless default frame
+buffer is not a valid draw target; the pass also sets the viewport).
+The offscreen 1 000-sprite render is verified against a CPU reference
+rasterizer (±1-byte per channel + rounding-exact probes — the GPU
+float32 vs the reference double; the rotation's cos/sin is
+driver-float, pinned by M2-GOLD-01). API contract in
+[docs/api/sprite_renderer.md](../docs/api/sprite_renderer.md), tests
+under [tests/laige-render](../tests/laige-render) (CTest entry
+`sprite_draw` — a usable OpenGL 3.3 environment required: Mesa
+software GL on the CI offscreen path; the suites self-
+`GTEST_SKIP` on an environment failure). No standalone `budgets.json`
+entry: the composite 50k render-CPU budget is measured with this stage
+(M2-PERF-01).
+
+Atlas UV animation (M2-SPRITE-03), render observability (M2-SPRITE-04),
+and sim→render wiring land in the remaining M2 steps.

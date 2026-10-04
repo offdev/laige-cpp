@@ -157,6 +157,14 @@ class GlContext {
   [[nodiscard]] std::int32_t width() const noexcept;
   [[nodiscard]] std::int32_t height() const noexcept;
 
+  // The render-target frame buffer: the offscreen FBO on headless
+  // contexts, 0 (the default frame buffer — the window) on windowed
+  // ones. The per-frame draw path binds it once per frame (the
+  // class's clear()/readPixel() bind it per call); a frame-pass
+  // (M2-SPRITE-02) binds it at the frame's start. No GL call (a
+  // creation-time handle); O(1). 0 when stopped.
+  [[nodiscard]] std::uint32_t frameBuffer() const noexcept;
+
   // Bind this context to the calling thread (one thread current at a
   // time, CONC-001). The M2-GL-02 render thread calls this on takeover
   // AFTER the old owner has called release() (the P0 EGL stack rejects

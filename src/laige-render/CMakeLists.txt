@@ -66,13 +66,21 @@ target_include_directories(laige-glad PRIVATE
 # from the M2-GL-03 preset builders, and the grid-snap camera mode:
 # the continuous grid position snap + the documented dyadic zoom-level
 # ladder; pure value math over the M2-CAM-01 Camera, no GL calls).
+# M2-SPRITE-02 adds sprite_renderer.cpp (the frame pipeline's submit
+# stage: the GPU instanced draw submits — one instanced draw call per
+# (atlas, material, blend) group per frame, the minimal GLSL 3.30
+# sprite shader (per-instance world pos / scale / UV rect / rotation /
+# tint), the per-group texture binds + blend changes (the RENDER-001
+# observable state), the bounded instance capacity (FR-2.2, PERF-008),
+# and the per-frame zero-allocation staging buffer — the engine-owned
+# draw stage of FR-2.1; GL calls only, no GL in the public header).
 # M2-PROJ-01 adds projection.cpp (the per-scene/view projection modes
 # — iso default, side_view, top_down, free_cinematic — and the
 # screen<->world transforms: worldToScreen / screenToWorldRay /
 # screenToWorld, the FR-2.11 picking base; pure value math over the
 # M2-GL-03 / M2-CAM-01 matrices, no GL calls).
 set(LAIGE_RENDER_SOURCES gl_context.cpp frame_pipeline.cpp matrices.cpp
-  camera.cpp iso_camera.cpp projection.cpp)
+  camera.cpp iso_camera.cpp projection.cpp sprite_renderer.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-render SHARED ${LAIGE_RENDER_SOURCES})

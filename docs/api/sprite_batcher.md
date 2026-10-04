@@ -58,6 +58,7 @@ class SpriteBatcher {
   [[nodiscard]] std::size_t batchCount() const noexcept;
   [[nodiscard]] std::span<const SpriteBatch> batches() const noexcept;
   [[nodiscard]] std::size_t frameCount() const noexcept;
+  [[nodiscard]] bool frameBuilt() const noexcept;             // built for the current frame
   [[nodiscard]] std::uint32_t overrideCount() const noexcept;  // this frame (G-R11)
   [[nodiscard]] std::uint64_t overrideTotal() const noexcept;  // cumulative (G-R11)
   [[nodiscard]] std::uint64_t droppedTotal() const noexcept;   // cumulative overflow
@@ -101,6 +102,13 @@ The frame protocol (the frame pipeline's cull/batch stage, M2-GL-02):
   declaration window. Fails: double build → `InvalidArgument`; sort
   overflow → `BudgetExhausted` (unreachable — the ring keeps
   n ≤ capacity).
+- **`frameBuilt()`** — true when `build()` succeeded for the
+  CURRENT frame (an empty frame counts: `build()` on a closed window
+  with no items is a valid no-op build). `beginFrame()` clears it.
+  The submit stage (M2-SPRITE-02) GATES on it: an open window with
+  declared items is never drawn as an empty frame (CORE-008) —
+  `SpriteRenderer::submit` fails `InvalidArgument` when the batcher
+  is not built for the current frame.
 - **Output** (`batchCount()`, `batches()`, `get(slot)`, `at(slot)`):
   read **within the frame** — the next `beginFrame()`/`build()`
   invalidates it. The instance spans alias the batcher's storage.
@@ -228,6 +236,8 @@ depth overrides counted + warned).
 
 ## Related
 
+- [`api/sprite_renderer.md`](sprite_renderer.md) — the submit stage
+  that draws this batcher's built frame (M2-SPRITE-02).
 - [`api/depth_sort.md`](depth_sort.md) — the M2-SORT-01 stable radix
   sort this batcher consumes.
 - [`api/iso_depth_key.md`](iso_depth_key.md) — the 32-bit depth key
