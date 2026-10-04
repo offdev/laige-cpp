@@ -32,6 +32,7 @@ struct SpriteItem {
   std::uint32_t depthKey{};      // the M2-ISO-01 key (isoDepthKey<Backend>)
   bool depthOverride{};          // G-R11 escape hatch (counted + warned)
   SpriteUvRect uv{};             // UV sub-rect in the atlas, [0,1]^2
+  std::uint32_t frameIndex{};    // animation frame (M2-SPRITE-03 hook)
   float rotation{};              // radians
   Vec2 scale{1, 1};              // world-unit scale (x, y)
   SpriteTint tint{};             // multiplicative RGBA (1,1,1,1 = none)
@@ -76,7 +77,7 @@ The frame protocol (the frame pipeline's cull/batch stage, M2-GL-02):
 - **`create(options)`** is the **set-up path** (scene load): one
   allocation per storage structure (the sprite pool, the M2-SORT-01
   sorter, the key scratch, the instance array, the group table, the
-  cursor array, the batch array — ~132 bytes per capacity slot, 6.6 MB
+  cursor array, the batch array — ~136 bytes per capacity slot, 6.8 MB
   at the 50k stress budget). Fails with `InvalidArgument` (no
   allocation) when `maxSprites` is 0 or exceeds
   `kSpriteBatcherMaxCapacity` (0xFFFFFFFF — the slot width). Size the
@@ -170,7 +171,7 @@ depth overrides counted + warned).
 
 ## Performance (PERF-002/003/004, DOC-004)
 
-- **Complexity:** `create` O(maxSprites) (8 allocations, ~132 B/slot);
+- **Complexity:** `create` O(maxSprites) (8 allocations, ~136 B/slot);
   `beginFrame` O(previous frame count) (the pool reset); `add`
   **O(1)** (one pool create or one ring overwrite); `build`
   **O(4n + 4·256)** (the M2-SORT-01 sort) **+ O(n·log G)** (two group
@@ -238,6 +239,10 @@ depth overrides counted + warned).
 
 - [`api/sprite_renderer.md`](sprite_renderer.md) — the submit stage
   that draws this batcher's built frame (M2-SPRITE-02).
+- [`api/sprite_frames.md`](sprite_frames.md) — the atlas UV frame
+  animation hook: the sheet frame layout + the frame index → UV
+  sub-rect computation the caller uses to fill `SpriteItem.uv`
+  (M2-SPRITE-03).
 - [`api/depth_sort.md`](depth_sort.md) — the M2-SORT-01 stable radix
   sort this batcher consumes.
 - [`api/iso_depth_key.md`](iso_depth_key.md) — the 32-bit depth key

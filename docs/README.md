@@ -287,6 +287,14 @@ still to land.
   as the M2-SPRITE-04 profiler feed, the pre-allocated instance buffer
   (zero per-frame allocation), and the offscreen 1 000-sprite render
   verified against a CPU reference.
+- [Sprite frames](api/sprite_frames.md) —
+  `laige::render::SpriteFrameLayout` + `spriteFrameUv`: the atlas UV
+  frame animation hook (M2-SPRITE-03; FR-2.1 "atlas UV animation (sheet
+  frames)"): the sheet frame layout (frame size, row/col, margins) and
+  the pure frame-index → UV sub-rect computation (out-of-range frame →
+  documented error, never wrap) the caller uses to fill
+  `SpriteItem.uv`/`frameIndex` — the data-driven hook M3 animation
+  drives.
 
 ## Guides
 

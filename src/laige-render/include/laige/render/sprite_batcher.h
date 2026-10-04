@@ -77,7 +77,8 @@
 // Two frames with the same scene state (same items, same declaration
 // order) produce bit-identical batches. Pure integer arithmetic over
 // the item data: the item's floats (pos, uv, rotation, scale, tint)
-// are carried through untouched — no float arithmetic here.
+// and its animation frame index (frameIndex — M2-SPRITE-03) are
+// carried through untouched — no float arithmetic here.
 //
 // ---------------------------------------------------------------------------
 // Overflow: bounded, drop oldest + warn (PERF-008, S-2)
@@ -108,11 +109,11 @@
 // overrides counted + warned).
 //
 // ---------------------------------------------------------------------------
-// Storage layout (CORE-005, PERF-004; ~132 bytes per capacity slot —
-// 6.6 MB at the 50k stress budget, PRD §8.1)
+// Storage layout (CORE-005, PERF-004; ~136 bytes per capacity slot —
+// 6.8 MB at the 50k stress budget, PRD §8.1)
 // ---------------------------------------------------------------------------
 //
-//   sprite pool    ArenaPool<SpriteItem>, 72 B/slot (budgeted,
+//   sprite pool    ArenaPool<SpriteItem>, 76 B/slot (budgeted,
 //                  accounted — PRD §10.4; the pool's reset() is the
 //                  per-frame release)
 //   key scratch    capacity u32 (the frame's keys in declaration order
@@ -264,8 +265,9 @@ enum class BlendMode : std::uint8_t {
 // ---------------------------------------------------------------------------
 
 // The sprite's UV sub-rect inside its atlas, normalized [0, 1]²
-// (u1 > u0, v1 > v0 — the caller's invariant; M2-SPRITE-03 computes
-// these from the atlas sheet frame layout).
+// (u1 > u0, v1 > v0 — the caller's invariant; spriteFrameUv,
+// laige/render/sprite_frames.h, computes these from the atlas sheet
+// frame layout — M2-SPRITE-03).
 struct SpriteUvRect {
   float u0{};
   float v0{};
@@ -304,6 +306,15 @@ struct SpriteItem {
   bool depthOverride{};
   // The UV sub-rect in the atlas (SpriteUvRect above).
   SpriteUvRect uv{};
+  // The animation frame index this item was declared with
+  // (M2-SPRITE-03 — data-driven: the caller sets it; M3 animation
+  // will drive the frame advance). The engine does not interpret it:
+  // the caller also sets `uv` to this frame's UV sub-rect (see
+  // spriteFrameUv, laige/render/sprite_frames.h) — `uv` is what the
+  // renderer draws, the index is the declaration's frame record
+  // (presentation state, ARCH-009). The batcher carries it through
+  // untouched.
+  std::uint32_t frameIndex{};
   // The rotation in radians (0 = unrotated; the submit stage applies
   // it in screen space, M2-SPRITE-02).
   float rotation{};
@@ -386,7 +397,7 @@ class SpriteBatcher {
   SpriteBatcher() noexcept : items_(ArenaPool<SpriteItem>::Options{0}) {}
 
   // The set-up path (scene load): one allocation per storage
-  // structure (the preamble's layout — ~132 B/capacity slot). Fails
+  // structure (the preamble's layout — ~136 B/capacity slot). Fails
   // (InvalidArgument, no allocation) when maxSprites is 0 or exceeds
   // kSpriteBatcherMaxCapacity (the slot-width domain).
   //

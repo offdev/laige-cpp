@@ -87,7 +87,16 @@
 # against a CPU reference rasterizer), and the 100-frame integration
 # run through the M2-GL-02 RenderThread with the GL handoff) — the
 # GL suites need a usable OpenGL 3.3 environment (the documented
-# environment contract: GTEST_SKIPs where absent).
+# environment contract: GTEST_SKIPs where absent); and the atlas
+# frame layout (M2-SPRITE-03) — the atlas UV frame animation hook
+# (sprite_frames_tests.cpp's SpriteFrame* suites: the hand-computed
+# UV rects for documented layouts (tight sheets, margins, non-square
+# frames, single row/column), the documented failure contract
+# (out-of-range frame -> InvalidArgument, never wrap; layout
+# validation first-failure-wins), the sheet model against the
+# documented formula + the float-exact domain + the adjacency rule,
+# and the SpriteItem.frameIndex hook through the batcher) — pure
+# float/integer math: no GL environment needed.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -105,9 +114,11 @@
 # the M2-ISO-03 Verify command (`ctest -R iso_picking`), the
 # `depth_sort` entry is the M2-SORT-01 Verify command
 # (`ctest -R depth_sort`), the `batcher` entry is the M2-SPRITE-01
-# Verify command (`ctest -R batcher`), and the `sprite_draw` entry is
-# the M2-SPRITE-02 Verify command (`ctest -R sprite_draw`), each
-# selecting exactly its suites from the shared executable.
+# Verify command (`ctest -R batcher`), the `sprite_draw` entry is the
+# M2-SPRITE-02 Verify command (`ctest -R sprite_draw`), and the
+# `sprite_frames` entry is the M2-SPRITE-03 Verify command
+# (`ctest -R sprite_frames`), each selecting exactly its suites from
+# the shared executable.
 #
 # Environment note: the GlContextSmoke, RenderThreadOffscreen, and
 # SpriteDraw{State,Smoke,Pipeline} suites require a usable OpenGL 3.3
@@ -123,7 +134,8 @@ add_executable(laige-render_tests
   gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
   iso_depth_key_tests.cpp iso_depth_table_tests.cpp camera_tests.cpp
   iso_camera_tests.cpp projection_tests.cpp iso_picking_tests.cpp
-  depth_sort_tests.cpp sprite_batcher_tests.cpp sprite_draw_tests.cpp)
+  depth_sort_tests.cpp sprite_batcher_tests.cpp sprite_draw_tests.cpp
+  sprite_frames_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -243,6 +255,14 @@ add_test(NAME sprite_draw
          COMMAND laige-render_tests
          --gtest_filter=SpriteDrawCreate.*:SpriteDrawState.*:SpriteDrawSmoke.*:SpriteDrawPipeline.*)
 
+# M2-SPRITE-03: the step's Verify command is `ctest -R sprite_frames`.
+# Pure float/integer math (no GL calls) — runs in every local tree and
+# in CI. No budget gate: the step's roadmap scope has no standalone
+# budget entry (the per-frame conversion cost is part of the composite
+# 50k render-CPU budget, measured with M2-PERF-01).
+add_test(NAME sprite_frames COMMAND laige-render_tests
+         --gtest_filter=SpriteFrame*)
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
@@ -263,8 +283,9 @@ if(LAIGE_TSAN)
   # lock-free handoff's race-freedom, the 3000-frame no-deadlock run);
   # the pure-math `matrices`, `iso_depth_key`, `iso_depth_table`,
   # `camera`, `iso_camera`, `projection`, `iso_picking`, `depth_sort`,
-  # `batcher`, and `sprite_draw` entries carry the option for uniformity
-  # (the pure-math ones have no shared state, but the flag is harmless).
+  # `batcher`, `sprite_draw`, and `sprite_frames` entries carry the
+  # option for uniformity (the pure-math ones have no shared state, but
+  # the flag is harmless).
   # The `sprite_draw` entry is a second TSan gate: the
   # SpriteDrawPipeline integration run drives the render thread's
   # stages against the renderer + batcher from two threads (the GL
@@ -273,7 +294,7 @@ if(LAIGE_TSAN)
   # restated here.
   set_tests_properties(laige-render_tests gl_context render_thread matrices
     iso_depth_key iso_depth_table camera iso_camera projection
-    iso_picking depth_sort batcher sprite_draw PROPERTIES
+    iso_picking depth_sort batcher sprite_draw sprite_frames PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 endif()
@@ -307,7 +328,8 @@ endif()
 # The offscreen smoke creates a real (software) context + FBO; give a
 # slow headless runner generous headroom. The pure-math `matrices`,
 # `iso_depth_key`, `camera`, `iso_camera`, `projection`, `iso_picking`,
-# and `batcher` entries are small (thousands of O(1) computations,
+# `batcher`, and `sprite_frames` entries are small (thousands of O(1)
+# computations,
 # comparisons, and O(1) camera / projection updates and picks at most,
 # plus 10k-cell round trips and a few hundred-sprite batch builds) —
 # 60s is generous headroom.
@@ -326,6 +348,7 @@ set_tests_properties(iso_camera PROPERTIES TIMEOUT 60)
 set_tests_properties(projection PROPERTIES TIMEOUT 60)
 set_tests_properties(iso_picking PROPERTIES TIMEOUT 60)
 set_tests_properties(batcher PROPERTIES TIMEOUT 60)
+set_tests_properties(sprite_frames PROPERTIES TIMEOUT 60)
 # The `iso_depth_table` and `depth_sort` entries include their budget
 # gates: 2 backends x (100 warm-up + 3000 measured) iterations of 10 000
 # setTile calls, and 3 000 sorts of 10 000 keys respectively — a few

@@ -173,7 +173,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R sprite_draw` green (offscreen CI); draw-call count == group count in test log.
   - **Size:** ~300 lines + tests
 
-- [ ] **M2-SPRITE-03 · Atlas UV frame animation hook**
+- [x] **M2-SPRITE-03 · Atlas UV frame animation hook**
   - **Refs:** FR-2.1 (atlas UV animation, sheet frames)
   - **Depends:** M2-SPRITE-02
   - **Scope:**
