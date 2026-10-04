@@ -290,7 +290,9 @@ computes, per instance:
   by the per-instance rotation — the `SpriteItem.rotation` contract
   (rotation is a screen-space property, not a world property);
 - **UV sub-rect**: the per-instance UV rect mapped onto the quad
-  (`(-0.5,-0.5) → u0/v0`, `(0.5,0.5) → u1/v1`);
+  (`(-0.5,-0.5) → u0/v0`, `(0.5,0.5) → u1/v1`) — for animated sprites
+  the rect is `spriteFrameUv`'s output for the caller-set frame index
+  under the atlas's sheet layout (M2-SPRITE-03);
 - **Tint**: `texture(uAtlas, uv) * tint` (multiplicative RGBA).
 
 The sprites are painted back-to-front (the batcher's §4.7 order) with
@@ -309,6 +311,7 @@ and the draw submissions are observable (`SpriteDrawStats` /
 | Depth key → render order | key (+ entity id) → sorted order → groups | `laige-render` (`DepthSort`, M2-SORT-01 stable radix sort; `SpriteBatcher`, M2-SPRITE-01 batcher) | **Shipped (M2-SORT-01 + M2-SPRITE-01)** |
 | Screen → world (per mode) | picking, screen↔world transforms | `laige-render` (`ProjectionView`: `worldToScreen`, `screenToWorldRay`, `screenToWorld`, M2-PROJ-01; `screenToGrid` iso grid picking, M2-ISO-03) | **Shipped (M2-PROJ-01 + M2-ISO-03)** |
 | World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | **Shipped** (matrices + camera core M2-CAM-01, iso presets + grid-snap M2-CAM-02, world→screen transform M2-PROJ-01, pixels: `SpriteRenderer::submit`'s offscreen instanced draw M2-SPRITE-02) |
+| Atlas frame → UV sub-rect | animation frame index + sheet layout → UV rect | `laige-render` (`spriteFrameUv`, M2-SPRITE-03) | **Shipped (M2-SPRITE-03)** |
 
 ### 5.1 The isometric grid picking (M2-ISO-03)
 
@@ -406,6 +409,9 @@ state → same keys → same order, every frame (RENDER-003).
 - [`api/sprite_renderer.md`](../api/sprite_renderer.md) — the instanced
   draw contract: `SpriteRenderer` (groups → one instanced draw call
   each, the frame's pixels) (M2-SPRITE-02).
+- [`api/sprite_frames.md`](../api/sprite_frames.md) — the atlas UV
+  frame animation hook: `SpriteFrameLayout` + `spriteFrameUv`
+  (frame index + sheet layout → the item's UV sub-rect) (M2-SPRITE-03).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —

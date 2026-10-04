@@ -251,11 +251,12 @@ M2-SPRITE-01 landed the sprite item + batcher — the engine-owned
 content is declared, the engine batches; FR-2.1: one draw call per
 (atlas, material, blend) group per frame). Header-only public header
 `include/laige/render/sprite_batcher.h`: `SpriteItem` (the declared
-sprite — world position, the M2-ISO-01 depth key, UV sub-rect,
-rotation, scale, tint, blend, atlas/material refs, the G-R11
-depth-override flag) in a budgeted, accounted `ArenaPool`
-(`SpriteBatcher`, `create(Options{maxSprites})` — ~132 B per capacity
-slot, 6.6 MB at the 50k stress budget); the frame protocol
+sprite — world position, the M2-ISO-01 depth key, UV sub-rect, the
+animation frame index (M2-SPRITE-03), rotation, scale, tint, blend,
+atlas/material refs, the G-R11 depth-override flag) in a budgeted,
+accounted `ArenaPool` (`SpriteBatcher`, `create(Options{maxSprites})`
+— ~136 B per capacity slot, 6.8 MB at the 50k stress budget); the
+frame protocol
 `beginFrame()` → `add(item) × n` → `build()`. `build()` sorts the
 frame's depth keys with the M2-SORT-01 `DepthSort`, groups into
 (atlas, material, blend) batches in deterministic order (ascending
@@ -309,5 +310,27 @@ software GL on the CI offscreen path; the suites self-
 entry: the composite 50k render-CPU budget is measured with this stage
 (M2-PERF-01).
 
-Atlas UV animation (M2-SPRITE-03), render observability (M2-SPRITE-04),
-and sim→render wiring land in the remaining M2 steps.
+M2-SPRITE-03 landed the atlas UV frame animation hook — the
+data-driven half of FR-2.1's "atlas UV animation (sheet frames)": the
+atlas sheet frame LAYOUT (`SpriteFrameLayout`: frame size, row/col,
+the inter-frame spacing + the sheet-edge margin, all in texels — the
+documented sheet model: row-major, frame 0 at the top-left, tight
+sheet `2·border + cols·fw + (cols−1)·spacing`) and the pure
+frame-index → UV sub-rect computation (`spriteFrameUv(frameIndex,
+layout, atlasWidth, atlasHeight)` — O(1), zero allocation,
+float-exact at atlas dimensions ≤ 2^24, the documented `u1 > u0`,
+`v1 > v0` invariant; out-of-range frame → `InvalidArgument`, never
+wrap). `SpriteItem` gained the animation frame index (`frameIndex` —
+the caller sets it, the batcher carries it through untouched; the
+caller also sets `uv` to the frame's UV rect — M3 animation will
+drive the frame advance on top of this same layout). Header-only
+`include/laige/render/sprite_frames.h`; API contract in
+[docs/api/sprite_frames.md](../docs/api/sprite_frames.md), tests
+under [tests/laige-render](../tests/laige-render) (CTest entry
+`sprite_frames` — pure float/integer math, no GL environment
+required). No standalone `budgets.json` entry: the per-frame
+conversion cost is part of the composite 50k render-CPU budget,
+measured with M2-PERF-01.
+
+Render observability (M2-SPRITE-04) and sim→render wiring land in the
+remaining M2 steps.
