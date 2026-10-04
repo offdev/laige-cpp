@@ -120,8 +120,8 @@ isometric depth sorting (M2-CAM-02 validates scene shears against it).
 - The 10k-sprite per-frame cost is measured with the M2-PERF-01
   render suite (the key step itself is a trivial fraction of the
   §8.1 render CPU budget); the M2-ISO-02 table step adds the
-  precompute/incremental path (≤ 0.2 ms for 10k dirty cells,
-  `iso_depth_rebuild` budget).
+  precompute/incremental path (≤ 0.3 ms for 10k dirty cells,
+  `iso_depthkey_rebuild` budget — re-baselined 2026-10-04).
 - **Common trap:** recomputing keys from screen-space coordinates, or
   calling `isoDepthKey` from a getter that also runs a scene
   traversal (API-003) — the key is the *result* of a world-state

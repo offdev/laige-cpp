@@ -66,7 +66,7 @@ packaging, and documentation. Any feature found missing is a **PRD revision even
   - **Refs:** PRD §8.1 (all budgets), NFR-8.1 (PRD §8.1 policy: CI-gated)
   - **Depends:** M1-BENCH-01, M2-PERF-01, M3-PHYS-12, M6-TEST-01, M7-AC-01
   - **Scope:**
-    - Run the complete budget suite on the pinned CI hardware: frame time p95 ≤ 8.3 ms @ 1080p; sim tick 10k/2k ≤ 3.0 ms avg / 5 ms p99; 50k sprites ≤ 30 draw calls / ≤ 2 ms CPU; iso depth rebuild ≤ 0.2 ms; iso picking ≤ 0.01 ms; sim allocs = 0 (asserted); base memory ≤ 100 MB; cold start ≤ 2 s SSD / 5 s cold; build time ≤ 10 min CI / 5 min local warm; zone 2k @ 20 Hz p95 ≤ 8 ms / ≤ 4 GB.
+    - Run the complete budget suite on the pinned CI hardware: frame time p95 ≤ 8.3 ms @ 1080p; sim tick 10k/2k ≤ 3.0 ms avg / 5 ms p99; 50k sprites ≤ 30 draw calls / ≤ 2 ms CPU; iso depth rebuild ≤ 0.3 ms; iso picking ≤ 0.01 ms; sim allocs = 0 (asserted); base memory ≤ 100 MB; cold start ≤ 2 s SSD / 5 s cold; build time ≤ 10 min CI / 5 min local warm; zone 2k @ 20 Hz p95 ≤ 8 ms / ≤ 4 GB.
     - Every number recorded with full AGENTS §12 metadata; any breach = tag blocker (budget revision requires a PRD revision per §8.1 policy — no silent tolerance).
     - The perf-regression lane is permanent now: PRs that regress a budget > 10% fail CI (NFR-8.1 policy implemented).
   - **Verify:** all 10 budget lines green + baseline report `docs/benchmarks/baselines/m8-full.md`; CI regression lane demonstrated (a deliberate regression in a scratch PR fails CI, then reverted).

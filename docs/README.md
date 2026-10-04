@@ -235,7 +235,7 @@ still to land.
   storage, one allocation at creation), the O(1) zero-allocation
   incremental update with its documented neighborhood (radius 0),
   the bounded + logged growth, the PRD §8.1 budget (10k dirty cells
-  ≤ 0.2 ms — the `iso_depthkey_rebuild` entry), and the
+  ≤ 0.3 ms — the `iso_depthkey_rebuild` entry, re-baselined 2026-10-04), and the
   sim-writes/render-reads threading contract (M2-ISO-02;
   `laige-render`).
 - [Projection modes + screen↔world

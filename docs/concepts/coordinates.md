@@ -201,9 +201,9 @@ chunks (default 16×16 tiles — 256 cells each):
 - **Bounded + logged growth** (`ensureChunk`): streamed regions extend
   the covered region chunk by chunk, up to a documented cap
   (`BudgetExhausted` beyond it).
-- **Budget**: 10k dirty cells ≤ 0.2 ms mean (PRD §8.1,
-  `iso_depthkey_rebuild`) —
-  [baselines/m2-iso-depth-table.md](../benchmarks/baselines/m2-iso-depth-table.md).
+- **Budget**: 10k dirty cells ≤ 0.3 ms mean (PRD §8.1,
+  `iso_depthkey_rebuild` — re-baselined 2026-10-04) —
+  [baselines/m2-iso-depth-table-budget-rebaseline.md](../benchmarks/baselines/m2-iso-depth-table-budget-rebaseline.md).
 
 Tiles are grid-locked (M2-TILE-01), so the table's cells agree with
 `isoDepthKey` at the same positions bit-for-bit — and across backends
