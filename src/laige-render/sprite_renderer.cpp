@@ -553,8 +553,10 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
   if (!batcher.frameBuilt()) {
     return laige::Status(laige::ErrorCode::InvalidArgument);
   }
-  // 4. The frame budget (PERF-008: bounded, rate-limited Warn).
-  const std::uint32_t n = batcher.frameCount();
+  // 4. The frame budget (PERF-008: bounded, rate-limited Warn). The
+  // frame count is always <= the batcher's u32 capacity, so the
+  // narrowing is lossless (MSVC C4267).
+  const std::uint32_t n = static_cast<std::uint32_t>(batcher.frameCount());
   if (n > i.maxInstances) {
     LAIGE_LOG_WARN("sprite_renderer", "instance_capacity",
                    "The frame exceeds the renderer instance budget; it is "
