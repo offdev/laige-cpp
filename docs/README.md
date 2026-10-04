@@ -279,14 +279,18 @@ still to land.
   zero-per-frame-allocation contract (M2-SPRITE-01; `laige-render`).
 - [Sprite renderer](api/sprite_renderer.md) —
   `laige::render::SpriteRenderer`: the frame pipeline's submit stage
-  (M2-SPRITE-02): the minimal GLSL 3.30 sprite shader (world position,
-  UV sub-rect, rotation, scale, tint; one atlas texture) and the GPU
-  instanced draw — ONE `glDrawArraysInstanced` per (atlas, material,
-  blend) group per frame, the per-frame / since-construction counters
-  (draw calls, texture binds, blend changes, instances, primitives)
-  as the M2-SPRITE-04 profiler feed, the pre-allocated instance buffer
-  (zero per-frame allocation), and the offscreen 1 000-sprite render
-  verified against a CPU reference.
+  (M2-SPRITE-02) + render observability and the draw-call budget
+  (M2-SPRITE-04, G-R2): the minimal GLSL 3.30 sprite shader (world
+  position, UV sub-rect, rotation, scale, tint; one atlas texture) and
+  the GPU instanced draw — ONE `glDrawArraysInstanced` per (atlas,
+  material, blend) group per frame, the per-frame / since-construction
+  counters (draw calls, texture binds, blend changes, program changes,
+  instances, primitives, upload volume, render-target use, the G-R2
+  draw-call-cap flag) as the M2-PROF-01 profiler feed, the
+  configurable per-pass draw-call cap (default 64; over-cap warns +
+  flags, never gates), the `textureMemoryBytes()` VRAM estimate, the
+  pre-allocated instance buffer (zero per-frame allocation), and the
+  offscreen 1 000-sprite render verified against a CPU reference.
 - [Sprite frames](api/sprite_frames.md) —
   `laige::render::SpriteFrameLayout` + `spriteFrameUv`: the atlas UV
   frame animation hook (M2-SPRITE-03; FR-2.1 "atlas UV animation (sheet
