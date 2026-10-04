@@ -72,3 +72,14 @@ Recorded so far:
   canonical Debug tree (4.4× inside the 1.0 ms gate); 0.161389 ms on
   the clang -O0 cross-run. **The seventh baseline** — updates
   `budgets.json` `measured` for `depth_sort_10k` to 0.225852.
+- [m2-iso-depth-table-budget-rebaseline.md](m2-iso-depth-table-budget-rebaseline.md)
+  (M2-ISO-02 budget revision, 2026-10-04) — re-baselines the
+  `iso_depthkey_rebuild` budget after the CI reference lane (Clang
+  18.1.3 -O0, ubuntu-24.04) measured 0.194–0.267 ms on unchanged
+  engine code against the 0.2 ms bar (repeated zero-margin gate
+  failures, no regression): PRD §8.1 v0.4 `target` 0.2 → **0.3 ms**,
+  `budgets.json` `measured` 0.0814067 → **0.202204** (latest recorded
+  reference-lane value, worse backend). Workload and engine code
+  unchanged. **The eighth baseline** — supersedes
+  `m2-iso-depth-table-workload-fix.md` as the latest recorded value of
+  `iso_depthkey_rebuild`.

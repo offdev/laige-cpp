@@ -117,12 +117,12 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Size:** ~150 lines + tests
 
 - [x] **M2-ISO-02 · Depth key table + incremental updates**
-  - **Refs:** FR-2.2 (precomputed, incremental update), §8.1 (≤ 0.2 ms for 10k dirty cells)
+  - **Refs:** FR-2.2 (precomputed, incremental update), §8.1 (≤ 0.3 ms for 10k dirty cells — re-baselined from 0.2 ms on 2026-10-04, see Change Log)
   - **Depends:** M2-ISO-01
   - **Scope:**
     - Per-scene-chunk depth key table (tile grid → key), built at scene load (headless-buildable: the table is sim-side data).
     - Incremental update API: tile height change → only affected cells recomputed (cell + documented neighborhood radius); no full rebuild.
-    - Budget test: 10k dirty cells update ≤ 0.2 ms (`budgets.json` entry `iso_depth_rebuild`).
+    - Budget test: 10k dirty cells update ≤ 0.2 ms, re-baselined to ≤ 0.3 ms on 2026-10-04 (the CI reference lane measured 0.194–0.267 ms on unchanged code — zero-margin gate; `budgets.json` entry `iso_depthkey_rebuild`).
     - Zero per-update allocation (tables pre-sized per chunk, growth bounded + logged).
     - Unit tests: single-tile edit changes only documented cells; rebuild-from-scratch == incremental result (property test); budget test records baseline.
   - **Verify:** `ctest -R iso_depth_table` green; baseline recorded in `docs/benchmarks/baselines/`.

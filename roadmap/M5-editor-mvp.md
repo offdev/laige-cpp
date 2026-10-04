@@ -123,7 +123,7 @@ explicitly marked P1 and may be descoped from 1.0 by a decision step if M5 slips
   - **Scope:**
     - Height brush: sets per-tile depth/height values (the isometric staple); brush size/strength (linear falloff documented); live depth-key update (stepped terrain renders correctly immediately); budget: height-paint on 10k dirty cells stays within the M2-ISO-02 budget (measured).
     - Animation layers: per-layer tile animation assignment (frame cycle params from M2-TILE-02), layer visibility toggle.
-    - Tests (headless): height brush produces exact per-tile heights (golden); depth rebuild after 10k-cell paint ≤ 0.2 ms (budget entry re-run); animation layer toggle changes render (golden).
+    - Tests (headless): height brush produces exact per-tile heights (golden); depth rebuild after 10k-cell paint ≤ 0.3 ms (budget entry re-run); animation layer toggle changes render (golden).
   - **Verify:** `ctest -R editor_height_brush` green; budget recorded.
   - **Size:** ~250 lines + tests
 
