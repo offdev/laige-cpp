@@ -532,6 +532,18 @@ TEST(RenderCountersScene, PrimitiveQueryFeed) {
   // the 4-vertex strip (20 for the 10-sprite scene).
   const std::vector<SpriteItem> items = sceneItems();
   declareFrame(batcher, items);
+  // The frame-pipeline pattern: the render target is cleared before
+  // the draw (the real frame loop always clears first). Required
+  // here for a second reason — a query-enabled submit as the FIRST
+  // FBO operation leaves the Mesa llvmpipe worker's lazy pipe
+  // initialization in a state that races the context's teardown
+  // under TSan (a driver-internal data race, both accesses inside
+  // libgallium — verified on CI's Mesa 25.2.8 and this machine's
+  // Mesa 26.2.3). A clear before the draw (the
+  // ThousandSpriteFrame pattern) leaves the teardown clean. The
+  // clear touches no sprite-pass state — the counters below are
+  // unaffected.
+  EXPECT_TRUE(ctx.clear(0, 0, 0, 0).ok());
   EXPECT_TRUE(renderer.submit(batcher, matrix).ok());
   const SpriteDrawStats s1 = renderer.frameStats();
   EXPECT_EQ(s1.primitives, 20u);
