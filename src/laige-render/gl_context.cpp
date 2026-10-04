@@ -426,6 +426,12 @@ std::int32_t GlContext::height() const noexcept {
   return impl_->height;
 }
 
+std::uint32_t GlContext::frameBuffer() const noexcept {
+  // A negative query (the refreshRateHz precedent): 0 when stopped and
+  // 0 for windowed contexts (the default frame buffer). No GL call.
+  return (impl_ != nullptr) ? impl_->fbo : 0;
+}
+
 Status GlContext::makeCurrent() const {
   if (impl_ == nullptr) {
     return Status(ErrorCode::InvalidArgument);

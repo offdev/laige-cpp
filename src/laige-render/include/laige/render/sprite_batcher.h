@@ -38,7 +38,8 @@
 //                   id) total order (RENDER-003)
 //   build()         sort the frame's depth keys (M2-SORT-01), group
 //                   into (atlas, material, blend) batches, publish
-//                   batches() for the submit stage (M2-SPRITE-02)
+//                   batches() for the submit stage (M2-SPRITE-02) —
+//                   frameBuilt() gates that submit
 //
 // The declared items are PRESENTATION state (ARCH-009): the game
 // re-declares from its per-frame snapshot (the interpolated positions,
@@ -450,6 +451,14 @@ class SpriteBatcher {
   // The frame's declared count, after the overflow drops.
   // @budget O(1).
   [[nodiscard]] std::size_t frameCount() const noexcept { return count_; }
+  // True only between build() and the next beginFrame(): the submit
+  // stage's (M2-SPRITE-02) precondition — an unbuilt window (including
+  // one with declared items) must never be drawn as an empty frame
+  // (CORE-008). False before the first build and after every
+  // beginFrame(); true on a built empty frame (build() on the
+  // stopped state works and builds the empty frame).
+  // @budget O(1).
+  [[nodiscard]] bool frameBuilt() const noexcept { return frameBuilt_; }
   // G-R11: the current frame's manual depth-override declaration
   // count (reset by beginFrame).
   // @budget O(1).
@@ -576,6 +585,10 @@ class SpriteBatcher {
   // The declaration window is open: after create()/beginFrame(), until
   // build(). false in the default state.
   bool frameOpen_{false};
+  // build() has closed the current window: true between build() and
+  // the next beginFrame() (the submit stage's gate, frameBuilt()).
+  // false in the default state (nothing has been built yet).
+  bool frameBuilt_{false};
   // The ring head: the pool slot of the frame's OLDEST declaration
   // (0 while the frame has never been full — head_ advances only on
   // overflow).
@@ -648,6 +661,7 @@ inline void SpriteBatcher::beginFrame() noexcept {
   batchCount_ = 0;
   overrideCount_ = 0;
   frameOpen_ = true;
+  frameBuilt_ = false;
 }
 
 inline Result<std::uint32_t> SpriteBatcher::add(SpriteItem item) noexcept {
@@ -708,6 +722,7 @@ inline Status SpriteBatcher::build() noexcept {
   groupCount_ = 0;
   if (n == 0) {
     frameOpen_ = false;
+    frameBuilt_ = true;
     return Status{};
   }
   // 1. The frame's keys in declaration (ring window) order — the
@@ -756,6 +771,7 @@ inline Status SpriteBatcher::build() noexcept {
   }
   batchCount_ = groupCount_;
   frameOpen_ = false;
+  frameBuilt_ = true;
   // G-R11: the manual depth-override escape hatch is counted +
   // warned (the preamble — the facade rate-limits the per-frame
   // repeats, LOG-004).

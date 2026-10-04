@@ -162,7 +162,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R batcher` green.
   - **Size:** ~300 lines + tests
 
-- [ ] **M2-SPRITE-02 · GPU instanced draw + sprite shader**
+- [x] **M2-SPRITE-02 · GPU instanced draw + sprite shader**
   - **Refs:** FR-2.1 (GPU-instanced), RENDER-001
   - **Depends:** M2-SPRITE-01, M2-GL-01
   - **Scope:**

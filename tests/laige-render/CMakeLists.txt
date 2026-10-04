@@ -73,7 +73,21 @@
 # hatch, the stopped state / create validation / frame protocol /
 # slot access edges, the determinism property on 3 000-sprite frames
 # against the stable-sort oracle, and the 1 000-frame zero-allocation
-# proof) — pure integer bookkeeping: no GL environment needed.
+# proof) — pure integer bookkeeping: no GL environment needed; and
+# the GPU instanced draw submits (M2-SPRITE-02) — the frame pipeline's
+# submit stage (sprite_draw_tests.cpp's SpriteDraw* suites: the create
+# validation + stopped state (no GL), the submit precondition contract
+# on a live context — the built-frame gate (an unbuilt window is never
+# drawn as an empty frame), the unbound-atlas rejection, the empty
+# frame, the instance-budget BudgetExhausted + warn, the bindAtlas
+# argument domain, the rebind-replaces semantics — the roadmap's
+# 1000-sprite offscreen scene (one instanced draw per group: the
+# dispatch count == the group count, cross-checked against the opt-in
+# GL PRIMITIVES_GENERATED count, and the whole frame pixel-by-pixel
+# against a CPU reference rasterizer), and the 100-frame integration
+# run through the M2-GL-02 RenderThread with the GL handoff) — the
+# GL suites need a usable OpenGL 3.3 environment (the documented
+# environment contract: GTEST_SKIPs where absent).
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -90,24 +104,26 @@
 # Verify command (`ctest -R projection`), the `iso_picking` entry is
 # the M2-ISO-03 Verify command (`ctest -R iso_picking`), the
 # `depth_sort` entry is the M2-SORT-01 Verify command
-# (`ctest -R depth_sort`), and the `batcher` entry is the
-# M2-SPRITE-01 Verify command (`ctest -R batcher`), each selecting
-# exactly its suites from the shared executable.
+# (`ctest -R depth_sort`), the `batcher` entry is the M2-SPRITE-01
+# Verify command (`ctest -R batcher`), and the `sprite_draw` entry is
+# the M2-SPRITE-02 Verify command (`ctest -R sprite_draw`), each
+# selecting exactly its suites from the shared executable.
 #
-# Environment note: the GlContextSmoke and RenderThreadOffscreen suites
-# require a usable OpenGL 3.3 environment — always present on the P0 CI
-# runners (Mesa/ANGLE/Apple/Windows software or hardware drivers), where
-# they must pass. On a local machine without a GL driver the suites
-# GTEST_SKIP with the clean Status reason — the documented environment
-# contract (docs/api/gl_context.md), not an engine failure. The
-# GlContextGate/GlContextArgs/FrameClock/RenderThreadHandoff suites
-# always run (they make no GL calls).
+# Environment note: the GlContextSmoke, RenderThreadOffscreen, and
+# SpriteDraw{State,Smoke,Pipeline} suites require a usable OpenGL 3.3
+# environment — always present on the P0 CI runners (Mesa/ANGLE/Apple/
+# Windows software or hardware drivers), where they must pass. On a
+# local machine without a GL driver the suites GTEST_SKIP with the
+# clean Status reason — the documented environment contract
+# (docs/api/gl_context.md), not an engine failure. The
+# GlContextGate/GlContextArgs/FrameClock/RenderThreadHandoff/
+# SpriteDrawCreate suites always run (they make no GL calls).
 
 add_executable(laige-render_tests
   gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
   iso_depth_key_tests.cpp iso_depth_table_tests.cpp camera_tests.cpp
   iso_camera_tests.cpp projection_tests.cpp iso_picking_tests.cpp
-  depth_sort_tests.cpp sprite_batcher_tests.cpp)
+  depth_sort_tests.cpp sprite_batcher_tests.cpp sprite_draw_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -218,6 +234,15 @@ set_tests_properties(depth_sort PROPERTIES
 add_test(NAME batcher
          COMMAND laige-render_tests --gtest_filter=SpriteBatcher*)
 
+# M2-SPRITE-02: the step's Verify command is `ctest -R sprite_draw`.
+# SpriteDrawCreate runs without any GL environment; SpriteDrawState /
+# SpriteDrawSmoke / SpriteDrawPipeline need the same usable OpenGL 3.3
+# environment as GlContextSmoke (GTEST_SKIPs where absent — the
+# documented environment contract).
+add_test(NAME sprite_draw
+         COMMAND laige-render_tests
+         --gtest_filter=SpriteDrawCreate.*:SpriteDrawState.*:SpriteDrawSmoke.*:SpriteDrawPipeline.*)
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
@@ -238,13 +263,17 @@ if(LAIGE_TSAN)
   # lock-free handoff's race-freedom, the 3000-frame no-deadlock run);
   # the pure-math `matrices`, `iso_depth_key`, `iso_depth_table`,
   # `camera`, `iso_camera`, `projection`, `iso_picking`, `depth_sort`,
-  # and `batcher` entries carry the option for uniformity (they have
-  # no shared state, but the flag is harmless). The test-level
+  # `batcher`, and `sprite_draw` entries carry the option for uniformity
+  # (the pure-math ones have no shared state, but the flag is harmless).
+  # The `sprite_draw` entry is a second TSan gate: the
+  # SpriteDrawPipeline integration run drives the render thread's
+  # stages against the renderer + batcher from two threads (the GL
+  # handoff's race-freedom). The test-level
   # ENVIRONMENT replaces the job-level one, so the budgets path is
   # restated here.
   set_tests_properties(laige-render_tests gl_context render_thread matrices
     iso_depth_key iso_depth_table camera iso_camera projection
-    iso_picking depth_sort batcher PROPERTIES
+    iso_picking depth_sort batcher sprite_draw PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 endif()
@@ -263,12 +292,14 @@ if(LAIGE_ASAN)
   # init (mutually exclusive formats in one file, verified against
   # compiler-rt), and the leak roots are libEGL-internal state objects
   # the engine never holds a pointer to. detect_leaks=0 for the render
-  # entries instead (render_thread's RenderThreadOffscreen suite creates
-  # the same headless context): in-run ASan/UBSan error detection stays
+  # entries instead (render_thread's RenderThreadOffscreen suite and
+  # sprite_draw's SpriteDraw{State,Smoke,Pipeline} suites create the
+  # same headless context): in-run ASan/UBSan error detection stays
   # fully active (the smoke still performs its GL work under the
   # sanitizer). The test-level ENVIRONMENT replaces the job-level
   # ASAN_OPTIONS (GitHub workflow), so mirror its options here.
-  set_tests_properties(laige-render_tests gl_context render_thread PROPERTIES
+  set_tests_properties(laige-render_tests gl_context render_thread
+    sprite_draw PROPERTIES
     ENVIRONMENT
     "ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=${CMAKE_SOURCE_DIR}/asan-reports/asan")
 endif()
@@ -282,6 +313,12 @@ endif()
 # 60s is generous headroom.
 set_tests_properties(laige-render_tests gl_context PROPERTIES TIMEOUT 180)
 set_tests_properties(render_thread PROPERTIES TIMEOUT 300)
+# The `sprite_draw` entry renders a 1000-sprite frame through a real
+# (software) context + FBO, compares the whole 128x128 frame against a
+# CPU reference rasterizer (16 384 pixels x 1000 sprites), and runs the
+# 100-frame RenderThread integration — generous headroom for a slow
+# headless runner, like the offscreen smoke.
+set_tests_properties(sprite_draw PROPERTIES TIMEOUT 300)
 set_tests_properties(matrices PROPERTIES TIMEOUT 60)
 set_tests_properties(iso_depth_key PROPERTIES TIMEOUT 60)
 set_tests_properties(camera PROPERTIES TIMEOUT 60)

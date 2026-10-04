@@ -271,6 +271,35 @@ engine batches:
   integer bookkeeping over the pre-allocated storage (~132 B per
   capacity slot — 6.6 MB at the 50k stress budget).
 
+### 4.8 The sprite draw (M2-SPRITE-02)
+
+The frame's groups become pixels by
+`laige::render::SpriteRenderer`
+(`laige/render/sprite_renderer.h`) — the frame pipeline's SUBMIT
+stage: the engine draws the built frame with ONE GPU-instanced draw
+call per group (FR-2.1, RENDER-001). The minimal GLSL 3.30 shader
+computes, per instance:
+
+- **World position + scale**: `world = pos + corner * scale` — the
+  unit quad's corner ([-0.5, 0.5]²) is scaled in WORLD units and
+  translated to the world position (the scale is applied BEFORE the
+  projection — the `SpriteItem.scale` contract);
+- **Projection**: `worldToNdc * world` (the frame's combined camera
+  matrix — §5's conversion boundary; the 2D ground plane, z = 0);
+- **Rotation IN SCREEN SPACE (NDC)**: the projected offset is rotated
+  by the per-instance rotation — the `SpriteItem.rotation` contract
+  (rotation is a screen-space property, not a world property);
+- **UV sub-rect**: the per-instance UV rect mapped onto the quad
+  (`(-0.5,-0.5) → u0/v0`, `(0.5,0.5) → u1/v1`);
+- **Tint**: `texture(uAtlas, uv) * tint` (multiplicative RGBA).
+
+The sprites are painted back-to-front (the batcher's §4.7 order) with
+the DEPTH TEST DISABLED for the pass — the 2.5D depth is engine-owned
+(FR-2.2, §4), never derived from the projection. The per-group state
+(one texture bind, one blend function) is set once; the state changes
+and the draw submissions are observable (`SpriteDrawStats` /
+`SpriteDrawTotals` — the M2-SPRITE-04 profiler feed).
+
 ## 5. Conversion rules (the module boundaries, RENDER-006)
 
 | Conversion | Direction | Owner | Status |
@@ -279,7 +308,7 @@ engine batches:
 | Tile grid → depth key table | tile heights → precomputed per-tile keys | `laige-render` (`IsoDepthKeyTable`, M2-ISO-02) | **This document / shipped** |
 | Depth key → render order | key (+ entity id) → sorted order → groups | `laige-render` (`DepthSort`, M2-SORT-01 stable radix sort; `SpriteBatcher`, M2-SPRITE-01 batcher) | **Shipped (M2-SORT-01 + M2-SPRITE-01)** |
 | Screen → world (per mode) | picking, screen↔world transforms | `laige-render` (`ProjectionView`: `worldToScreen`, `screenToWorldRay`, `screenToWorld`, M2-PROJ-01; `screenToGrid` iso grid picking, M2-ISO-03) | **Shipped (M2-PROJ-01 + M2-ISO-03)** |
-| World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | shipped to NDC (matrices, camera core M2-CAM-01, iso presets + grid-snap M2-CAM-02, world→screen transform M2-PROJ-01); pixels: M2-SPRITE-02 planned |
+| World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | **Shipped** (matrices + camera core M2-CAM-01, iso presets + grid-snap M2-CAM-02, world→screen transform M2-PROJ-01, pixels: `SpriteRenderer::submit`'s offscreen instanced draw M2-SPRITE-02) |
 
 ### 5.1 The isometric grid picking (M2-ISO-03)
 
@@ -350,9 +379,10 @@ Rules:
 ## 6. Render ordering (summary)
 
 For one isometric frame, objects render in ascending
-`(key, entity id)` order (back to front), drawn by the sprite batcher
-(M2-SPRITE-02) through the engine's stable depth sort
-(`DepthSort`, §4.6, M2-SORT-01).
+`(key, entity id)` order (back to front), batched by the sprite
+batcher (M2-SPRITE-01) and drawn by the sprite renderer (M2-SPRITE-02)
+through the engine's stable depth sort (`DepthSort`, §4.6,
+M2-SORT-01).
 Parallax layers (M2-PAR-01) render background-first via their layer
 values; the UI pass (M2-UI-02) is a separate screen-space pass rendered
 after all world passes. Determinism of the order is total: same world
@@ -373,6 +403,9 @@ state → same keys → same order, every frame (RENDER-003).
 - [`api/sprite_batcher.md`](../api/sprite_batcher.md) — the declare,
   don't draw batcher contract: `SpriteBatcher` (declared sprites →
   (atlas, material, blend) groups) (M2-SPRITE-01).
+- [`api/sprite_renderer.md`](../api/sprite_renderer.md) — the instanced
+  draw contract: `SpriteRenderer` (groups → one instanced draw call
+  each, the frame's pixels) (M2-SPRITE-02).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —

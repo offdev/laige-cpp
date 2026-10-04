@@ -277,6 +277,16 @@ still to land.
   M2-SPRITE-02), the bounded drop-oldest + warn overflow policy, the
   G-R11 counted + warned per-sprite depth override, and the
   zero-per-frame-allocation contract (M2-SPRITE-01; `laige-render`).
+- [Sprite renderer](api/sprite_renderer.md) —
+  `laige::render::SpriteRenderer`: the frame pipeline's submit stage
+  (M2-SPRITE-02): the minimal GLSL 3.30 sprite shader (world position,
+  UV sub-rect, rotation, scale, tint; one atlas texture) and the GPU
+  instanced draw — ONE `glDrawArraysInstanced` per (atlas, material,
+  blend) group per frame, the per-frame / since-construction counters
+  (draw calls, texture binds, blend changes, instances, primitives)
+  as the M2-SPRITE-04 profiler feed, the pre-allocated instance buffer
+  (zero per-frame allocation), and the offscreen 1 000-sprite render
+  verified against a CPU reference.
 
 ## Guides
 
