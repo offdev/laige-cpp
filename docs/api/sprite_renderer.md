@@ -6,24 +6,37 @@ sprite shader. FR-2.1: "one draw call per (atlas, material, blend)
 group per frame; GPU-instanced; supports rotation, scale, tint,
 per-sprite depth, UV sub-rect"; RENDER-001: state changes and draw
 submissions observable (the per-frame / since-construction counters
-below — the M2-SPRITE-04 profiler feed). The renderer consumes the
-M2-SPRITE-01 batcher's BUILT frame and makes exactly ONE
-`glDrawArraysInstanced` per (atlas, material, blend) group; the
-per-group state (one texture bind, one blend function) is set once, so
-state changes are O(group count), not O(sprite count).
+below). The renderer consumes the M2-SPRITE-01 batcher's BUILT frame
+and makes exactly ONE `glDrawArraysInstanced` per (atlas, material,
+blend) group; the per-group state (one texture bind, one blend
+function) is set once, so state changes are O(group count), not
+O(sprite count).
+
+Render observability + the draw-call budget (M2-SPRITE-04, PRD §9.3
+G-R2): the counters carry the profiler's per-frame fields — program
+changes, the per-frame upload volume, the render-target use, the
+texture-memory VRAM estimate (a since-construction gauge), and the
+G-R2 per-pass draw-call cap flag — and the submit honors a
+configurable per-pass draw-call cap (`Options::maxDrawCalls`,
+documented default 64) that WARNS + flags an over-cap frame instead
+of dropping it (observation, never an execution gate).
 
 Public header + implementation:
 `src/laige-render/include/laige/render/sprite_renderer.h`,
 `src/laige-render/sprite_renderer.cpp`.
 
-Unit/integration suite: `ctest -R sprite_draw`
-(`tests/laige-render/sprite_draw_tests.cpp`). The `SpriteDrawState` /
-`SpriteDrawSmoke` / `SpriteDrawPipeline` suites require a usable
-OpenGL 3.3 core environment (the CI path: Mesa software GL on the
-offscreen FBO — `GlContext::createHeadless`); they self-
-`GTEST_SKIP` on an environment failure, never on an engine failure.
-`SpriteDrawCreate` runs everywhere (no GL: options validation, the
-stopped state). The smoke test is the roadmap's offscreen render of a
+Unit/integration suites: `ctest -R sprite_draw`
+(`tests/laige-render/sprite_draw_tests.cpp`) and
+`ctest -R render_counters`
+(`tests/laige-render/render_counters_tests.cpp`, the M2-SPRITE-04
+entry). The `SpriteDrawState` / `SpriteDrawSmoke` /
+`SpriteDrawPipeline` / `RenderCountersScene` / `RenderCountersCap` /
+`RenderCountersMemory` suites require a usable OpenGL 3.3 core
+environment (the CI path: Mesa software GL on the offscreen FBO —
+`GlContext::createHeadless`); they self-`GTEST_SKIP` on an
+environment failure, never on an engine failure. `SpriteDrawCreate`
+and `RenderCountersCreate` run everywhere (no GL: options
+validation, the stopped state). The smoke test is the roadmap's offscreen render of a
 1 000-sprite scene: it asserts `draw call count == group count`
 (3 == 3 in the scene), the GL-side primitive cross-check
 (2 000 == 2 × 1 000), the state-change counts, and the whole 128×128
@@ -37,15 +50,21 @@ primitives=2000 texture_binds=2 blend_changes=3 ...`.
 
 ```cpp
 struct SpriteDrawStats {   // the per-frame counters of the last successful submit
-  std::uint32_t drawCalls;     // instanced draw calls (== group count)
-  std::uint32_t textureBinds;  // texture binds in the pass
-  std::uint32_t blendChanges;  // blend-function changes in the pass
-  std::uint32_t instances;     // instances drawn this frame
-  std::uint32_t primitives;    // PRIMITIVES_GENERATED (query on only)
+  std::uint32_t drawCalls;         // instanced draw calls (== group count)
+  std::uint32_t textureBinds;      // texture binds in the pass
+  std::uint32_t blendChanges;      // blend-function changes in the pass
+  std::uint32_t programChanges;    // program changes (glUseProgram) in the pass
+  std::uint32_t instances;         // instances drawn this frame
+  std::uint32_t primitives;        // PRIMITIVES_GENERATED (query on only)
+  std::uint64_t uploadBytes;       // the frame's instance upload, in bytes
+  std::uint64_t renderTargetBytes; // the render-target size drawn, in bytes
+  bool drawCallCapExceeded;        // G-R2: draw calls exceeded the cap
 };
 
 struct SpriteDrawTotals {    // since-construction (successful submits only)
-  std::uint64_t frames, drawCalls, textureBinds, blendChanges, instances, primitives;
+  std::uint64_t frames, drawCalls, textureBinds, blendChanges,
+      programChanges, instances, primitives, uploadBytes,
+      renderTargetBytes, capExceededFrames;
 };
 
 class SpriteRenderer {
@@ -53,10 +72,12 @@ class SpriteRenderer {
   struct Options {
     std::uint32_t maxInstances{0};   // per-frame instance budget
     std::uint32_t maxAtlases{0};     // atlas-id domain [0, maxAtlases)
+    std::uint32_t maxDrawCalls{64};  // per-pass draw-call cap (G-R2)
     bool primitiveQuery{false};      // opt-in PRIMITIVES_GENERATED query
   };
   static constexpr std::uint32_t kSpriteRendererMaxInstances = 0xFFFFFFFFu;
   static constexpr std::uint32_t kSpriteRendererMaxAtlases = 4096u;
+  static constexpr std::uint32_t kSpriteRendererDefaultDrawCalls = 64u;
 
   SpriteRenderer() noexcept;                 // stopped state
   [[nodiscard]] static Result<SpriteRenderer, ErrorCode>
@@ -64,11 +85,13 @@ class SpriteRenderer {
   [[nodiscard]] bool valid() const noexcept;
   [[nodiscard]] std::uint32_t maxInstances() const noexcept;
   [[nodiscard]] std::uint32_t maxAtlases() const noexcept;
+  [[nodiscard]] std::uint32_t maxDrawCalls() const noexcept;
   [[nodiscard]] Status bindAtlas(std::uint32_t atlasId, std::uint32_t w,
                                  std::uint32_t h, std::span<const std::uint8_t> rgba);
   [[nodiscard]] Status submit(SpriteBatcher& batcher, const Mat4& worldToNdc);
   [[nodiscard]] SpriteDrawStats frameStats() const noexcept;  // last success (else zero)
   [[nodiscard]] SpriteDrawTotals totals() const noexcept;
+  [[nodiscard]] std::uint64_t textureMemoryBytes() const noexcept;  // VRAM estimate
   // move-only (copy deleted)
 };
 ```
@@ -82,14 +105,19 @@ class SpriteRenderer {
   `GL_STATIC_DRAW`), the per-frame instance buffer
   (`maxInstances * 52` B, `GL_DYNAMIC_DRAW`), and the VAO (quad
   attribute at divisor 0; the five instance attributes at divisor 1),
-  and the atlas registry (`maxAtlases` × 8 B). Any GL failure returns
+  and the atlas registry (`maxAtlases` × 16 B). Any GL failure returns
   `GlUnavailable` with ONE structured Error event (`program_creation_failed`
   or `resource_creation_failed`, with the GL error code + the sanitized
   info log) and no partial renderer (the failure is the stopped state).
-  `Options::maxInstances` / `maxAtlases` domains:
-  `[1, kSpriteRendererMaxInstances]` / `[1, kSpriteRendererMaxAtlases]`.
-  The 4 096-slot registry (32 KB) is far beyond the PRD's 50k-sprite
-  scene (≤ 30 draw calls = tens of atlases at most).
+  `Options::maxInstances` / `maxAtlases` / `maxDrawCalls` domains:
+  `[1, kSpriteRendererMaxInstances]` / `[1, kSpriteRendererMaxAtlases]` /
+  `[1, kSpriteRendererMaxInstances]` (a frame's draw calls can never
+  exceed its instance count — each group has ≥ 1 instance). The 4 096-
+  slot registry (64 KB with the M2-SPRITE-04 width/height
+  bookkeeping) is far beyond the PRD's 50k-sprite scene (≤ 30 draw
+  calls = tens of atlases at most). The documented default draw-call
+  cap is `kSpriteRendererDefaultDrawCalls` (64 — 2× the PRD §8.1
+  worst-case reference-scene budget of 30 draw calls).
 - **`bindAtlas(atlasId, w, h, rgba)`** is the **set-up/asset path**
   (one call per atlas per scene load; the asset system re-uploads them
   later, M3 — RENDER-004: no unexpected GPU work in the frame hot
@@ -98,10 +126,12 @@ class SpriteRenderer {
   `rgba.size() == w*h*4`. Uploads GL_RGBA8, `GL_NEAREST`,
   `GL_CLAMP_TO_EDGE`, no mipmaps (the UV sub-rects are pixel-exact —
   the M2-GOLD-01 contract). Re-binding an id REPLACES the texture
-  (the old one is deleted; the last bind wins). Validation failures:
-  `InvalidArgument` (no GL work, no logging — the precondition
-  contract); a GL upload failure: `GlUnavailable` + one Error
-  (`atlas_upload_failed`).
+  (the old one is deleted; the last bind wins — the M2-SPRITE-04
+  texture-memory gauge tracks the replacement: the old upload's
+  `w * h * 4` bytes are subtracted, the new ones added). Validation
+  failures: `InvalidArgument` (no GL work, no logging — the
+  precondition contract); a GL upload failure: `GlUnavailable` + one
+  Error (`atlas_upload_failed`).
 - **`submit(batcher, worldToNdc)`** is the per-frame draw (the frame
   protocol: after the batch stage's `beginFrame()`/`add()`×n/`build()`).
   Preconditions, checked in order (first failure wins — a FAILED
@@ -124,13 +154,22 @@ class SpriteRenderer {
      failure per frame; the batcher admits any u32 atlas id, so the
      registry range check precedes the registry read).
 
-  Then: pack the frame's instances (group order = the batcher's
-  published order; in-group = the back-to-front order) into the
-  pre-allocated staging (52 B per instance — the items' floats are
-  copied verbatim, no float arithmetic — the GPU owns the math,
-  FR-2.2/PERF-003), ONE `glBufferSubData` upload, and the per-group
-  state + draw. `worldToNdc` is the frame's combined world → NDC
-  matrix (`IsoCamera::matrix()` — M2-CAM-02 — or the M2-PROJ-01 view's
+  After the preconditions (BEFORE any GL state): the G-R2 per-pass
+  draw-call cap (PRD §9.3) — the frame's draw calls (== its group
+  count) strictly above `maxDrawCalls` fire one rate-limited Warn
+  `draw_call_cap` (fields `capacity`, `draw_calls`) and set the
+  frame's `drawCallCapExceeded` flag (the frame-graph flag M2-PROF-01
+  will report; the total `capExceededFrames` counts it). The frame is
+  STILL drawn — the cap is observation, never an execution gate (the
+  G-R5 precedent). Then: pack the frame's instances (group order =
+  the batcher's published order; in-group = the back-to-front order)
+  into the pre-allocated staging (52 B per instance — the items'
+  floats are copied verbatim, no float arithmetic — the GPU owns the
+  math, FR-2.2/PERF-003), ONE `glBufferSubData` upload (counted in
+  `uploadBytes`), and the per-group state + draw (the program change
+  counted in `programChanges`, the render-target size in
+  `renderTargetBytes`). `worldToNdc` is the frame's combined world →
+  NDC matrix (`IsoCamera::matrix()` — M2-CAM-02 — or the M2-PROJ-01 view's
   combined matrix; RENDER-006: the conversion boundary is the
   matrix). The batcher reference is non-const only because the
   batcher's pool accessors are (the M2-SPRITE-01 house quirk);
@@ -140,7 +179,16 @@ class SpriteRenderer {
 - **`frameStats()`** — the per-frame counters of the last SUCCESSFUL
   submit (a failed submit reads zero). **`totals()`** — the
   since-construction counters (successful submits only). Both O(1), no
-  allocation.
+  allocation. The M2-SPRITE-04 fields: `programChanges` (program
+  changes), `uploadBytes` (the frame's instance upload, n × 52 B),
+  `renderTargetBytes` (the render-target size drawn, w × h × 4),
+  `drawCallCapExceeded` (the G-R2 flag), and the totals'
+  `capExceededFrames` (successful over-cap submits).
+- **`textureMemoryBytes()`** — the texture-memory VRAM estimate: the
+  sum of `w * h * 4` over the BOUND atlases (set-up/asset path —
+  updated at each `bindAtlas`, replaced on re-bind, 0 in the stopped
+  state). A since-construction gauge (the texture's current memory
+  footprint), O(1), no allocation, no GL call.
 - **`Options::primitiveQuery`** (off by default): the opt-in GL
   `PRIMITIVES_GENERATED` query around every submit — the GL-side
   dispatch cross-check + the M2-SPRITE-04 primitive feed. ON: one
@@ -181,6 +229,48 @@ the engine's own bookkeeping (`drawCalls` — what the M2-SPRITE-04
 profiler ships), and the GL-side cross-check is the opt-in
 `PRIMITIVES_GENERATED` count (`primitives` — 2 per instance of the
 4-vertex strip: 2 000 for the 1 000-sprite scene).
+
+## Render observability + the draw-call cap (M2-SPRITE-04, PRD §9.3 G-R2)
+
+The profiler's per-frame fields (RENDER-001 + DBG-008), shipped with
+this step (the M2-SPRITE-02 counters were already its feed):
+
+| Field | Meaning |
+| --- | --- |
+| `drawCalls` | instanced draw calls == group count |
+| `textureBinds` | texture binds in the pass |
+| `blendChanges` | blend-function changes in the pass |
+| `programChanges` | program changes (`glUseProgram`) in the pass — 1 per successful non-empty frame (the pass sets its own program) |
+| `instances` | instances drawn this frame |
+| `primitives` | `PRIMITIVES_GENERATED` (query on only) |
+| `uploadBytes` | the frame's instance upload: `n × 52` B |
+| `renderTargetBytes` | the render-target size drawn: `w × h × 4` |
+| `drawCallCapExceeded` | the G-R2 flag: the frame's draw calls strictly exceeded `maxDrawCalls` |
+| `capExceededFrames` (totals) | successful over-cap submits since construction |
+| `textureMemoryBytes()` | the VRAM estimate: bound atlases' `w × h × 4` sum (gauge) |
+
+The per-pass draw-call cap (G-R2: "per-pass cap configurable → warn +
+frame graph flag"): `Options::maxDrawCalls` (documented default
+`kSpriteRendererDefaultDrawCalls` = 64, 2× the PRD §8.1 worst-case
+reference-scene budget of 30 draw calls; domain
+`[1, kSpriteRendererMaxInstances]`). Exceeding it:
+
+- fires ONE rate-limited Warn `draw_call_cap` (fields `capacity`,
+  `draw_calls`) on the over-cap submit;
+- sets the frame's `drawCallCapExceeded` flag (the frame-graph flag
+  M2-PROF-01 will report) and the totals' `capExceededFrames`;
+- does NOT change what is drawn — observation, never an execution
+  gate (the G-R5 precedent: budgets observe and report, the frame
+  proceeds). The frame's draw calls are always == its group count
+  (one instanced draw per group), so the cap is set on the scene's
+  expected group count.
+
+The exact small scene of the roadmap (10 sprites, 2 atlases, 2 blends
+→ 3 groups): `ctest -R render_counters` (`RenderCountersScene`) pins
+every field EXACTLY (frame 1 + frame 2 + the totals), the cap warns at
+the configured count with the pinned fields (`RenderCountersCap`),
+and the VRAM gauge tracks binds + re-bind replacements exactly
+(`RenderCountersMemory`).
 
 ## The shader and the pass's GL state
 
@@ -238,7 +328,10 @@ arithmetic, the GPU owns the math).
 
 The state changes are observable (RENDER-001 — the M2-SPRITE-04
 profiler feed): `textureBinds`, `blendChanges`, `drawCalls`,
-`instances`, `primitives` (query on only). The composite 50k
+`instances`, `primitives` (query on only), plus the M2-SPRITE-04
+fields `programChanges`, `uploadBytes`, `renderTargetBytes`, the
+G-R2 `drawCallCapExceeded` flag (+ the totals' `capExceededFrames`),
+and the `textureMemoryBytes()` VRAM estimate. The composite 50k
 render-CPU budget (PRD §8.1) is measured with this stage at
 M2-PERF-01; there is no standalone budgets.json entry here (the sort
 cost is the `depth_sort_10k` budget — M2-SORT-01).
@@ -289,6 +382,10 @@ state.
 - `submit` requires the batcher BUILT for the current frame — an open
   window with declared items fails `InvalidArgument`; it is never
   drawn as an empty frame (CORE-008).
+- The per-pass draw-call cap (`Options::maxDrawCalls`) is OBSERVATION
+  (warn + flag), never an execution gate: the frame is still drawn —
+  set it to the scene's expected group count, not to a value the
+  scene must fit.
 - The context must be valid; `submit` makes it current on the calling
   thread (idempotent — the M2-GL-02 onStart hook does it once, submit
   re-affirms it); a cross-thread live takeover fails `GlUnavailable`

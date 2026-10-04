@@ -128,6 +128,7 @@ struct SpriteRenderer::Impl {
   const GlContext* ctx{};
   std::uint32_t maxInstances{0};
   std::uint32_t maxAtlases{0};
+  std::uint32_t maxDrawCalls{0};
   std::int32_t maxTextureSize{0};
   bool valid{false};
 
@@ -140,9 +141,17 @@ struct SpriteRenderer::Impl {
   std::uint32_t vao{0};
   struct Atlas {
     std::uint32_t texture{0};
+    // The M2-SPRITE-04 VRAM estimate's bookkeeping: the uploaded
+    // width/height (w * h * 4 bytes, GL_RGBA8).
+    std::uint32_t width{0};
+    std::uint32_t height{0};
     bool bound{false};
   };
   std::unique_ptr<Atlas[]> atlases;
+  // The VRAM estimate (M2-SPRITE-04): the bound atlases' w * h * 4
+  // sum, kept current at bindAtlas (a re-bind replaces: subtract old,
+  // add new). A gauge — it never changes per frame.
+  std::uint64_t textureMemoryBytes{0};
   // The per-frame CPU staging (maxInstances * kInstanceFloats floats,
   // sized at create — FR-2.2).
   std::unique_ptr<float[]> staging;
@@ -229,12 +238,20 @@ std::uint32_t SpriteRenderer::maxAtlases() const noexcept {
   return (impl_ != nullptr && impl_->valid) ? impl_->maxAtlases : 0;
 }
 
+std::uint32_t SpriteRenderer::maxDrawCalls() const noexcept {
+  return (impl_ != nullptr && impl_->valid) ? impl_->maxDrawCalls : 0;
+}
+
 SpriteDrawStats SpriteRenderer::frameStats() const noexcept {
   return (impl_ != nullptr) ? impl_->frame : SpriteDrawStats{};
 }
 
 SpriteDrawTotals SpriteRenderer::totals() const noexcept {
   return (impl_ != nullptr) ? impl_->totals : SpriteDrawTotals{};
+}
+
+std::uint64_t SpriteRenderer::textureMemoryBytes() const noexcept {
+  return (impl_ != nullptr && impl_->valid) ? impl_->textureMemoryBytes : 0;
 }
 
 // ------------------------------------------------------------------------
@@ -255,6 +272,10 @@ laige::Result<SpriteRenderer, laige::ErrorCode> SpriteRenderer::create(
              options.maxAtlases > kSpriteRendererMaxAtlases) {
     badOption = "maxAtlases";
     badValue = options.maxAtlases;
+  } else if (options.maxDrawCalls < 1 ||
+             options.maxDrawCalls > kSpriteRendererMaxInstances) {
+    badOption = "maxDrawCalls";
+    badValue = options.maxDrawCalls;
   }
   if (badOption != nullptr) {
     LAIGE_LOG_WARN("sprite_renderer", "options_invalid",
@@ -280,6 +301,7 @@ laige::Result<SpriteRenderer, laige::ErrorCode> SpriteRenderer::create(
   impl->ctx = &ctx;
   impl->maxInstances = options.maxInstances;
   impl->maxAtlases = options.maxAtlases;
+  impl->maxDrawCalls = options.maxDrawCalls;
   impl->primitiveQuery = options.primitiveQuery;
   impl->maxTextureSize = ctx.capabilities().maxTextureSize;
   impl->atlases = std::make_unique<Impl::Atlas[]>(options.maxAtlases);
@@ -519,12 +541,23 @@ laige::Status SpriteRenderer::bindAtlas(std::uint32_t atlasId,
     return laige::Status(laige::ErrorCode::GlUnavailable);
   }
   // The last bind wins: replace any previous texture on this id.
+  // The M2-SPRITE-04 VRAM estimate tracks the replacement (subtract
+  // the old upload, add the new — both exact GL_RGBA8 byte counts).
   Impl::Atlas& slot = i.atlases[atlasId];
+  const std::uint64_t newBytes =
+      static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) *
+      4u;
   if (slot.bound) {
     glDeleteTextures(1, &slot.texture);
+    i.textureMemoryBytes -=
+        static_cast<std::uint64_t>(slot.width) *
+        static_cast<std::uint64_t>(slot.height) * 4u;
   }
   slot.texture = texture;
+  slot.width = width;
+  slot.height = height;
   slot.bound = true;
+  i.textureMemoryBytes += newBytes;
   return laige::Status{};
 }
 
@@ -578,6 +611,23 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
       return laige::Status(laige::ErrorCode::InvalidArgument);
     }
   }
+  // G-R2 (PRD §9.3): the per-pass draw-call cap. The frame's draw
+  // calls == its group count (one instanced draw per group); above
+  // the cap the frame is STILL drawn — observation, never an
+  // execution gate (the G-R5 precedent): one rate-limited Warn
+  // (LOG-004) + the frame-graph flag on the frame (M2-PROF-01 will
+  // report it) + the since-construction total. The batcher's group
+  // count is always <= its u32 capacity, so the narrowing is
+  // lossless (MSVC C4267).
+  const std::uint32_t groups = static_cast<std::uint32_t>(batcher.batchCount());
+  if (groups > i.maxDrawCalls) {
+    i.frame.drawCallCapExceeded = true;
+    LAIGE_LOG_WARN("sprite_renderer", "draw_call_cap",
+                   "The frame exceeds the per-pass draw-call cap; it is "
+                   "still drawn",
+                   laige::log::field("capacity", i.maxDrawCalls),
+                   laige::log::field("draw_calls", groups));
+  }
   // The empty frame: nothing to draw — count it, no GL state.
   if (n == 0) {
     i.totals.frames += 1;
@@ -593,12 +643,21 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
   //    depth test OFF (the painter's order is the batcher's — the 2.5D
   //    depth is engine-owned, FR-2.2), blend ENABLED, the program +
   //    the per-frame matrix uniform.
+  // The M2-SPRITE-04 render-target-use field: the size of the
+  // render target this submit draws (width * height * 4, RGBA8).
+  i.frame.renderTargetBytes =
+      static_cast<std::uint64_t>(i.ctx->width()) *
+      static_cast<std::uint64_t>(i.ctx->height()) * 4u;
   glBindFramebuffer(GL_FRAMEBUFFER, i.ctx->frameBuffer());
   glViewport(0, 0, i.ctx->width(), i.ctx->height());
   glDisable(GL_DEPTH_TEST);
   glEnable(GL_BLEND);
   glBindVertexArray(i.vao);
   glUseProgram(i.program);
+  // The M2-SPRITE-04 program-change counter: the pass sets its own
+  // program at the start (the previous pass's glUseProgram(0) makes
+  // this a real change — exactly 1 per non-empty successful submit).
+  i.frame.programChanges += 1;
   glUniformMatrix4fv(i.locMatrix, 1, GL_FALSE, &worldToNdc[0].x);
   glActiveTexture(GL_TEXTURE0);
   glUniform1i(i.locAtlas, 0);
@@ -628,7 +687,10 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
     }
   }
   // 8. The ONE per-frame upload (RENDER-004: the observable GPU work
-  //    of the pass — n * 52 B; M2-SPRITE-04 meters it).
+  //    of the pass — n * 52 B; M2-SPRITE-04 meters it in
+  //    uploadBytes).
+  i.frame.uploadBytes =
+      static_cast<std::uint64_t>(n) * static_cast<std::uint64_t>(kInstanceBytes);
   glBindBuffer(GL_ARRAY_BUFFER, i.instanceVbo);
   glBufferSubData(GL_ARRAY_BUFFER, 0,
                   static_cast<GLsizeiptr>(static_cast<std::size_t>(n) *
@@ -638,6 +700,7 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
   if (uploadError != GL_NO_ERROR) {
     glUseProgram(0);
     glBindVertexArray(0);
+    i.frame = SpriteDrawStats{};  // a failed submit counts nothing
     LAIGE_LOG_ERROR("sprite_renderer", "submit_failed",
                     "The instance upload failed; the frame is not drawn",
                     laige::log::field("gl_error",
@@ -655,6 +718,7 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
     if (query == 0) {
       glUseProgram(0);
       glBindVertexArray(0);
+      i.frame = SpriteDrawStats{};  // a failed submit counts nothing
       LAIGE_LOG_ERROR("sprite_renderer", "submit_failed",
                       "The primitive query object could not be created; "
                       "the frame is not drawn",
@@ -750,8 +814,14 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
   i.totals.drawCalls += i.frame.drawCalls;
   i.totals.textureBinds += i.frame.textureBinds;
   i.totals.blendChanges += i.frame.blendChanges;
+  i.totals.programChanges += i.frame.programChanges;
   i.totals.instances += i.frame.instances;
   i.totals.primitives += i.frame.primitives;
+  i.totals.uploadBytes += i.frame.uploadBytes;
+  i.totals.renderTargetBytes += i.frame.renderTargetBytes;
+  if (i.frame.drawCallCapExceeded) {
+    i.totals.capExceededFrames += 1;
+  }
   return laige::Status{};
 }
 

@@ -183,7 +183,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R sprite_frames` green.
   - **Size:** ~100 lines + tests
 
-- [ ] **M2-SPRITE-04 · Render observability + draw-call budget (G-R2)**
+- [x] **M2-SPRITE-04 · Render observability + draw-call budget (G-R2)**
   - **Refs:** RENDER-001 (state changes, draw submissions observable), PRD §9.3 G-R2
   - **Depends:** M2-SPRITE-02
   - **Scope:**

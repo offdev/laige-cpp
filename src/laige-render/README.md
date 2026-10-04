@@ -294,8 +294,11 @@ then the per-group texture bind / blend function / instanced draw; a
 failed submit draws nothing, counts nothing, and leaves no stale
 sprite-pass state). The observable counters (`SpriteDrawStats` /
 `SpriteDrawTotals`: draw calls == group count, texture binds, blend
-changes, instances, the opt-in `PRIMITIVES_GENERATED` primitives) feed
-the M2-SPRITE-04 profiler. `GlContext::frameBuffer()` exposes the
+changes, instances, the opt-in `PRIMITIVES_GENERATED` primitives —
+extended in M2-SPRITE-04 with the profiler's per-frame fields: program
+changes, upload volume, render-target use, the texture-memory VRAM
+estimate, and the G-R2 draw-call-cap flag) feed the M2-PROF-01
+profiler. `GlContext::frameBuffer()` exposes the
 offscreen FBO the pass binds per frame (the surfaceless default frame
 buffer is not a valid draw target; the pass also sets the viewport).
 The offscreen 1 000-sprite render is verified against a CPU reference
@@ -332,5 +335,32 @@ required). No standalone `budgets.json` entry: the per-frame
 conversion cost is part of the composite 50k render-CPU budget,
 measured with M2-PERF-01.
 
-Render observability (M2-SPRITE-04) and sim→render wiring land in the
-remaining M2 steps.
+M2-SPRITE-04 landed render observability + the draw-call budget —
+the M2-SPRITE-04 profiler fields on top of the M2-SPRITE-02 counters
+(G-R2, PRD §9.3): `SpriteDrawStats` gained `programChanges`,
+`uploadBytes` (the frame's instance upload, n × 52 B),
+`renderTargetBytes` (the render-target size drawn, w × h × 4), and the
+G-R2 `drawCallCapExceeded` flag; `SpriteDrawTotals` gained the
+`programChanges`, `uploadBytes`, `renderTargetBytes`, and
+`capExceededFrames` sums. `SpriteRenderer::Options` gained the
+configurable per-pass draw-call cap (`maxDrawCalls`, documented
+default `kSpriteRendererDefaultDrawCalls` = 64 — 2× the PRD §8.1
+worst-case reference-scene budget of 30 draw calls; domain
+`[1, kSpriteRendererMaxInstances]`); an over-cap frame fires one
+rate-limited Warn `draw_call_cap` (fields `capacity`, `draw_calls`),
+sets the flag, and is STILL drawn — observation, never an execution
+gate (the G-R5 precedent). The new `textureMemoryBytes()` gauge
+reports the bound atlases' `w × h * 4` sum (the texture-memory VRAM
+estimate — updated at each `bindAtlas`, the replacement subtracts the
+old upload). API contract in
+[docs/api/sprite_renderer.md](../docs/api/sprite_renderer.md) (the
+"Render observability + the draw-call cap" section), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry
+`render_counters` — `RenderCountersCreate` is GL-free, the scene/cap/
+memory suites require a usable OpenGL 3.3 environment and self-
+`GTEST_SKIP` on an environment failure). No standalone `budgets.json`
+entry: the counters are O(1) bookkeeping and the composite 50k
+render-CPU budget is measured with this stage (M2-PERF-01).
+
+The remaining M2 steps (M2-TILE-01, M2-PAR-01, text/UI, M2-PERF-01)
+land in later steps.
