@@ -28,6 +28,9 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstdio>
+#if !defined(_MSC_VER)
+#include <dlfcn.h>  // dladdr (the alloc-site module/symbol, POSIX)
+#endif
 #include <memory>
 #include <string>
 #include <utility>
@@ -803,6 +806,33 @@ TEST(TileMapDeclare, NoLogsOnHappyPath) {
 // (FR-2.2)
 // ---------------------------------------------------------------------------
 
+// The first offending site, resolved to its module + symbol when the
+// platform provides dladdr (POSIX — the macOS/Linux lanes): the
+// actionable context for the failure (LOG-002, FR-12.3). Raw address
+// elsewhere (the Windows lane — MSVC has no dladdr).
+std::string describeAllocSite(const void* site) {
+#if defined(_MSC_VER)
+  return "<raw site " +
+         std::to_string(reinterpret_cast<std::uintptr_t>(site)) + ">";
+#else
+  Dl_info info;
+  if (site != nullptr && dladdr(site, &info) != 0 &&
+      info.dli_fname != nullptr) {
+    std::string out = info.dli_fname;
+    if (info.dli_sname != nullptr) {
+      out += " +";
+      out += info.dli_sname;
+    }
+    out += " (addr ";
+    out += std::to_string(reinterpret_cast<std::uintptr_t>(site));
+    out += ")";
+    return out;
+  }
+  return "<unresolved site " +
+         std::to_string(reinterpret_cast<std::uintptr_t>(site)) + ">";
+#endif
+}
+
 template <typename Backend>
 void declareLoopAllocatesNothing() {
   using Map = TileMap<Backend>;
@@ -823,24 +853,47 @@ void declareLoopAllocatesNothing() {
   auto rb = SpriteBatcher::create(bo);
   ASSERT_TRUE(rb.ok());
   auto batcher = std::move(rb).takeValue();
+  auto runFrames = [&]() {
+    for (std::int32_t frame = 0; frame < 1000; ++frame) {
+      batcher.beginFrame();
+      ASSERT_TRUE(
+          m.declareTo(batcher, typename Map::DeclareOptions{}).ok())
+          << "frame " << frame;
+      ASSERT_TRUE(batcher.build().ok()) << "frame " << frame;
+    }
+  };
   // Zero-allocation proof (where the watch is live — the non-
   // sanitizer trees; the sanitizer runtimes own operator new):
   // 1000 frames of the declare loop allocate nothing (the batcher and
-  // the sorter storage are pre-allocated):
+  // the sorter storage are pre-allocated).
+  //
+  // Two stages. The GL/GLFW suites earlier in this binary load the
+  // macOS graphics framework chain, which does a ONE-TIME lazy
+  // initialization asynchronously after load (observed in CI: a
+  // QuartzCore-internal hash table rehash — 48/8/6 blocks across
+  // runs, macOS arm64 AND Intel — landing in whichever armed window
+  // catches it). The settle stage re-runs the loop under armed
+  // windows until a CLEAN window is observed, absorbing that
+  // one-time init; the proof stage then pins the steady-state
+  // property (FR-2.2 "no per-frame allocation"). A genuine
+  // engine-side first-frame allocation is NOT hidden by this: the
+  // SpriteBatcher* suites (earlier in this binary) already exercise
+  // create/beginFrame/add/build under their own armed windows in the
+  // same process.
   if (laige::allocWatchLive()) {
-    laige::allocWatchArm();
-    for (std::int32_t frame = 0; frame < 1000; ++frame) {
-      batcher.beginFrame();
-      auto s = m.declareTo(batcher, typename Map::DeclareOptions{});
-      if (!s.ok()) return;
-      auto b = batcher.build();
-      if (!b.ok()) return;
+    for (std::uint32_t settle = 0; settle < 4; ++settle) {
+      laige::allocWatchArm();
+      runFrames();
+      if (laige::allocWatchRead().allocs == 0) break;
     }
+    laige::allocWatchArm();
+    runFrames();
     const laige::AllocWatchReading reading = laige::allocWatchRead();
     EXPECT_EQ(reading.allocs, 0u)
         << "1000 frames of beginFrame/declareTo/build allocated "
-        << reading.allocs << " heap blocks (first site: "
-        << (void*)reading.firstSite << ")";
+        << reading.allocs << " heap blocks after a clean settle window "
+           "(first site: "
+        << describeAllocSite(reading.firstSite) << ")";
   }
 }
 
