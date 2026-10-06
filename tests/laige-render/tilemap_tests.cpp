@@ -28,6 +28,9 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstdio>
+#if !defined(_MSC_VER)
+#include <dlfcn.h>  // dladdr (the alloc-site module/symbol, POSIX)
+#endif
 #include <memory>
 #include <string>
 #include <utility>
@@ -803,6 +806,33 @@ TEST(TileMapDeclare, NoLogsOnHappyPath) {
 // (FR-2.2)
 // ---------------------------------------------------------------------------
 
+// The first offending site, resolved to its module + symbol when the
+// platform provides dladdr (POSIX — the macOS/Linux lanes): the
+// actionable context for the failure (LOG-002, FR-12.3). Raw address
+// elsewhere (the Windows lane — MSVC has no dladdr).
+std::string describeAllocSite(const void* site) {
+#if defined(_MSC_VER)
+  return "<raw site " +
+         std::to_string(reinterpret_cast<std::uintptr_t>(site)) + ">";
+#else
+  Dl_info info;
+  if (site != nullptr && dladdr(site, &info) != 0 &&
+      info.dli_fname != nullptr) {
+    std::string out = info.dli_fname;
+    if (info.dli_sname != nullptr) {
+      out += " +";
+      out += info.dli_sname;
+    }
+    out += " (addr ";
+    out += std::to_string(reinterpret_cast<std::uintptr_t>(site));
+    out += ")";
+    return out;
+  }
+  return "<unresolved site " +
+         std::to_string(reinterpret_cast<std::uintptr_t>(site)) + ">";
+#endif
+}
+
 template <typename Backend>
 void declareLoopAllocatesNothing() {
   using Map = TileMap<Backend>;
@@ -831,16 +861,16 @@ void declareLoopAllocatesNothing() {
     laige::allocWatchArm();
     for (std::int32_t frame = 0; frame < 1000; ++frame) {
       batcher.beginFrame();
-      auto s = m.declareTo(batcher, typename Map::DeclareOptions{});
-      if (!s.ok()) return;
-      auto b = batcher.build();
-      if (!b.ok()) return;
+      ASSERT_TRUE(
+          m.declareTo(batcher, typename Map::DeclareOptions{}).ok())
+          << "frame " << frame;
+      ASSERT_TRUE(batcher.build().ok()) << "frame " << frame;
     }
     const laige::AllocWatchReading reading = laige::allocWatchRead();
     EXPECT_EQ(reading.allocs, 0u)
         << "1000 frames of beginFrame/declareTo/build allocated "
         << reading.allocs << " heap blocks (first site: "
-        << (void*)reading.firstSite << ")";
+        << describeAllocSite(reading.firstSite) << ")";
   }
 }
 
