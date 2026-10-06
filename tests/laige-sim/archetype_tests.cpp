@@ -5,8 +5,8 @@
 //     component per archetype), entity -> archetype map
 //   - add/remove component: pool-backed moves between archetypes with
 //     no per-operation heap allocation (the churn test proves it:
-//     zero ArchetypeStats reservation delta + zero process-wide
-//     allocations over the churn window)
+//     zero ArchetypeStats reservation delta + zero allocations on
+//     the churn thread over the churn window)
 //   - get<T> is O(1) (archetype lookup + column index); stale handles
 //     degrade per the M1-ECS-01 contract (nullptr + warn-once)
 //   - 10k entities x add/remove churn: zero pool overflow and constant

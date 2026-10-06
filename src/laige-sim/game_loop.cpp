@@ -260,9 +260,9 @@ Status GameLoop::runOneTick() noexcept {
 #if !defined(NDEBUG)
   // M1-ALLOC-01 (G-R1): arm the per-tick zero-allocation watch BEFORE
   // the tick body (debug builds — the laige/alloc_watch.h contract):
-  // any heap allocation inside the completed tick (a system, the
-  // onTick hook, the replay recorder, engine storage growth) is
-  // counted by the process-wide counting backend — except the
+  // any heap allocation ON THE TICK THREAD inside the completed tick
+  // (a system, the onTick hook, the replay recorder, engine storage
+  // growth) is counted by the counting backend — except the
   // diagnostic subsystem's own emit, which is attributed to the
   // logging facade (the attribution contract, alloc_watch.h).
   // Release builds: the entire check is compiled out — the pool-

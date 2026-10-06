@@ -71,7 +71,7 @@ Each column block is reserved, not sized, to the rows it holds:
   events per archetype (≤ 10 for a 10k world).
 - **Steady state:** an add/remove that does not hit a full archetype
   allocates nothing — the churn test proves it: zero reservation
-  delta over the window **and** zero process-wide allocations
+  delta over the window **and** zero allocations on the churn thread
   (test-only `operator new` counter, non-sanitizer trees; the
   sanitizer trees prove the same property with a leak-free run of the
   same loop — M1-ALLOC-01 lands the standing assertion).

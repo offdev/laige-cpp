@@ -10,27 +10,34 @@
 // pool accounting (pools.h, M0-CORE-05) and the per-frame simAllocs
 // delta (M1-PROF-01/02 frame report) — nothing new ships there.
 //
-// The watch is a process-wide heap-allocation counter with an ARMED
-// WINDOW:
+// The watch is a heap-allocation counter with an ARMED WINDOW that
+// measures the OWNER thread (the thread that armed the window):
 //
-//   - allocWatchArm()    starts a fresh window: it resets the window's
-//                        allocation count and clears the first-site
-//                        capture. One armed window at a time; the
-//                        window is live until the next arm().
+//   - allocWatchArm()    starts a fresh window: it records the calling
+//                        thread as the window's owner, resets the
+//                        window's allocation count, and clears the
+//                        first-site capture. One armed window at a
+//                        time; the window is live until the next arm().
 //   - allocWatchRead()   reads the window: the allocation count since
 //                        arm() plus the call site of the FIRST
 //                        offending allocation (nullptr while none).
 //
 // The counting backend is a strong definition of the global operator
 // new/new[] (alloc_watch.cpp, compiled in every non-sanitizer build
-// tree): while a window is armed, every heap allocation made by ANY
-// translation unit — engine storage, the pools, a system's local
+// tree): while a window is armed, every heap allocation made by the
+// OWNER thread — engine storage, the pools, a system's local
 // std::vector — increments the window count, and the caller's return
 // address of the first offending allocation is captured (the
-// actionable call site, FR-12.3). The one exclusion is the diagnostic
-// subsystem's own emit (the attribution contract, below): the logging
-// facade marks its own work while it emits an event. While no window
-// is armed, each allocation pays two atomic loads + two branches.
+// actionable call site, FR-12.3). Allocations from other threads are
+// NOT counted: G-R1 measures the loop's own tick path (the sim loop
+// is single-threaded, PRD §10.2), and other threads' heap work is not
+// that path — a background render thread, OS/framework facilities
+// (e.g. a macOS WindowServer datagram dispatch) — the same
+// attribution principle as the logging exclusion below. The other
+// exclusion is the diagnostic subsystem's own emit (the attribution
+// contract, below): the logging facade marks its own work while it
+// emits an event. While no window is armed, each allocation pays two
+// atomic loads + two branches.
 //
 // ---------------------------------------------------------------------------
 // The per-tick assertion (the laige-sim half of M1-ALLOC-01)
@@ -55,7 +62,8 @@
 //   - Static build trees (the default): the strong operator new
 //     overrides sit in the executable's link, so an armed window sees
 //     EVERY heap allocation in the process (engine, pools, game
-//     systems, test frameworks).
+//     systems, test frameworks) — and counts the ones made by the
+//     window's owner thread (the attribution, above).
 //   - Shared build trees: the overrides live inside the laige-core
 //     image. On POSIX, dynamic linking interposes them process-wide
 //     (an executable's operator new call resolves to the library's
@@ -84,11 +92,15 @@
 //   - Per allocation, window disarmed: one logging-depth load + one
 //     armed-flag load + two branches (no counter traffic, no
 //     allocation, no logging).
-//   - Per allocation, window armed (not inside a diagnostic emit):
-//     one logging-depth load, one armed-flag load, one fetch_add, and
-//     one compare-and-swap that fails once the first site is recorded
-//     (windows are short and allocation-free by contract, so the CAS
-//     is cheap in practice).
+//   - Per allocation, window armed, owner thread (not inside a
+//     diagnostic emit): one logging-depth load, one armed-flag load,
+//     one owner-thread load, one fetch_add, and one compare-and-swap
+//     that fails once the first site is recorded (windows are short
+//     and allocation-free by contract, so the CAS is cheap in
+//     practice).
+//   - Per allocation, window armed, another thread: one logging-depth
+//     load, one armed-flag load, one owner-thread load + one branch
+//     (not counted — the attribution contract, above).
 //   - Per allocation, inside a diagnostic emit: one logging-depth
 //     load + one branch (the emission's own work, not the sim loop's
 //     — the attribution contract).
@@ -105,19 +117,23 @@
 //   everything a tick does that is not the diagnostic subsystem's
 //   emit (a system's local std::vector, engine storage growth, any
 //   other heap use) still counts and still fails the per-tick assert.
-//   - Per completed tick, debug builds only: one arm (three atomic
-//     stores — the first-site, the count, and the armed flag) + one
-//     read (two atomic loads) — no allocation, no logging on the
-//     healthy path (LOG-003). Release builds: the entire check is
-//     compiled out.
+//   - Per completed tick, debug builds only: one arm (four atomic
+//     stores — the owner thread, the first-site, the count, and the
+//     armed flag) + one read (two atomic loads) — no allocation, no
+//     logging on the healthy path (LOG-003). Release builds: the
+//     entire check is compiled out.
 //
 // Threading (CONC-001): the armed window has exactly one owner — the
-// sim owner thread (the simulation is single-threaded, PRD §10.2);
-// the loop's tick path is the only caller that arms, so windows never
-// nest. The counters are relaxed atomics: an allocation from another
-// thread during an armed window is counted (it did happen during the
-// tick — the diagnostic says so) but it is observation data, not
-// simulation state (ARCH-009).
+// thread that called allocWatchArm() (for the per-tick check: the sim
+// owner thread, the simulation being single-threaded, PRD §10.2; for
+// tests: the test thread). The loop's tick path is the only engine
+// caller that arms, so windows never nest. The counters are relaxed
+// atomics. An allocation from another thread during an armed window
+// is NOT counted: the window measures the owner thread's tick path
+// (G-R1), and other threads' heap work is not that path — a
+// background render thread, OS/framework facilities (observed in CI:
+// a macOS WindowServer datagram dispatch during an armed window). The
+// counters remain observation data, not simulation state (ARCH-009).
 
 #pragma once
 
@@ -144,8 +160,8 @@ void allocWatchArm() noexcept;
 // allocation.
 [[nodiscard]] AllocWatchReading allocWatchRead() noexcept;
 
-// True when the process-wide counting backend is compiled into this
-// build (every non-sanitizer tree); false in the sanitizer trees,
+// True when the counting backend is compiled into this build (every
+// non-sanitizer tree); false in the sanitizer trees,
 // where the runtimes own operator new/delete and the watch is a
 // no-op (the header's scope section).
 [[nodiscard]] bool allocWatchLive() noexcept;

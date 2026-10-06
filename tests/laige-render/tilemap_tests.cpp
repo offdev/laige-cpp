@@ -865,34 +865,24 @@ void declareLoopAllocatesNothing() {
   // Zero-allocation proof (where the watch is live — the non-
   // sanitizer trees; the sanitizer runtimes own operator new):
   // 1000 frames of the declare loop allocate nothing (the batcher and
-  // the sorter storage are pre-allocated).
+  // the sorter storage are pre-allocated — FR-2.2 "no per-frame
+  // allocation").
   //
-  // Two stages. The GL/GLFW suites earlier in this binary load the
-  // macOS graphics framework chain, which does a ONE-TIME lazy
-  // initialization asynchronously after load (observed in CI: a
-  // QuartzCore-internal hash table rehash — 48/8/6 blocks across
-  // runs, macOS arm64 AND Intel — landing in whichever armed window
-  // catches it). The settle stage re-runs the loop under armed
-  // windows until a CLEAN window is observed, absorbing that
-  // one-time init; the proof stage then pins the steady-state
-  // property (FR-2.2 "no per-frame allocation"). A genuine
-  // engine-side first-frame allocation is NOT hidden by this: the
-  // SpriteBatcher* suites (earlier in this binary) already exercise
-  // create/beginFrame/add/build under their own armed windows in the
-  // same process.
+  // The window's owner is THIS thread: the watch counts owner-thread
+  // allocations only (the attribution contract, alloc_watch.h). The
+  // GL/GLFW suites earlier in this binary load the macOS graphics
+  // framework chain, and its background framework threads (QuartzCore
+  // / SkyLight — e.g. the WindowServer datagram dispatch, observed in
+  // CI) do their own heap work in parallel with our loop; that is
+  // not the declare loop's work and is not counted here.
   if (laige::allocWatchLive()) {
-    for (std::uint32_t settle = 0; settle < 4; ++settle) {
-      laige::allocWatchArm();
-      runFrames();
-      if (laige::allocWatchRead().allocs == 0) break;
-    }
     laige::allocWatchArm();
     runFrames();
     const laige::AllocWatchReading reading = laige::allocWatchRead();
     EXPECT_EQ(reading.allocs, 0u)
         << "1000 frames of beginFrame/declareTo/build allocated "
-        << reading.allocs << " heap blocks after a clean settle window "
-           "(first site: "
+        << reading.allocs << " heap blocks on the loop thread (first "
+           "site: "
         << describeAllocSite(reading.firstSite) << ")";
   }
 }

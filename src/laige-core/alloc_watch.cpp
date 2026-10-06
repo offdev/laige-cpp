@@ -32,20 +32,23 @@
 #include <cstdlib>
 #include <exception>
 #include <new>
+#include <thread>
 
 namespace laige {
 
 namespace detail {
 
 // The watch's process state (see the header): exactly one armed
-// window at a time, owned by the sim owner thread. Relaxed atomics:
-// the only writes from the owner are the arm's two stores; a
+// window at a time, owned by the thread that armed it. Relaxed
+// atomics: the only writes from the owner are the arm's stores; a
 // concurrent allocation from another thread reads the armed flag and
-// increments the counters — observation data, not simulation state
-// (CONC-001, ARCH-009).
+// the owner thread, finds it is not the owner, and stops (its heap
+// work is not the owner's tick path — the attribution contract).
+// Observation data, not simulation state (CONC-001, ARCH-009).
 inline std::atomic<bool> kWatchArmed{false};
 inline std::atomic<std::uint64_t> kWatchAllocs{0};
 inline std::atomic<const void*> kWatchFirstSite{nullptr};
+inline std::atomic<std::thread::id> kWatchOwnerThread{std::thread::id{}};
 
 // The logging-facade emit depth (the attribution contract, header):
 // nonzero while the diagnostic subsystem is emitting an event — its
@@ -70,9 +73,12 @@ LoggingAllocationGuard::~LoggingAllocationGuard() noexcept {
 }  // namespace detail
 
 void allocWatchArm() noexcept {
-  // Data before the flag: the owner's two stores land first, so a
-  // reader that sees armed==true always sees the reset values (the
-  // relaxed order is enough for the single-owner-thread model).
+  // Data before the flag: the owner's stores land first, so a reader
+  // that sees armed==true always sees the owner thread and the reset
+  // values (the relaxed order is enough for the single-owner-thread
+  // model).
+  detail::kWatchOwnerThread.store(std::this_thread::get_id(),
+                                  std::memory_order_relaxed);
   detail::kWatchFirstSite.store(nullptr, std::memory_order_relaxed);
   detail::kWatchAllocs.store(0, std::memory_order_relaxed);
   detail::kWatchArmed.store(true, std::memory_order_relaxed);
@@ -108,20 +114,25 @@ namespace {
 #endif
 
 // The counting body of the operator new overrides (see the header's
-// cost contract): armed → count the allocation and capture the first
-// site; unarmed → exactly one atomic load + one branch. The
-// attribution contract (header): while the logging facade is
-// emitting an event (kLoggingEmitDepth > 0) the diagnostic
-// subsystem's heap work is not the sim loop's — it is not counted.
-// `site` is the allocating call's own address (the
-// LAIGE_ALLOC_CALLER_SITE builtin evaluated in the operator new
-// frame — one level above here).
+// cost contract): armed + owner thread → count the allocation and
+// capture the first site; unarmed → exactly two atomic loads + two
+// branches. The attribution contract (header): while the logging
+// facade is emitting an event (kLoggingEmitDepth > 0) the diagnostic
+// subsystem's heap work is not the sim loop's — it is not counted;
+// and an allocation from a thread that did NOT arm the window is not
+// the owner's tick path — it is not counted. `site` is the allocating
+// call's own address (the LAIGE_ALLOC_CALLER_SITE builtin evaluated
+// in the operator new frame — one level above here).
 inline void watchRecord(const void* site) noexcept {
   if (laige::detail::kLoggingEmitDepth.load(std::memory_order_relaxed) >
       0) {
     return;
   }
   if (!laige::detail::kWatchArmed.load(std::memory_order_relaxed)) {
+    return;
+  }
+  if (std::this_thread::get_id() !=
+      laige::detail::kWatchOwnerThread.load(std::memory_order_relaxed)) {
     return;
   }
   laige::detail::kWatchAllocs.fetch_add(1, std::memory_order_relaxed);

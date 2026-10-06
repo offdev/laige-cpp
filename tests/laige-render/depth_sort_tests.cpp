@@ -298,7 +298,7 @@ TEST(DepthSortStability, ShuffledInputsAreDeterministicAndStable) {
 // ---------------------------------------------------------------------------
 // DepthSortProperty — the 10k-key oracle comparison (the AC-4.3
 // workload shape) + the zero-allocation proof (1000 consecutive sorts
-// = 0 heap blocks under the process-wide allocation watch, the
+// = 0 heap blocks under the allocation watch, the
 // iso_picking / iso_depth_table precedent — non-sanitizer trees).
 // ---------------------------------------------------------------------------
 
@@ -318,7 +318,7 @@ TEST(DepthSortProperty, TenKKeysAgainstOracleAndZeroAlloc) {
     EXPECT_LE(sk[i - 1], sk[i]) << "i=" << i;
   }
 
-  // Zero-allocation proof (where the process-wide watch is live — the
+  // Zero-allocation proof (where the allocation watch is live — the
   // non-sanitizer trees; the sanitizer runtimes own operator new, the
   // iso_depth_table_tests.cpp precedent): 1 000 consecutive 10k sorts
   // allocate nothing — the sort is fixed-size buffer traffic,

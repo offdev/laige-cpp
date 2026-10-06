@@ -1,6 +1,6 @@
 # Allocation watch (`laige::allocWatch*`)
 
-The process-wide heap-allocation counter behind the G-R1
+The heap-allocation counter behind the G-R1
 zero-allocation guardrail (M1-ALLOC-01; PRD §8.1, §9.3, `budgets.json`
 `sim_heap_allocs` target 0, AGENTS PERF-003, CORE-001, FR-12.3).
 Public header: `src/laige-core/include/laige/alloc_watch.h`;
@@ -32,11 +32,20 @@ laige::AllocWatchReading r = laige::allocWatchRead();
 //               (nullptr while none)
 ```
 
-- `allocWatchArm()` resets the window's count and clears the first
-  site, then arms. One armed window at a time; a window stays live
-  until the next arm. O(1), no allocation.
+- `allocWatchArm()` records the calling thread as the window's
+  **owner**, resets the window's count, and clears the first site,
+  then arms. One armed window at a time; a window stays live until the
+  next arm. O(1), no allocation.
 - `allocWatchRead()` reads the count plus the first offending call
   site. O(1), no allocation.
+- **Owner-thread attribution:** while a window is armed, only the
+  **owner thread's** heap allocations are counted. Allocations from
+  other threads during the window are not counted: G-R1 measures the
+  loop's own tick path (the simulation is single-threaded, PRD
+  §10.2), and other threads' heap work — a background render thread,
+  OS/framework facilities (observed in CI: a macOS WindowServer
+  datagram dispatch during an armed window) — is not that path. Same
+  attribution principle as the logging-emit exclusion below.
 - `allocWatchLive()` is true in every tree where the counting backend
   is compiled in (every non-sanitizer tree); false in the sanitizer
   trees, where the watch degrades to inline no-ops (see the scope
@@ -67,14 +76,17 @@ and the assert follows it immediately, so a second event never
 matters), then the debug assert breaks the build run with the event's
 fix text in the condition string.
 
-The window covers **everything the tick runs that is the sim
+The window covers **everything the tick thread runs that is the sim
 loop's own work**: the systems, the `onTick` hook, the replay
 recorder, engine storage growth (archetype column doublings, table
 growth), and any other heap use of the tick (a system's local
-`std::vector`, a pool's backing store). A **failed** tick is not
-checked (the profiler's "a failed tick is not recorded" contract,
-api/profiler.md): a tick whose systems did not complete ran no user
-work to blame, and its validation error is already actionable.
+`std::vector`, a pool's backing store) — on the tick thread (the
+window's owner); other threads' heap work during the tick is not the
+tick path and is not counted (owner-thread attribution, above). A
+**failed** tick is not checked (the profiler's "a failed tick is not
+recorded" contract, api/profiler.md): a tick whose systems did not
+complete ran no user work to blame, and its validation error is
+already actionable.
 
 **Attribution — what is NOT the sim loop's heap:** G-R1's budget is
 `sim_heap_allocs` (budgets.json) — the sim loop's own heap: storage,
@@ -118,16 +130,18 @@ variants) in `laige-core`, linked ahead of the CRT's weak defaults:
 
 - **Static build trees (the default, every P0 OS):** the overrides sit
   in the executable's link — an armed window sees **every** heap
-  allocation in the process: the engine, the pools, game systems,
-  test frameworks.
+  allocation in the process (the engine, the pools, game systems,
+  test frameworks) and counts the owner thread's (the attribution
+  above).
 - **Shared build trees:** the overrides live inside the laige-core
   image. On POSIX, dynamic linking interposes them process-wide (an
   executable's `operator new` call resolves to the library's
   definition); on Windows there is no cross-image interposition, so an
   armed window sees the allocations made **inside the engine images**
   — the engine allocators and the pools, which is the sim loop's
-  storage — but not allocations made in the executable itself. The
-  canonical (static) trees give full process coverage everywhere.
+  storage — and counts the owner thread's of those; allocations made
+  in the executable itself are not seen. The canonical (static) trees
+  give full process coverage everywhere.
 - **Sanitizer trees (`LAIGE_ASAN` / `LAIGE_TSAN`):** the sanitizer
   runtimes own `operator new`/`delete`, so the counting backend is
   **not** compiled in and the header degrades to inline no-ops
@@ -151,9 +165,10 @@ watch is live.
 | Path | Cost |
 |---|---|
 | Per allocation, window **disarmed** | one logging-depth load + one armed-flag load + two branches (no counter traffic) |
-| Per allocation, window **armed**, outside a diagnostic emit | one logging-depth load, one armed-flag load, one `fetch_add`, one CAS that fails once the first site is recorded |
+| Per allocation, window **armed**, owner thread, outside a diagnostic emit | one logging-depth load, one armed-flag load, one owner-thread load, one `fetch_add`, one CAS that fails once the first site is recorded |
+| Per allocation, window **armed**, another thread | one logging-depth load, one armed-flag load, one owner-thread load + one branch (not counted — the attribution above) |
 | Per allocation, inside a diagnostic emit (the attribution contract) | one logging-depth load + one branch (the emission's own work, not counted) |
-| Per completed tick, debug builds | one arm (three atomic stores: first-site, count, armed flag) + one read (two atomic loads) |
+| Per completed tick, debug builds | one arm (four atomic stores: owner thread, first-site, count, armed flag) + one read (two atomic loads) |
 | Release builds | the tick check is compiled out; the disarmed allocation path remains |
 
 No allocation, no logging, no lock on any healthy path (LOG-003,
@@ -163,13 +178,17 @@ should not happen.
 
 ## Threading (CONC-001)
 
-The armed window has exactly one owner: the **sim owner thread**
-(the simulation is single-threaded, PRD §10.2). The loop's tick path
-is the only caller that arms, so windows never nest. The counters are
-relaxed atomics: an allocation from another thread during an armed
-window is counted (it happened during the tick — the diagnostic says
-so) but it is **observation data, not simulation state** (ARCH-009):
-it never enters the tick count, the state hash, or a replay.
+The armed window has exactly one owner: the thread that called
+`allocWatchArm()` (for the per-tick check: the **sim owner thread** —
+the simulation is single-threaded, PRD §10.2; for tests: the test
+thread). The loop's tick path is the only engine caller that arms, so
+windows never nest. The counters are relaxed atomics. An allocation
+from **another thread** during an armed window is **not counted**:
+the window measures the owner thread's tick path (G-R1), and other
+threads' heap work — a background render thread, OS/framework
+facilities — is not that path. The counters are **observation data,
+not simulation state** (ARCH-009): they never enter the tick count,
+the state hash, or a replay.
 
 ## Misuse warnings
 

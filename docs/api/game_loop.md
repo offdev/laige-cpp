@@ -219,8 +219,9 @@ tick path MUST allocate nothing — the `sim_heap_allocs` budget
 (budgets.json) targets 0 allocs/frame. `runOneTick` enforces it
 directly, per tick:
 
-- **Arm** — `laige::allocWatchArm()` (the process-wide allocation
-  watch, [api/alloc_watch.md](alloc_watch.md)) starts a fresh window
+- **Arm** — `laige::allocWatchArm()` (the allocation watch, owner:
+  the tick thread, [api/alloc_watch.md](alloc_watch.md)) starts a
+  fresh window
   **before** the tick body (the `beginFrame` + `runSystems` dispatch,
   plus the attached profiler, `onTick` hook, and replay recorder).
 - **Read + assert** — **after a completed tick** (`status.ok()`),
