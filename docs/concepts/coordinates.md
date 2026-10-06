@@ -302,6 +302,41 @@ the DEPTH TEST DISABLED for the pass — the 2.5D depth is engine-owned
 and the draw submissions are observable (`SpriteDrawStats` /
 `SpriteDrawTotals` — the M2-SPRITE-04 profiler feed).
 
+### 4.9 The tilemap: static tile quads on the depth table (M2-TILE-01)
+
+The scene's static tile grid is
+`laige::render::TileMap<Backend>`
+(`laige/render/tilemap.h`) — the data + the auto-depth wiring of §4.5
++ the batch path of §4.7:
+
+- **Chunked grid data** (FR-2.6): the requested grid of tiles, per
+  tile a `textureId` (the atlas reference) and an `animationId` (data
+  only in M2 — M2-TILE-02 cycles frames from it), in one flat
+  pre-sized array (8 B/tile). The tile's **height lives in the owned
+  `IsoDepthKeyTable` alone** (one source of truth): tile `(gx, gy)` is
+  the world cell `[gx, gx+1) × [gy, gy+1)` (§5.1's grid at `g = 1`),
+  so the tilemap is grid-locked by construction.
+- **Auto-depth** (FR-2.6): a tile's Y height is automatically
+  reflected in its depth key — `setTile`/`rebuild` route the heights
+  into the table (§4.5), which recomputes exactly the affected cell's
+  key (radius 0; `rebuild(final grid) == any edit sequence reaching
+  the same grid` — the §4.5 property). The game never writes the key
+  (G-R11).
+- **The batch path** (S-5): `declareTo(batcher, options)` declares
+  one `SpriteItem` per tile — the tile's **center** `(gx + 0.5, gy +
+  0.5)` (the same point the table quantizes), scale (1, 1) (the unit
+  quad spans the tile's cell), rotation 0, the **fixed-frame** UV
+  (default the full tile texture), the table's key (auto-depth), the
+  tile's texture as `atlasId` — in the grid's row-major order
+  (the tile's grid position is a static tile's stable identity, the
+  §4.6 insertion-order analog; RENDER-003).
+- **Bounded draw calls** (FR-2.1, RENDER-001): the batcher's
+  (atlas, material, blend) grouping renders the tilemap in one draw
+  call per DISTINCT (textureId, material, blend) combination — tiles
+  of one chunk sharing one texture and blend form ONE group (one
+  draw call per chunk group); the count is a function of the distinct
+  group keys, never of the tile count.
+
 ## 5. Conversion rules (the module boundaries, RENDER-006)
 
 | Conversion | Direction | Owner | Status |
@@ -312,6 +347,7 @@ and the draw submissions are observable (`SpriteDrawStats` /
 | Screen → world (per mode) | picking, screen↔world transforms | `laige-render` (`ProjectionView`: `worldToScreen`, `screenToWorldRay`, `screenToWorld`, M2-PROJ-01; `screenToGrid` iso grid picking, M2-ISO-03) | **Shipped (M2-PROJ-01 + M2-ISO-03)** |
 | World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | **Shipped** (matrices + camera core M2-CAM-01, iso presets + grid-snap M2-CAM-02, world→screen transform M2-PROJ-01, pixels: `SpriteRenderer::submit`'s offscreen instanced draw M2-SPRITE-02) |
 | Atlas frame → UV sub-rect | animation frame index + sheet layout → UV rect | `laige-render` (`spriteFrameUv`, M2-SPRITE-03) | **Shipped (M2-SPRITE-03)** |
+| Tile grid → static tile quads | tile data + table keys → declared sprites (fixed-frame quads) | `laige-render` (`TileMap::declareTo`, M2-TILE-01) | **Shipped (M2-TILE-01)** |
 
 ### 5.1 The isometric grid picking (M2-ISO-03)
 
@@ -412,6 +448,9 @@ state → same keys → same order, every frame (RENDER-003).
 - [`api/sprite_frames.md`](../api/sprite_frames.md) — the atlas UV
   frame animation hook: `SpriteFrameLayout` + `spriteFrameUv`
   (frame index + sheet layout → the item's UV sub-rect) (M2-SPRITE-03).
+- [`api/tilemap.md`](../api/tilemap.md) — the tilemap contract:
+  `TileMap` (chunked tile grid + the auto-depth wiring of the depth
+  table + the static tile-quad batch path) (M2-TILE-01).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —

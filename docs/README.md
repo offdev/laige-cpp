@@ -299,6 +299,15 @@ still to land.
   documented error, never wrap) the caller uses to fill
   `SpriteItem.uv`/`frameIndex` — the data-driven hook M3 animation
   drives.
+- [Tilemap](api/tilemap.md) —
+  `laige::render::TileMap<Backend>`: the chunked tile grid data (per
+  tile: texture id, depth/height, animation id — data only in M2), the
+  auto-depth wiring of the M2-ISO-02 depth key table (a tile's Y
+  height is automatically reflected in its depth key), and the static
+  tile-quad batch path into the sprite batcher (tiles are sprites with
+  a fixed frame; one tilemap renders in a bounded number of draw
+  calls — one per (texture, material, blend) group) (M2-TILE-01;
+  FR-2.6).
 
 ## Guides
 
