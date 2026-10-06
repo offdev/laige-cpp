@@ -124,8 +124,9 @@ assert fires before the log).
 - **Zero-alloc evidence (CORE-001):** `QueryZeroAlloc` runs 10k
   entities × `{Pos, Vel}` through a Read/Write pass (a legal in-place
   write per visit) and a Read/Read pass in a reset allocation-counter
-  window (non-sanitizer trees): zero process-wide heap allocations,
-  zero reservation delta (pool-steady), and prints the machine-
+  window (non-sanitizer trees): zero heap allocations on the
+  iteration thread, zero reservation delta (pool-steady), and prints
+  the machine-
   greppable `query-iteration <stats>` lines to the ctest output.
   The sanitizer trees cover the same loop leak-free; M1-ALLOC-01
   lands the standing assertion.

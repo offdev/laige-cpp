@@ -3,9 +3,10 @@
 // Step scope (roadmap/M1-heartbeat.md, M1-ALLOC-01):
 //   - The G-R1 debug per-tick assertion (PRD §9.3, budgets.json
 //     sim_heap_allocs target 0, PERF-003): GameLoop::runOneTick arms
-//     the process-wide allocation watch (laige/alloc_watch.h) before
-//     every tick body and checks it after a completed tick — any heap
-//     allocation inside the tick (a system, the onTick hook, the
+//     the allocation watch (laige/alloc_watch.h; the window's owner
+//     is the tick thread) before every tick body and checks it after
+//     a completed tick — any heap allocation on the tick thread
+//     inside the tick (a system, the onTick hook, the
 //     replay recorder, engine storage growth, even a hot-path log)
 //     fails with one structured Error event
 //     (alloc/sim_tick_allocation — the offending call site in the
@@ -40,6 +41,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -650,5 +652,49 @@ TEST(ZeroAlloc, WatchCountsAllocationsAndCapturesTheFirstSite) {
   const laige::AllocWatchReading reset = laige::allocWatchRead();
   EXPECT_EQ(reset.allocs, 0u);
   EXPECT_EQ(reset.firstSite, nullptr);
+#endif
+}
+
+// The attribution contract (alloc_watch.h): the window counts the
+// OWNER thread's allocations only. A heap allocation made by a
+// thread that did NOT arm the window — even while the window is
+// armed — is not the owner's tick path and is not counted. This is
+// what keeps OS/framework background threads out of the sim loop's
+// G-R1 window (observed in CI: a macOS WindowServer datagram
+// dispatch allocating during an armed window).
+TEST(ZeroAlloc, WatchExcludesNonOwnerThreads) {
+#if !defined(LAIGE_ALLOC_COUNTER)
+  // Sanitizer trees: the counting backend is compiled out (the
+  // runtimes own operator new/delete) — the watch is a no-op there.
+  GTEST_SKIP() << "the counting backend is compiled out in sanitizer "
+                "trees (allocWatchLive() is false)";
+#else
+  EXPECT_TRUE(laige::allocWatchLive());
+  // Two-phase handoff: the child signals ready BEFORE it allocates;
+  // the owner arms, then signals go — so the child's one allocation
+  // is guaranteed to land inside the armed window, and the owner
+  // allocates nothing in it.
+  std::atomic<bool> ready{false};
+  std::atomic<bool> go{false};
+  std::thread child([&] {
+    ready.store(true, std::memory_order_release);
+    while (!go.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    std::vector<std::int32_t> v(4, 7);  // one heap allocation (child)
+    volatile std::int32_t sink = v[0];
+    static_cast<void>(sink);
+  });
+  while (!ready.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  laige::allocWatchArm();
+  go.store(true, std::memory_order_release);
+  child.join();  // sync: the allocation happened, on the child thread
+  const laige::AllocWatchReading r = laige::allocWatchRead();
+  EXPECT_EQ(r.allocs, 0u)
+      << "a non-owner thread's allocation was counted (the "
+         "owner-thread attribution is broken)";
+  EXPECT_EQ(r.firstSite, nullptr);
 #endif
 }

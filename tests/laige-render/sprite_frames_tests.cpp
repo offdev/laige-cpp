@@ -316,7 +316,7 @@ TEST(SpriteFrameProperty, LayoutModelAndZeroAlloc) {
     }
   }
 
-  // Zero-allocation proof (where the process-wide watch is live — the
+  // Zero-allocation proof (where the allocation watch is live — the
   // non-sanitizer trees; the sanitizer runtimes own operator new, the
   // depth_sort test precedent): 1 000 consecutive conversions allocate
   // nothing — the function is fixed-size value traffic, structurally

@@ -210,7 +210,7 @@ TEST(IsoPickProperty, CellCentersRoundTripAtFourZooms) {
           << "zoom " << z << " cell (" << gx << ", " << gy << ")";
     }
   }
-  // Zero-allocation proof (where the process-wide watch is live — the
+  // Zero-allocation proof (where the allocation watch is live — the
   // non-sanitizer trees; the sanitizer runtimes own operator new, the
   // iso_depth_table_tests.cpp precedent): 1 000 consecutive picks
   // allocate nothing — the pick is a fixed sequence of float ops,

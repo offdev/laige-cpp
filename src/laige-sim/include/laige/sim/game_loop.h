@@ -190,9 +190,10 @@
 //
 // G-R1 (PRD §9.3, budgets.json sim_heap_allocs: target 0 allocs per
 // frame) is enforced in DEBUG builds at the tick boundary:
-// runOneTick() arms the process-wide allocation watch
-// (laige/alloc_watch.h) before the tick body and reads it after a
-// COMPLETED tick. A completed tick with a nonzero window count fails
+// runOneTick() arms the allocation watch (laige/alloc_watch.h; the
+// window's owner is the tick thread) before the tick body and reads
+// it after a COMPLETED tick. A completed tick with a nonzero window
+// count fails
 // with one structured Error event (alloc/sim_tick_allocation — the
 // offending call site in the site field) followed by the debug
 // assert (FR-12.3: actionable, never silent). The check covers
@@ -213,11 +214,13 @@
 // path (pools.h) and the per-frame simAllocs delta (M1-PROF-01/02)
 // — never silent (CORE-008), never an assert.
 //
-// Scope of the counting backend: static build trees count every heap
-// allocation in the process; shared build trees count the
-// allocations made inside the engine images (the engine allocators
-// and the pools — the sim loop's storage; POSIX interposes
-// process-wide, Windows does not); sanitizer trees compile the watch
+// Scope of the counting backend: the backend intercepts every heap
+// allocation (static build trees: process-wide; shared build trees:
+// the allocations made inside the engine images — the engine
+// allocators and the pools, the sim loop's storage; POSIX interposes
+// process-wide, Windows does not), but an armed window COUNTS only
+// the window's owner thread (the tick thread) — the attribution
+// contract in laige/alloc_watch.h. Sanitizer trees compile the watch
 // out (the runtimes own operator new/delete — the zero-allocation
 // property is then verified by the leak-free sanitizer run plus the
 // pool reservation-delta assertion, the established fallback pattern;

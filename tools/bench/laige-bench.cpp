@@ -53,8 +53,8 @@
 // no randomness in the measured path) and, in debug non-sanitizer
 // builds, every measured tick additionally passes the engine's own
 // G-R1 per-tick zero-allocation assertion (GameLoop::runOneTick arms
-// the process-wide allocation watch, M1-ALLOC-01) — an allocating
-// tick aborts the run.
+// the allocation watch — owner: the tick thread, M1-ALLOC-01) — an
+// allocating tick aborts the run.
 
 #include <cstddef>
 #include <cstdint>
