@@ -362,5 +362,47 @@ memory suites require a usable OpenGL 3.3 environment and self-
 entry: the counters are O(1) bookkeeping and the composite 50k
 render-CPU budget is measured with this stage (M2-PERF-01).
 
-The remaining M2 steps (M2-TILE-01, M2-PAR-01, text/UI, M2-PERF-01)
-land in later steps.
+M2-TILE-01 landed the tilemap — `laige::render::TileMap<Backend>`
+(public header `include/laige/render/tilemap.h`, header-only — a
+template over the SimMath backends): the chunked tile grid of
+FR-2.6 (chunks, per-tile depth/height, auto-depth). The tilemap OWNS
+one `IsoDepthKeyTable<Backend>` (M2-ISO-02) — the tile's HEIGHT lives
+in the table alone (one source of truth), and the remaining per-tile
+data (`textureId`, `animationId` — data only in M2; M2-TILE-02 drives
+the frame cycle from the animation id) lives in one flat pre-sized
+array (8 B/tile, the requested grid). The AUTO-DEPTH wiring:
+`setTile(gx, gy, textureId, height, animationId)` routes the height
+into the table's `setTile` (the table recomputes exactly that cell's
+key — the M2-ISO-02 incremental update, radius 0), and `rebuild(tiles)`
+loads the whole grid through the table's from-scratch `rebuild`
+(`rebuild(final grid) == any edit sequence reaching the same grid` —
+the M2-ISO-02 property, pinned through the tilemap). The batch path
+(S-5): `declareTo(batcher, options)` declares the static tile quads
+into the sprite batcher — one `SpriteItem` per tile (the tile's CENTER
+pos, scale (1,1), the table's key (auto-depth — the game never writes
+it, G-R11), the tile's texture as `atlasId`, the fixed-frame UV), in
+the grid's row-major order (RENDER-003's deterministic insertion
+order) — and the batcher's (atlas, material, blend) grouping renders
+the tilemap in a BOUNDED number of draw calls: one per distinct
+(textureId, material, blend) combination (FR-2.1, RENDER-001 — tiles
+of one chunk sharing one texture and blend form one group).
+ARCH-009: headless-buildable, presentation-only, sim-phase writes /
+render-phase reads; the declare loop allocates NOTHING per frame
+(FR-2.2 — the zero-allocation proof, the tests). Rejected operations
+leave the tile data AND the table unchanged (the `Status` is the
+failure channel — LOG-002). API contract in
+[docs/api/tilemap.md](../docs/api/tilemap.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `tilemap` —
+pure data + batcher bookkeeping, no GL environment required: the grid
+options + flat/empty contract, the per-tile data writes / rejected
+edits / scene load + the rebuild-from-scratch == incremental property,
+the height → depth-table wiring (a height edit changes exactly the
+edited cell's key), the hand-computed 4×4 chunk's quad positions +
+depth goldens + the grouping and cross-frame determinism, the frame
+protocol / failure paths / custom options / no-log happy path, and the
+1000-frame zero-allocation declare loop). No standalone `budgets.json`
+entry: the per-frame declare cost is part of the composite 50k
+render-CPU budget, measured with M2-PERF-01.
+
+The remaining M2 steps (M2-PAR-01, text/UI, M2-PERF-01) land in later
+steps.

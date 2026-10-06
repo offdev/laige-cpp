@@ -195,7 +195,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
 
 ## Tiles & parallax
 
-- [ ] **M2-TILE-01 · Tilemap data + auto-depth from tile height**
+- [x] **M2-TILE-01 · Tilemap data + auto-depth from tile height**
   - **Refs:** FR-2.6 (chunks, per-tile depth/height, auto-depth), PRD §4 (isometric staple)
   - **Depends:** M2-ISO-02
   - **Scope:**
@@ -206,16 +206,6 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R tilemap` green.
   - **Size:** ~250 lines + tests
 
-- [ ] **M2-TILE-02 · Parallax tile layers + tile animation**
-  - **Refs:** FR-2.6 (parallax tile layers, tile animation)
-  - **Depends:** M2-TILE-01, M2-PAR-01
-  - **Scope:**
-    - Tilemap layers can be assigned a parallax layer (background/mid/foreground) — parallax factors apply per M2-PAR-01.
-    - Tile animation: per-tile frame cycling (frame index advances per documented tick count), data-driven (animation editor control is M5).
-    - Unit tests: animated tile cycles frames at the documented rate; parallax offset at a given camera position golden-checked.
-  - **Verify:** `ctest -R tilemap_anim` green.
-  - **Size:** ~150 lines + tests
-
 - [ ] **M2-PAR-01 · Parallax layers**
   - **Refs:** FR-2.3 (named layers, factor, offset, UV scroll, blend)
   - **Depends:** M2-CAM-01
@@ -224,6 +214,16 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     - A layer is either image-backed (single texture) or tilemap-backed (M2-TILE-02); both render through the batcher.
     - Unit tests: offset at camera position p == factor × (p − center) + offset (exact formula tested); scroll wraps exactly at texture boundary.
   - **Verify:** `ctest -R parallax` green.
+  - **Size:** ~150 lines + tests
+
+- [ ] **M2-TILE-02 · Parallax tile layers + tile animation**
+  - **Refs:** FR-2.6 (parallax tile layers, tile animation)
+  - **Depends:** M2-TILE-01, M2-PAR-01
+  - **Scope:**
+    - Tilemap layers can be assigned a parallax layer (background/mid/foreground) — parallax factors apply per M2-PAR-01.
+    - Tile animation: per-tile frame cycling (frame index advances per documented tick count), data-driven (animation editor control is M5).
+    - Unit tests: animated tile cycles frames at the documented rate; parallax offset at a given camera position golden-checked.
+  - **Verify:** `ctest -R tilemap_anim` green.
   - **Size:** ~150 lines + tests
 
 ## Particles
