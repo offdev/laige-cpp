@@ -302,22 +302,29 @@ still to land.
   drives.
 - [Tilemap](api/tilemap.md) —
   `laige::render::TileMap<Backend>`: the chunked tile grid data (per
-  tile: texture id, depth/height, animation id — data only in M2), the
-  auto-depth wiring of the M2-ISO-02 depth key table (a tile's Y
-  height is automatically reflected in its depth key), and the static
-  tile-quad batch path into the sprite batcher (tiles are sprites with
-  a fixed frame; one tilemap renders in a bounded number of draw
-  calls — one per (texture, material, blend) group) (M2-TILE-01;
-  FR-2.6).
+  tile: texture id, depth/height, animation id — 0 = static,
+  1..maxAnimations = the animation slot), the auto-depth wiring of
+  the M2-ISO-02 depth key table (a tile's Y height is automatically
+  reflected in its depth key), the tile-quad batch path into the
+  sprite batcher (tiles are sprites — one tilemap renders in a
+  bounded number of draw calls, one per (texture, material, blend)
+  group), the data-driven tile animation frame cycle (per-tile frame
+  cycling at the animation's documented sim-tick rate —
+  `setAnimation` + `advanceAnimations`; M2-TILE-02), and the parallax
+  tile layer declaration (a `Tilemap`-source parallax layer declares
+  the tilemap's quads translated by its `worldOffset`; M2-TILE-02,
+  the M2-PAR-01 hook) (M2-TILE-01/02; FR-2.6).
  - [Parallax layers](api/parallax.md) —
   `laige::render::ParallaxLayers<Backend>`: the named
   background/midground/foreground layer model (M2-PAR-01; FR-2.3):
   the parallax factor (0..1), the EXACT world-space offset formula
   `factor * (p - center) + offset`, the UV scroll (auto or manual)
   with the exact wrap at the texture boundary (rendered through the
-  2 x 2 wrap split into the sprite batcher), and the documented
+  2 x 2 wrap split into the sprite batcher), the documented
   background-first render order (the depth-key layer values:
-  background -2, midground -1, ground 0, foreground +1).
+  background -2, midground -1, ground 0, foreground +1), and the
+  `Tilemap` source (the M2-TILE-02 hook — the tiles are declared
+  through the tilemap's `declareTo` overload, not this registry's).
 
 ## Guides
 

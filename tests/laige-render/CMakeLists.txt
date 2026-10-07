@@ -135,7 +135,28 @@
 # rects (incl. the atlas sub-rect mapping), the frame protocol /
 # stopped / disabled / tilemap-hook paths, cross-frame determinism,
 # and the 1000-frame zero-allocation declare loop) — pure data +
-# batcher bookkeeping: no GL environment needed.
+# batcher bookkeeping: no GL environment needed; and the tilemap
+# tile animation + parallax tile layer (M2-TILE-02) — the
+# data-driven per-tile frame cycle (tilemap_anim_tests.cpp's
+# TileMapAnim* suites: the setAnimation validation matrix (the slot
+# domain, the frame count / tick rate / sheet domains, the tight-sheet
+# float-exact domain with the adversarial-layout overflow guards, the
+# rejected-set-leaves-no-state + phase-reset contract, no-log happy
+# path), the frame cycle at the documented rate (hand-computed frame
+# = ticks / frameTicks mod frameCount over independent animations),
+# the animated/static frame fields on the declared quads (the
+# hand-computed frame-UV goldens from the M2-SPRITE-03 tight-sheet
+# formula, the frameIndex, the (atlas, material, blend) groups, the
+# wrap + cross-frame determinism), the parallax tile layer declare
+# path (the M2-PAR-01 Tilemap-source hook — the worldOffset
+# translation + the tilemap's own depth layer: the hand-computed
+# key goldens at given camera positions (both backends — the dyadic
+# exactness zone) + the layer-dominance ordering + the protocol
+# paths (built frame / unset id / non-tilemap source / disabled
+# layer) + the animated tile under the translation), the animationId
+# edit/load domain + the unset-slot declare failure, and the 1000-frame
+# advance + declare zero-allocation loop (standalone + parallax)) —
+# pure data + batcher bookkeeping: no GL environment needed.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -159,9 +180,12 @@
 # (`ctest -R sprite_frames`), the `render_counters` entry is the
 # M2-SPRITE-04 Verify command (`ctest -R render_counters`), the
 # `tilemap` entry is the M2-TILE-01 Verify command (`ctest -R
-# tilemap`), and the `parallax` entry is the M2-PAR-01 Verify command
-# (`ctest -R parallax`), each selecting exactly its suites from the
-# shared executable.
+# tilemap`), the `tilemap_anim` entry is the M2-TILE-02 Verify command
+# (`ctest -R tilemap_anim`), and the `parallax` entry is the M2-PAR-01
+# Verify command (`ctest -R parallax`), each selecting exactly its
+# suites from the shared executable. (The unanchored `ctest -R tilemap`
+# regex also selects the `tilemap_anim` entry — the M2-TILE-02 suites
+# run under the M2-TILE-01 command too; that is intended.)
 #
 # Environment note: the GlContextSmoke, RenderThreadOffscreen,
 # SpriteDraw{State,Smoke,Pipeline}, and RenderCounters{Scene,Cap,
@@ -172,7 +196,7 @@
 # documented environment contract (docs/api/gl_context.md), not an
 # engine failure. The GlContextGate/GlContextArgs/FrameClock/
 # RenderThreadHandoff/SpriteDrawCreate/RenderCountersCreate/TileMap*/
-# Parallax* suites always run (they make no GL calls).
+# TileMapAnim*/Parallax* suites always run (they make no GL calls).
 
 add_executable(laige-render_tests
   gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
@@ -180,7 +204,7 @@ add_executable(laige-render_tests
   iso_camera_tests.cpp projection_tests.cpp iso_picking_tests.cpp
   depth_sort_tests.cpp sprite_batcher_tests.cpp sprite_draw_tests.cpp
   sprite_frames_tests.cpp render_counters_tests.cpp tilemap_tests.cpp
-  parallax_tests.cpp)
+  tilemap_anim_tests.cpp parallax_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -334,6 +358,15 @@ add_test(NAME tilemap COMMAND laige-render_tests
 add_test(NAME parallax COMMAND laige-render_tests
          --gtest_filter=Parallax*)
 
+# M2-TILE-02: the step's Verify command is `ctest -R tilemap_anim`.
+# Pure data + batcher bookkeeping (no GL calls) — runs in every local
+# tree and in CI. No budget gate: the step's roadmap scope has no
+# standalone budgets.json entry (the per-frame declare + per-tick
+# advance cost is part of the composite 50k render-CPU budget,
+# measured with M2-PERF-01).
+add_test(NAME tilemap_anim COMMAND laige-render_tests
+         --gtest_filter=TileMapAnim*)
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
@@ -370,7 +403,7 @@ if(LAIGE_TSAN)
   set_tests_properties(laige-render_tests gl_context render_thread matrices
     iso_depth_key iso_depth_table camera iso_camera projection
     iso_picking depth_sort batcher sprite_draw sprite_frames
-    render_counters tilemap parallax PROPERTIES
+    render_counters tilemap tilemap_anim parallax PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 endif()
@@ -432,6 +465,7 @@ set_tests_properties(iso_picking PROPERTIES TIMEOUT 60)
 set_tests_properties(batcher PROPERTIES TIMEOUT 60)
 set_tests_properties(sprite_frames PROPERTIES TIMEOUT 60)
 set_tests_properties(tilemap PROPERTIES TIMEOUT 60)
+set_tests_properties(tilemap_anim PROPERTIES TIMEOUT 60)
 set_tests_properties(parallax PROPERTIES TIMEOUT 60)
 # The `iso_depth_table` and `depth_sort` entries include their budget
 # gates: 2 backends x (100 warm-up + 3000 measured) iterations of 10 000

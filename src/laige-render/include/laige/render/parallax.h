@@ -67,11 +67,16 @@
 //
 // The Tilemap source references a tilemap (its `tilemapId` — the
 // game's registry id; M3-ASSET-01 owns the asset system): the tilemap
-// defines its own world grid, and M2-TILE-02 declares its tiles with
-// this layer's `worldOffset` translation and its `depthLayer` (the
-// tilemap's Options::layer). In M2-PAR-01 a Tilemap-source layer is
-// DATA ONLY: `declareTo` skips it (the hook), its `size`/`uv` fields
-// are not validated.
+// defines its own world grid, and the tilemap declares its tiles
+// UNDER this layer (the TileMap::declareTo overload, M2-TILE-02 —
+// tilemap.h): the quads are translated by this layer's `worldOffset`
+// (formula (1)), and their depth keys carry the TILEMAP's own
+// `Options::layer` (the scene-setup convention: this def's
+// `depthLayer` must equal it — both are the content's layer; the
+// declaration uses the tilemap's value). In M2-PAR-01 a Tilemap-
+// source layer is DATA ONLY here: THIS registry's `declareTo` skips
+// it (the hook — the game declares the tiles through the tilemap's
+// path, not this one), its `size`/`uv` fields are not validated.
 //
 // ---------------------------------------------------------------------------
 // The render order (the documented background-first contract)
@@ -251,10 +256,10 @@
 // - Don't call `advanceScrolls` more than once per frame (the auto
 //   speed is PER FRAME — the caller paces it once per frame, the
 //   batcher's beginFrame pace).
-// - Don't declare a Tilemap-source layer through `declareTo` in
-//   M2: it is skipped (no log — the M2-TILE-02 step implements the
-//   tilemap declare path on this layer's `worldOffset` +
-//   `depthLayer`).
+// - Don't declare a Tilemap-source layer through THIS registry's
+//   `declareTo`: it is skipped (no log — the game declares the tiles
+//   through the tilemap's `declareTo` overload, M2-TILE-02 — on this
+//   layer's `worldOffset` + the tilemap's own `layer`).
 // - Don't expect the parallax factor to be "how much the layer
 //   moves": it is the (1) coefficient — factor 1 is the SCREEN-FIXED
 //   layer (no parallax), factor 0 the full-parallax one. The formula

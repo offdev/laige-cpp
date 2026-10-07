@@ -368,9 +368,9 @@ template over the SimMath backends): the chunked tile grid of
 FR-2.6 (chunks, per-tile depth/height, auto-depth). The tilemap OWNS
 one `IsoDepthKeyTable<Backend>` (M2-ISO-02) — the tile's HEIGHT lives
 in the table alone (one source of truth), and the remaining per-tile
-data (`textureId`, `animationId` — data only in M2; M2-TILE-02 drives
-the frame cycle from the animation id) lives in one flat pre-sized
-array (8 B/tile, the requested grid). The AUTO-DEPTH wiring:
+data (`textureId`, `animationId` — 0 = a static tile; 1..maxAnimations
+= the animation slot, M2-TILE-02) lives in one flat pre-sized array
+(8 B/tile, the requested grid). The AUTO-DEPTH wiring:
 `setTile(gx, gy, textureId, height, animationId)` routes the height
 into the table's `setTile` (the table recomputes exactly that cell's
 key — the M2-ISO-02 incremental update, radius 0), and `rebuild(tiles)`
@@ -448,5 +448,64 @@ standalone `budgets.json` entry: the per-frame declare cost is part of
 the composite 50k render-CPU budget, measured with M2-PERF-01 (the
 M2-SCENE-01 reference scene has 3 parallax layers within the 50k-sprite
 / ≤30-draw-call budget).
+
+M2-TILE-02 landed the tilemap's tile animation and parallax tile
+layer — extensions to `laige::render::TileMap<Backend>` (same header,
+header-only). **Tile animation** (data-driven frame cycling, FR-2.6):
+an ANIMATION is a slot of the tilemap's pre-sized animation table
+(ids 1..`maxAnimations`; 0 = the static sentinel) — `setAnimation(id,
+def)` (setup/config path) sets the frame COUNT (`frameCount`,
+[1, `kTileAnimMaxFrames` = 64]), the documented TICK RATE (`frameTicks`
+— the SIMULATION ticks per frame), and the tile SHEET's frame layout
+(the M2-SPRITE-03 `SpriteFrameLayout`, texels — the tight sheet). The
+scene owner calls `advanceAnimations()` ONCE PER SIM TICK (ARCH-002 —
+per sim tick, never per render frame): every set animation's frame
+steps every `frameTicks` ticks, wrapping at `frameCount`
+(`frame(ticks) = (ticks / frameTicks) mod frameCount`); all tiles of
+one animation share its phase (per-tile offsets are the M3 editor's
+control). The frame UVs are PRECOMPUTED at `setAnimation` (one setup
+allocation); the per-frame declare path only READS them (FR-2.2 — no
+per-frame allocation). The declared quad's frame fields: the STATIC
+tile carries `DeclareOptions::uv` + `frameIndex` 0; the ANIMATED tile
+carries its animation's CURRENT frame UV + `frameIndex`. The frame
+state is presentation state (ARCH-009 — never in the sim state hash).
+**The parallax tile layer** (the M2-PAR-01 Tilemap-source hook):
+`declareTo(batcher, options, layers, layerId, cameraPos)` declares the
+tilemap's quads UNDER the layer — every quad TRANSLATED by the
+layer's `worldOffset(cameraPos)` (the M2-PAR-01 formula (1)), and its
+key is the M2-ISO-01 key of the TRANSLATED center at the TILEMAP's own
+`Options::layer` (the scene-setup convention: the layer's def
+`depthLayer` equals it — bg/mid/fg tilemaps get -2/-1/+1). The
+translated keys are computed per tile per frame (the camera-dependent
+translation is not precomputable — O(tileCount), zero allocation).
+Protocol (first failure wins, nothing declared, no log): a built
+frame's closed window, an unset layer id, a non-Tilemap-source layer
+→ `InvalidArgument`; a DISABLED layer declares NOTHING (OK). Rejected
+`setAnimation`/`setTile`/`rebuild` leave the slots/data/table
+unchanged; an animated tile whose slot is UNSET fails the declare.
+ARCH-009: headless-buildable, presentation-only; the per-tick
+`advanceAnimations` + per-frame `declareTo` loops (standalone +
+parallax) allocate NOTHING (FR-2.2 — the zero-allocation proof, the
+tests). API contract in
+[docs/api/tilemap.md](../docs/api/tilemap.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `tilemap_anim`
+— pure data + batcher bookkeeping, no GL environment required: the
+`setAnimation` validation matrix (slot domain, frame count / tick
+rate / sheet domains, the tight-sheet float-exact domain with the
+adversarial-layout overflow guards, the rejected-set-leaves-no-state
++ phase-reset contract, no-log happy path), the frame cycle at the
+documented rate (hand-computed `frame = ticks / frameTicks mod
+frameCount`), the animated/static frame fields on the declared quads
+(hand-computed frame-UV goldens from the M2-SPRITE-03 tight-sheet
+formula, the frameIndex, the grouping, the wrap + cross-frame
+determinism), the parallax tile layer's hand-computed key goldens at
+given camera positions (both backends — the dyadic exactness zone) +
+the layer-dominance ordering + the protocol paths (built frame /
+unset id / non-tilemap source / disabled layer) + the animated tile
+under the translation, the animationId edit/load domain + the
+unset-slot declare failure, and the 1000-frame advance + declare
+zero-allocation loop (standalone + parallax)). No standalone
+`budgets.json` entry: the per-frame declare + per-tick advance cost is
+part of the composite 50k render-CPU budget, measured with M2-PERF-01.
 
 The remaining M2 steps (text/UI, M2-PERF-01) land in later steps.
