@@ -234,6 +234,20 @@ std::uint64_t particlesStateHash(const ParticleSystem<Backend>& sys) {
 
 // One uniform scalar exactly as the engine samples it (the test-side
 // oracle for the 4-draw contract).
+// Integer → Scalar, exact on both backends (v < 2^24) — mirrors the
+// engine's ParticleSystem::fromInt (the oracle must follow the
+// engine's sample path; not a static_cast — the older AppleClang of
+// the macOS P0 toolchain rejects the fpx16_16 aggregate cast).
+template <typename Backend>
+typename M_<Backend>::Scalar sampleFromInt(std::uint32_t v) {
+  using Scalar = typename M_<Backend>::Scalar;
+  if constexpr (std::is_same_v<Backend, laige::sim::Fpx16_16>) {
+    return laige::fpx16_16{static_cast<std::int32_t>(v)};
+  } else {
+    return static_cast<Scalar>(static_cast<std::int32_t>(v));
+  }
+}
+
 template <typename Backend>
 typename M_<Backend>::Scalar oracleSample(laige::Prng& oracle,
                                           typename M_<Backend>::Scalar lo,
@@ -241,8 +255,9 @@ typename M_<Backend>::Scalar oracleSample(laige::Prng& oracle,
   using M = M_<Backend>;
   const std::uint32_t u =
       oracle.next_range(0, laige::kParticleSampleDenominator);
-  const auto t = M::div(static_cast<typename M::Scalar>(u),
-                        static_cast<typename M::Scalar>(laige::kParticleSampleDenominator));
+  const auto t =
+      M::div(sampleFromInt<Backend>(u),
+             sampleFromInt<Backend>(laige::kParticleSampleDenominator));
   return M::lerp(lo, hi, t);
 }
 
