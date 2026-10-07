@@ -216,7 +216,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R parallax` green.
   - **Size:** ~150 lines + tests
 
-- [ ] **M2-TILE-02 · Parallax tile layers + tile animation**
+- [x] **M2-TILE-02 · Parallax tile layers + tile animation**
   - **Refs:** FR-2.6 (parallax tile layers, tile animation)
   - **Depends:** M2-TILE-01, M2-PAR-01
   - **Scope:**

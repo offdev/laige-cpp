@@ -302,20 +302,22 @@ the DEPTH TEST DISABLED for the pass — the 2.5D depth is engine-owned
 and the draw submissions are observable (`SpriteDrawStats` /
 `SpriteDrawTotals` — the M2-SPRITE-04 profiler feed).
 
-### 4.9 The tilemap: static tile quads on the depth table (M2-TILE-01)
+### 4.9 The tilemap: tile quads on the depth table (M2-TILE-01/02)
 
 The scene's static tile grid is
 `laige::render::TileMap<Backend>`
 (`laige/render/tilemap.h`) — the data + the auto-depth wiring of §4.5
-+ the batch path of §4.7:
++ the batch path of §4.7 + the tile animation and parallax tile layer
+(M2-TILE-02):
 
 - **Chunked grid data** (FR-2.6): the requested grid of tiles, per
-  tile a `textureId` (the atlas reference) and an `animationId` (data
-  only in M2 — M2-TILE-02 cycles frames from it), in one flat
-  pre-sized array (8 B/tile). The tile's **height lives in the owned
-  `IsoDepthKeyTable` alone** (one source of truth): tile `(gx, gy)` is
-  the world cell `[gx, gx+1) × [gy, gy+1)` (§5.1's grid at `g = 1`),
-  so the tilemap is grid-locked by construction.
+  tile a `textureId` (the atlas reference) and an `animationId` (0 =
+  a STATIC tile; 1..maxAnimations = the animation slot — M2-TILE-02
+  cycles the frame from it), in one flat pre-sized array (8 B/tile).
+  The tile's **height lives in the owned `IsoDepthKeyTable` alone**
+  (one source of truth): tile `(gx, gy)` is the world cell
+  `[gx, gx+1) × [gy, gy+1)` (§5.1's grid at `g = 1`), so the tilemap
+  is grid-locked by construction.
 - **Auto-depth** (FR-2.6): a tile's Y height is automatically
   reflected in its depth key — `setTile`/`rebuild` route the heights
   into the table (§4.5), which recomputes exactly the affected cell's
@@ -325,17 +327,42 @@ The scene's static tile grid is
 - **The batch path** (S-5): `declareTo(batcher, options)` declares
   one `SpriteItem` per tile — the tile's **center** `(gx + 0.5, gy +
   0.5)` (the same point the table quantizes), scale (1, 1) (the unit
-  quad spans the tile's cell), rotation 0, the **fixed-frame** UV
-  (default the full tile texture), the table's key (auto-depth), the
-  tile's texture as `atlasId` — in the grid's row-major order
-  (the tile's grid position is a static tile's stable identity, the
-  §4.6 insertion-order analog; RENDER-003).
+  quad spans the tile's cell), rotation 0, the tile's **current frame**
+  UV (the static tile's fixed frame — default the full tile texture —
+  or the animation's frame UV, M2-TILE-02) + `frameIndex` (the
+  M2-SPRITE-03 hook), the table's key (auto-depth), the tile's
+  texture as `atlasId` — in the grid's row-major order (the tile's
+  grid position is a static tile's stable identity, the §4.6
+  insertion-order analog; RENDER-003).
+- **Tile animation** (M2-TILE-02): an ANIMATION is a slot of the
+  tilemap's pre-sized animation table — the frame COUNT, the
+  documented TICK RATE (`frameTicks` — the sim ticks per frame), and
+  the tile sheet's frame layout (the M2-SPRITE-03 layout). The scene
+  owner calls `advanceAnimations()` ONCE PER SIM TICK (ARCH-002 —
+  per sim tick, never per render frame): every set animation's frame
+  steps every `frameTicks` ticks, wrapping at `frameCount`
+  (`frame(ticks) = (ticks / frameTicks) mod frameCount`). All tiles of
+  one animation share its phase (per-tile offsets are the M3 editor's
+  control). The frame UVs are precomputed at `setAnimation` (the setup
+  allocation); the per-frame path only reads them (no per-frame
+  allocation, FR-2.2). The frame state is presentation state
+  (ARCH-009).
 - **Bounded draw calls** (FR-2.1, RENDER-001): the batcher's
   (atlas, material, blend) grouping renders the tilemap in one draw
   call per DISTINCT (textureId, material, blend) combination — tiles
   of one chunk sharing one texture and blend form ONE group (one
   draw call per chunk group); the count is a function of the distinct
   group keys, never of the tile count.
+- **The parallax tile layer** (M2-TILE-02, the M2-PAR-01 hook): a
+  parallax layer with the `Tilemap` source declares the tilemap's
+  quads UNDER the layer (`declareTo` overload): every quad is
+  TRANSLATED by the layer's `worldOffset(cameraPos)` (§4.10), and its
+  key is the §4.1 key of the translated center at the TILEMAP's own
+  `Options::layer` (the scene-setup convention: the layer's def
+  `depthLayer` equals it — bg/mid/fg tilemaps get -2/-1/+1). The
+  translated keys are computed per tile per frame (the camera-
+  dependent translation is not precomputable — O(tileCount), zero
+  allocation).
 
 ### 4.10 The parallax layers: the named background/midground/foreground model (M2-PAR-01)
 
@@ -378,11 +405,15 @@ declared into the batcher of §4.7 (S-5) with the §4.1 keys:
   renders through the 2 x 2 wrap split (up to four quads — one
   SpriteItem carries one UV rect, no wrap); the quad's key is the
   §4.1 key of the quad's world center at the layer's `depthLayer`.
-- **Tilemap-source layers** (the M2-TILE-02 hook): a layer's
-  `source = Tilemap` declares its tilemap's tiles with this layer's
-  `worldOffset` translation and `depthLayer` (the tilemap's
-  `Options::layer`, §4.9); in M2-PAR-01 they are DATA ONLY
-  (`declareTo` skips them).
+- **Tilemap-source layers** (M2-TILE-02): a layer's `source = Tilemap`
+  names a tilemap; the tilemap declares its tiles UNDER the layer
+  (the `TileMap::declareTo` overload, §4.9) — the quads translated by
+  this layer's `worldOffset`, their keys at the tilemap's own
+  `Options::layer` (the scene-setup convention: this def's
+  `depthLayer` must equal it). This registry's own `declareTo` skips
+  Tilemap-source layers (no log — the game declares the tiles through
+  the tilemap's path, not this one); its `size`/`uv` fields are not
+  validated.
 
 ## 5. Conversion rules (the module boundaries, RENDER-006)
 
@@ -394,7 +425,7 @@ declared into the batcher of §4.7 (S-5) with the §4.1 keys:
 | Screen → world (per mode) | picking, screen↔world transforms | `laige-render` (`ProjectionView`: `worldToScreen`, `screenToWorldRay`, `screenToWorld`, M2-PROJ-01; `screenToGrid` iso grid picking, M2-ISO-03) | **Shipped (M2-PROJ-01 + M2-ISO-03)** |
 | World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | **Shipped** (matrices + camera core M2-CAM-01, iso presets + grid-snap M2-CAM-02, world→screen transform M2-PROJ-01, pixels: `SpriteRenderer::submit`'s offscreen instanced draw M2-SPRITE-02) |
 | Atlas frame → UV sub-rect | animation frame index + sheet layout → UV rect | `laige-render` (`spriteFrameUv`, M2-SPRITE-03) | **Shipped (M2-SPRITE-03)** |
-| Tile grid → static tile quads | tile data + table keys → declared sprites (fixed-frame quads) | `laige-render` (`TileMap::declareTo`, M2-TILE-01) | **Shipped (M2-TILE-01)** |
+| Tile grid → tile quads | tile data + table keys (+ the animation's frame state; the parallax layer's `worldOffset`) → declared sprites | `laige-render` (`TileMap::declareTo` — static + animated frames, the parallax tile layer overload, M2-TILE-01/02) | **Shipped (M2-TILE-01 + M2-TILE-02)** |
 | Camera position → parallax offset | camera (x, y) + layer def → world-space offset (the exact formula) + wrap quads | `laige-render` (`ParallaxLayers::worldOffsetAt` / `declareTo`, M2-PAR-01) | **Shipped (M2-PAR-01)** |
 
 ### 5.1 The isometric grid picking (M2-ISO-03)

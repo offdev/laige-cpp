@@ -24,10 +24,12 @@ The layer quads' keys are the
 [`iso_depth_key.md`](iso_depth_key.md) (M2-ISO-01) keys with the
 layer's depth-layer value (engine-owned, G-R11); the batch path
 declares into [`sprite_batcher.md`](sprite_batcher.md)
-(M2-SPRITE-01). Tilemap-source layers (the M2-TILE-02 hook) declare
-through the tilemap's path —
-[`tilemap.md`](tilemap.md) — with this layer's `worldOffset`
-translation and `depthLayer`.
+(M2-SPRITE-01). Tilemap-source layers (M2-TILE-02) declare UNDER the
+layer through the tilemap's `declareTo` overload —
+[`tilemap.md`](tilemap.md) — the quads are translated by this layer's
+`worldOffset`, and their keys carry the TILEMAP's own
+`Options::layer` (the scene-setup convention: this def's `depthLayer`
+must equal it).
 
 ## The API
 
@@ -93,10 +95,16 @@ texel row, the M2-SPRITE-02 contract) maps to the world +y direction
 [coordinates.md](../concepts/coordinates.md)).
 
 The Tilemap source references a tilemap (its `tilemapId`): the
-tilemap defines its own world grid, and M2-TILE-02 declares its tiles
-with this layer's `worldOffset` translation and its `depthLayer`. In
-M2-PAR-01 a Tilemap-source layer is DATA ONLY: `declareTo` skips it
-(the hook), its `size`/`uv` fields are not validated.
+tilemap defines its own world grid, and (M2-TILE-02) the tilemap
+declares its tiles UNDER this layer (the
+`TileMap::declareTo` overload, [`tilemap.md`](tilemap.md)): the quads
+are translated by this layer's `worldOffset` (formula (1)), and their
+depth keys carry the TILEMAP's own `Options::layer` (the scene-setup
+convention: this def's `depthLayer` must equal it — both are the
+content's layer; the declaration uses the tilemap's value). This
+registry's own `declareTo` skips a Tilemap-source layer (no log —
+the game declares the tiles through the tilemap's path, not this
+one); its `size`/`uv` fields are not validated.
 
 ## The render order (the background-first contract)
 

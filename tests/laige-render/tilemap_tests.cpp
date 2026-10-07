@@ -172,13 +172,14 @@ constexpr std::uint32_t kGoldenTextures[16] = {
     1, 1, 2, 2, 1, 2, 2, 1, 2, 1, 2, 1, 1, 1, 2, 2};
 
 // The golden scene's 16 tiles as a TileData span (row-major, tileX
-// fastest; animation id = the index).
+// fastest; every tile static — the animation cycle has its own
+// suite, tests/laige-render/tilemap_anim_tests.cpp).
 std::vector<TileData> goldenTiles() {
   std::vector<TileData> tiles(16);
   for (std::size_t i = 0; i < 16; ++i) {
     tiles[i].textureId = kGoldenTextures[i];
     tiles[i].height = kGoldenHeights[i];
-    tiles[i].animationId = static_cast<std::uint32_t>(i);
+    tiles[i].animationId = 0;  // static (the M2-TILE-02 sentinel)
   }
   return tiles;
 }
@@ -327,12 +328,13 @@ TEST(TileMapData, SetTileReadWrite) {
   auto r = TileMap<Fpx16_16>::create(o);
   ASSERT_TRUE(r.ok());
   auto m = std::move(r).takeValue();
-  // The edit: texture 7, height 3, animation 9:
-  ASSERT_TRUE(m.setTile(2, 1, 7, 3, 9).ok());
+  // The edit: texture 7, height 3, animation 7 (the slot domain is
+  // 0..maxAnimations — 0 = the static sentinel, M2-TILE-02):
+  ASSERT_TRUE(m.setTile(2, 1, 7, 3, 7).ok());
   const TileData t = m.tileAt(2, 1);
   EXPECT_EQ(t.textureId, 7u);
   EXPECT_EQ(t.height, 3);
-  EXPECT_EQ(t.animationId, 9u);
+  EXPECT_EQ(t.animationId, 7u);
   EXPECT_EQ(m.tileHeightAt(2, 1), 3);
   // The auto-depth key: hand computation — center (2.5, 1.5), sum 4,
   // q = 64, d = 64 - 48 = 16:
@@ -396,7 +398,7 @@ TEST(TileMapData, RebuildSceneLoad) {
       const TileData t = m.tileAt(tx, ty);
       EXPECT_EQ(t.textureId, kGoldenTextures[i]) << "tile (" << tx << ", " << ty << ")";
       EXPECT_EQ(t.height, kGoldenHeights[i]) << "tile (" << tx << ", " << ty << ")";
-      EXPECT_EQ(t.animationId, i) << "tile (" << tx << ", " << ty << ")";
+      EXPECT_EQ(t.animationId, 0u) << "tile (" << tx << ", " << ty << ")";
       EXPECT_EQ(m.tileHeightAt(tx, ty), kGoldenHeights[i]) << "tile (" << tx << ", " << ty << ")";
       EXPECT_EQ(m.depthKeyAt(tx, ty), kGoldenKeys[i]) << "tile (" << tx << ", " << ty << ")";
       EXPECT_EQ(m.depthKeyAt(tx, ty), oracleKey<Fpx16_16>(tx, ty, kGoldenHeights[i]))
@@ -456,7 +458,9 @@ void rebuildEqualsIncremental() {
       const std::size_t i = static_cast<std::size_t>(ty) * 8 + tx;
       tiles[i].textureId = 10 + static_cast<std::uint32_t>(tx + ty);
       tiles[i].height = (3 * tx + 5 * ty) % 7;
-      tiles[i].animationId = 100 + static_cast<std::uint32_t>(tx * 8 + ty);
+      // The animationId domain is 0..maxAnimations (the M2-TILE-02
+      // slot domain — 0 = the static sentinel):
+      tiles[i].animationId = static_cast<std::uint32_t>((tx + ty) % 3);
       ASSERT_TRUE(b.setTile(tx, ty, tiles[i].textureId, tiles[i].height,
                             tiles[i].animationId).ok());
     }
