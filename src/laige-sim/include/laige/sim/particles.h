@@ -515,8 +515,9 @@ class ParticleSystem {
   static Scalar fromInt(std::uint32_t v) noexcept {
     if constexpr (std::is_same_v<Backend, laige::sim::Fpx16_16>) {
       return Scalar{static_cast<std::int32_t>(v)};
+    } else {
+      return static_cast<Scalar>(static_cast<std::int32_t>(v));
     }
-    return static_cast<Scalar>(static_cast<std::int32_t>(v));
   }
 
   // One uniform scalar in [lo, hi]: one 24-bit Prng tap resolved to

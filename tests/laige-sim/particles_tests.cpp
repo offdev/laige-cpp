@@ -243,8 +243,9 @@ typename M_<Backend>::Scalar sampleFromInt(std::uint32_t v) {
   using Scalar = typename M_<Backend>::Scalar;
   if constexpr (std::is_same_v<Backend, laige::sim::Fpx16_16>) {
     return laige::fpx16_16{static_cast<std::int32_t>(v)};
+  } else {
+    return static_cast<Scalar>(static_cast<std::int32_t>(v));
   }
-  return static_cast<Scalar>(static_cast<std::int32_t>(v));
 }
 
 template <typename Backend>
