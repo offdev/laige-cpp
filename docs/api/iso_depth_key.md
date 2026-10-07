@@ -48,8 +48,12 @@ uint32_t isoDepthKey(sim::SimMath<Backend>::Vec2 pos,
   units (the tile map's per-tile height, M2-TILE-01). *Not* the
   object's own sprite height.
 - **`layer`** — the render layer (`kIsoDepthGroundLayer` = 0 default;
-  the parallax layer values land with M2-PAR-01 — background layers
-  negative/sorted first, foreground positive/sorted last).
+  the parallax layer values are documented, M2-PAR-01,
+  [`parallax.md`](parallax.md) — the presets are
+  `kParallaxDepthLayerBackground` = -2 (sorted first),
+  `kParallaxDepthLayerMidground` = -1,
+  `kParallaxDepthLayerForeground` = +1 (sorted last); a custom layer
+  picks any value in the domain [-512, +511]).
 
 **The formula** (world space only — never screen space, PRD §4):
 
@@ -192,5 +196,7 @@ if (posOk.ok()) {
   shear contract is pinned against (M2-GL-03).
 - [`presentation.md`](presentation.md) — the interpolated positions the
   key reads (M1-LOOP-02).
+- [`parallax.md`](parallax.md) — the parallax layer values that use
+  the key's layer field (M2-PAR-01).
 - Roadmap: M2-ISO-01 (this), M2-ISO-02 (key table), M2-SORT-01 (stable
   radix sort), M2-SPRITE-01/02 (batcher), M2-PAR-01 (layer values).
