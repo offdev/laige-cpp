@@ -216,7 +216,8 @@ class TileMap {
   // two >= 1), `maxChunks` (default
   // `kIsoDepthTableDefaultMaxChunks` = 1024), `layer` (default
   // `kIsoDepthGroundLayer` = 0 — a parallax tile LAYER gets its own
-  // tilemap with its layer value, M2-PAR-01).
+  // tilemap with its layer value, M2-PAR-01 — the values are
+  // documented in laige/render/parallax.h).
   using Options = IsoDepthKeyTable<Backend>::Options;
 
   // The per-frame declare options (the fixed-frame quad model, above):

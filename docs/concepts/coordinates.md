@@ -144,7 +144,7 @@ The render order is the lexicographic tuple **(key, entity id)**:
 
 1. **key** (this step, M2-ISO-01): layer ascending as the coarse
    primary order (background layers first — the parallax layer values
-   land with M2-PAR-01), then the quantized depth;
+   are documented, M2-PAR-01, §4.10), then the quantized depth;
 2. **entity id**: equal keys keep the deterministic insertion order —
    the stable sort (M2-SORT-01) preserves it and the batcher
    (M2-SPRITE-01) inserts in the engine's deterministic entity-id
@@ -337,6 +337,53 @@ The scene's static tile grid is
   draw call per chunk group); the count is a function of the distinct
   group keys, never of the tile count.
 
+### 4.10 The parallax layers: the named background/midground/foreground model (M2-PAR-01)
+
+The scene's parallax layers are
+`laige::render::ParallaxLayers<Backend>`
+(`laige/render/parallax.h`) — the named bg/mid/fg model of FR-2.3,
+declared into the batcher of §4.7 (S-5) with the §4.1 keys:
+
+- **The offset formula** (world space only — PRD §4, RENDER-006): a
+  layer's content position at camera position `p` (the camera's
+  ground-plane (x, y), the M2-CAM-01 presentation position) is
+  `worldOffset(p) = factor * (p - center) + offset` — the EXACT
+  formula (the tests pin it bit-exactly for dyadic values).
+  `factor` in [0, 1]: 0 = fixed in world space (maximum parallax, a
+  close-by background), 1 = fixed on screen (no parallax, the sky
+  layer); `center` = the reference camera position (default the world
+  origin); `offset` = the world-space offset at `p = center`.
+- **The depth layer values** (the §4.1 layer field, engine-owned —
+  G-R11): `kParallaxDepthLayerBackground` = -2 (the `bg` preset),
+  `kParallaxDepthLayerMidground` = -1 (the `mid` preset),
+  `kIsoDepthGroundLayer` = 0 (the ground),
+  `kParallaxDepthLayerForeground` = +1 (the `fg` preset); a custom
+  layer picks any value in the M2-ISO-01 domain [-512, +511]
+  (more negative = further back).
+- **Background first** (the documented render order): WITHIN a shared
+  (atlas, material, blend) group the layer field dominates the key —
+  every background-layer quad sorts before every ground object and
+  every foreground quad after it, whatever the quads' v
+  (engine-guaranteed, the §4.1 "layer dominates" contract). ACROSS
+  groups the draw order is the batcher's group order (ascending
+  (atlas, material, blend), §4.7) — the scene's SET-UP assigns the
+  parallax layers' atlas ids so the group order matches the depth
+  order: background ids BELOW the world content's, foreground ids
+  ABOVE it (the M2-TILE-01 texture-id convention).
+- **The UV scroll** (auto or manual): each layer carries a CURRENT UV
+  OFFSET in [0, 1)²; Auto advances it by `scrollSpeed` (UV units PER
+  FRAME) on `advanceScrolls()` — once per frame, before the
+  declarations — and the wrap is EXACT at the texture boundary
+  (`wrap(x) = x - floor(x)`: 1.0 → exactly 0.0). A scrolled layer
+  renders through the 2 x 2 wrap split (up to four quads — one
+  SpriteItem carries one UV rect, no wrap); the quad's key is the
+  §4.1 key of the quad's world center at the layer's `depthLayer`.
+- **Tilemap-source layers** (the M2-TILE-02 hook): a layer's
+  `source = Tilemap` declares its tilemap's tiles with this layer's
+  `worldOffset` translation and `depthLayer` (the tilemap's
+  `Options::layer`, §4.9); in M2-PAR-01 they are DATA ONLY
+  (`declareTo` skips them).
+
 ## 5. Conversion rules (the module boundaries, RENDER-006)
 
 | Conversion | Direction | Owner | Status |
@@ -348,6 +395,7 @@ The scene's static tile grid is
 | World → screen (render) | sim state → NDC → pixels | camera + preset matrix (M2-CAM-01/02, M2-GL-03), `ProjectionView::worldToScreen` (M2-PROJ-01), sprite draw (M2-SPRITE-02) | **Shipped** (matrices + camera core M2-CAM-01, iso presets + grid-snap M2-CAM-02, world→screen transform M2-PROJ-01, pixels: `SpriteRenderer::submit`'s offscreen instanced draw M2-SPRITE-02) |
 | Atlas frame → UV sub-rect | animation frame index + sheet layout → UV rect | `laige-render` (`spriteFrameUv`, M2-SPRITE-03) | **Shipped (M2-SPRITE-03)** |
 | Tile grid → static tile quads | tile data + table keys → declared sprites (fixed-frame quads) | `laige-render` (`TileMap::declareTo`, M2-TILE-01) | **Shipped (M2-TILE-01)** |
+| Camera position → parallax offset | camera (x, y) + layer def → world-space offset (the exact formula) + wrap quads | `laige-render` (`ParallaxLayers::worldOffsetAt` / `declareTo`, M2-PAR-01) | **Shipped (M2-PAR-01)** |
 
 ### 5.1 The isometric grid picking (M2-ISO-03)
 
@@ -422,9 +470,11 @@ For one isometric frame, objects render in ascending
 batcher (M2-SPRITE-01) and drawn by the sprite renderer (M2-SPRITE-02)
 through the engine's stable depth sort (`DepthSort`, §4.6,
 M2-SORT-01).
-Parallax layers (M2-PAR-01) render background-first via their layer
-values; the UI pass (M2-UI-02) is a separate screen-space pass rendered
-after all world passes. Determinism of the order is total: same world
+Parallax layers (M2-PAR-01, §4.10) render background-first via their
+depth-layer values (the layer field dominates within a group; the
+scene's atlas-id convention orders the groups); the UI pass
+(M2-UI-02) is a separate screen-space pass rendered after all world
+passes. Determinism of the order is total: same world
 state → same keys → same order, every frame (RENDER-003).
 
 ## Related
@@ -451,6 +501,10 @@ state → same keys → same order, every frame (RENDER-003).
 - [`api/tilemap.md`](../api/tilemap.md) — the tilemap contract:
   `TileMap` (chunked tile grid + the auto-depth wiring of the depth
   table + the static tile-quad batch path) (M2-TILE-01).
+- [`api/parallax.md`](../api/parallax.md) — the parallax layer
+  contract: `ParallaxLayers` (the named bg/mid/fg model — the offset
+  formula, the depth-layer values, the UV scroll + exact wrap, the
+  2 x 2 wrap-split batch path) (M2-PAR-01).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —

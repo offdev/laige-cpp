@@ -404,5 +404,49 @@ protocol / failure paths / custom options / no-log happy path, and the
 entry: the per-frame declare cost is part of the composite 50k
 render-CPU budget, measured with M2-PERF-01.
 
-The remaining M2 steps (M2-PAR-01, text/UI, M2-PERF-01) land in later
-steps.
+M2-PAR-01 landed the parallax layers —
+`laige::render::ParallaxLayers<Backend>` (public header
+`include/laige/render/parallax.h`, header-only — a template over the
+SimMath backends): the named bg/mid/fg model of FR-2.3. Each layer is
+a WORLD-SPACE RECTANGLE (a texture, or a tilemap — the M2-TILE-02
+hook, data-only in M2-PAR-01) whose content position at camera
+position `p` is the EXACT formula `worldOffset(p) = factor * (p -
+center) + offset` (factor 0 = fixed in world space, 1 = fixed on
+screen — one source of truth). The layer's quads carry the M2-ISO-01
+key's LAYER field (engine-owned, G-R11): the presets are
+`kParallaxDepthLayerBackground` = -2, `kParallaxDepthLayerMidground`
+= -1, `kIsoDepthGroundLayer` = 0 (the ground),
+`kParallaxDepthLayerForeground` = +1 — WITHIN a shared (atlas,
+material, blend) group the layer field dominates (background first,
+engine-guaranteed); ACROSS groups the draw order is the batcher's
+group order, so the scene's SET-UP assigns the layers' atlas ids
+background-below / foreground-above the world content (the
+M2-TILE-01 texture-id convention). The UV scroll (auto or manual)
+carries a per-layer offset in [0, 1)² with the EXACT wrap at the
+texture boundary (`wrap(x) = x - floor(x)` — 1.0 → exactly 0.0),
+rendered through the 2 x 2 wrap split (a single SpriteItem carries one
+UV rect — no wrap): up to four quads per layer, one draw call per
+layer group (FR-2.1). ARCH-009: headless-buildable, presentation-only
+(the layer state reads the camera's presentation position, never sim
+state); the per-frame `advanceScrolls` + `declareTo` loop allocates
+NOTHING (FR-2.2 — the zero-allocation proof, the tests). Rejected
+definitions leave the slot unchanged (one rate-limited
+`parallax/layer_invalid` warn with the failing field — LOG-002/004).
+API contract in [docs/api/parallax.md](../docs/api/parallax.md),
+tests under [tests/laige-render](../tests/laige-render) (CTest entry
+`parallax` — pure data + batcher bookkeeping, no GL environment
+required: the registry create/stopped state, the `setLayer`
+validation matrix with the pinned warn fields, the EXACT offset
+formula (hand-computed dyadic goldens), the auto/manual UV scroll with
+the EXACT wrap, the hand-computed golden keys of the 4-layer + ground
+scene (both backends — the dyadic exactness zone) with the group
+(draw) order and the layer-dominance orderings, the 2 x 2 wrap split's
+exact world/UV rects (incl. the atlas sub-rect mapping), the frame
+protocol / stopped / disabled / tilemap-hook paths, cross-frame
+determinism, and the 1000-frame zero-allocation declare loop). No
+standalone `budgets.json` entry: the per-frame declare cost is part of
+the composite 50k render-CPU budget, measured with M2-PERF-01 (the
+M2-SCENE-01 reference scene has 3 parallax layers within the 50k-sprite
+/ ≤30-draw-call budget).
+
+The remaining M2 steps (text/UI, M2-PERF-01) land in later steps.

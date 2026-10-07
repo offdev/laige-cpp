@@ -206,7 +206,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R tilemap` green.
   - **Size:** ~250 lines + tests
 
-- [ ] **M2-PAR-01 · Parallax layers**
+- [x] **M2-PAR-01 · Parallax layers**
   - **Refs:** FR-2.3 (named layers, factor, offset, UV scroll, blend)
   - **Depends:** M2-CAM-01
   - **Scope:**

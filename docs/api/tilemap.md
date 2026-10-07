@@ -42,7 +42,8 @@ duplicated validation): `originTileX/Y` (default 0), `widthTiles` /
 `kIsoDepthTableChunkTiles` = 16; a power of two ≥ 1), `maxChunks`
 (default `kIsoDepthTableDefaultMaxChunks` = 1024), `layer` (default
 `kIsoDepthGroundLayer` = 0 — a parallax tile LAYER gets its own
-tilemap with its layer value, M2-PAR-01). `TileData` is a plain value
+tilemap with its layer value, M2-PAR-01 — the values are documented
+in [`parallax.md`](parallax.md)). `TileData` is a plain value
 (8 B of data + the table's height — the value the game writes on
 load/edit and reads back).
 

@@ -43,7 +43,8 @@ The per-sprite key this table precomputes is
 addressing shift/mask, division-free), `maxChunks` (default
 `kIsoDepthTableDefaultMaxChunks` = 1024; the growth cap), `layer`
 (default `kIsoDepthGroundLayer` = 0 — a parallax tile LAYER gets its
-own table with its layer value, M2-PAR-01).
+own table with its layer value, M2-PAR-01 — the values are
+documented in [`parallax.md`](parallax.md)).
 
 ### The cell model
 
@@ -244,6 +245,8 @@ if (table.value().covers(gx, gy)) {
   gate's harness.
 - [baselines/m2-iso-depth-table.md](../benchmarks/baselines/m2-iso-depth-table.md)
   — the recorded 10k-dirty-cell baseline.
+- [`parallax.md`](parallax.md) — the parallax layer values that use
+  the table's layer (M2-PAR-01).
 - Roadmap: M2-ISO-02 (this), M2-TILE-01 (tilemap wiring), M2-SORT-01
   (stable radix sort), M2-SPRITE-01/02 (batcher), M2-PAR-01 (layer
   values).

@@ -309,6 +309,15 @@ still to land.
   a fixed frame; one tilemap renders in a bounded number of draw
   calls — one per (texture, material, blend) group) (M2-TILE-01;
   FR-2.6).
+ - [Parallax layers](api/parallax.md) —
+  `laige::render::ParallaxLayers<Backend>`: the named
+  background/midground/foreground layer model (M2-PAR-01; FR-2.3):
+  the parallax factor (0..1), the EXACT world-space offset formula
+  `factor * (p - center) + offset`, the UV scroll (auto or manual)
+  with the exact wrap at the texture boundary (rendered through the
+  2 x 2 wrap split into the sprite batcher), and the documented
+  background-first render order (the depth-key layer values:
+  background -2, midground -1, ground 0, foreground +1).
 
 ## Guides
 
