@@ -541,7 +541,10 @@ class ParallaxLayers {
   // The [0, 1) wrap (the texture boundary): x - floor(x) — in [0, 1)
   // for every finite x; exact for dyadic x (1.0 -> exactly 0.0,
   // -0.25 -> exactly 0.75 — the tests pin it).
-  static float wrapUv(float x) noexcept { return x - std::floorf(x); }
+  // std::floor's float overload (the C++ standard guarantees it;
+  // std::floorf does not — not every libstdc++ exposes the C suffix
+  // overloads in std).
+  static float wrapUv(float x) noexcept { return x - std::floor(x); }
 
   // The quad's M2-ISO-01 key position: the float world point in the
   // scene's backend (Fp32Pinned: identity; Fpx16_16: the backend's
