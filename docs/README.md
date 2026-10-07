@@ -325,6 +325,16 @@ still to land.
   background -2, midground -1, ground 0, foreground +1), and the
   `Tilemap` source (the M2-TILE-02 hook — the tiles are declared
   through the tilemap's `declareTo` overload, not this registry's).
+ - [Particle simulation](api/particles.md) —
+  `laige::ParticleSystem<Backend>`: the CPU-simulated, budgeted,
+  pooled particle half of FR-2.7 (M2-PART-01): the bounded
+  pre-allocated pool (drop-on-overflow, one rate-limited warn per
+  tick), burst + continuous emitters, per-particle 2D position +
+  constant depth + velocity + life + size, the exact integer color
+  fade, the once-per-sim-tick `update()` (ARCH-002), and the
+  fixed-seed determinism contract (the 4-draw Prng contract, the
+  machine-greppable state hash). The render half (particles as
+  batched sprites) lands in M2-PART-02.
 
 ## Guides
 
@@ -413,7 +423,8 @@ still to land.
   [engine.md](api/engine.md),
   [config.md](api/config.md),
   [determinism.md](api/determinism.md),
-  [replay.md](api/replay.md).)
+  [replay.md](api/replay.md),
+  [particles.md](api/particles.md).)
 
 ## Related
 

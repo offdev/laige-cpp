@@ -64,20 +64,21 @@
 # `ecs_guardrails`, `ecs_stress`, `system_registry`, `scheduler`,
 # `system_timing`, `game_loop`, `presentation`, `engine`,
 # `game_config`, `determinism_mode`, `replay_record`, `replay_replay`,
-# `replay_diff`, `zero_alloc`, `profiler`, and `budget_report` entries
-# are the M1-ECS-01, M1-ECS-02, M1-ECS-03, M1-ECS-04, M1-ECS-05,
-# M1-ECS-06, M1-ECS-07, M1-SYS-01, M1-SYS-02, M1-SYS-03, M1-LOOP-01,
-# M1-LOOP-02, M1-HEAD-01, M1-CFG-01, M1-DET-01, M1-DET-02, M1-DET-03,
-# M1-DET-05, M1-ALLOC-01, M1-PROF-01, and M1-PROF-02 Verify commands
-# (`ctest -R entity`, `ctest -R component_registry`, `ctest -R
-# archetype`, `ctest -R query`, `ctest -R iter_order`,
-# `ctest -R ecs_guardrails`, `ctest -R ecs_stress`, `ctest -R
-# system_registry`, `ctest -R scheduler`, `ctest -R system_timing`,
-# `ctest -R game_loop`, `ctest -R presentation`, `ctest -R engine`,
-# `ctest -R game_config`, `ctest -R determinism_mode`,
-# `ctest -R replay_record`, `ctest -R replay_replay`, `ctest -R
-# replay_diff`, `ctest -R zero_alloc`, `ctest -R profiler`, and
-# `ctest -R budget_report`), selecting exactly the
+# `replay_diff`, `zero_alloc`, `profiler`, `budget_report`, and
+# `particles` entries are the M1-ECS-01, M1-ECS-02, M1-ECS-03,
+# M1-ECS-04, M1-ECS-05, M1-ECS-06, M1-ECS-07, M1-SYS-01, M1-SYS-02,
+# M1-SYS-03, M1-LOOP-01, M1-LOOP-02, M1-HEAD-01, M1-CFG-01, M1-DET-01,
+# M1-DET-02, M1-DET-03, M1-DET-05, M1-ALLOC-01, M1-PROF-01, M1-PROF-02,
+# and M2-PART-01 Verify commands (`ctest -R entity`, `ctest -R
+# component_registry`, `ctest -R archetype`, `ctest -R query`,
+# `ctest -R iter_order`, `ctest -R ecs_guardrails`, `ctest -R
+# ecs_stress`, `ctest -R system_registry`, `ctest -R scheduler`,
+# `ctest -R system_timing`, `ctest -R game_loop`, `ctest -R
+# presentation`, `ctest -R engine`, `ctest -R game_config`, `ctest -R
+# determinism_mode`, `ctest -R replay_record`, `ctest -R
+# replay_replay`, `ctest -R replay_diff`, `ctest -R zero_alloc`,
+# `ctest -R profiler`, `ctest -R budget_report`, and `ctest -R
+# particles`), selecting exactly the
 # suites below from the shared executable.
 
 set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
@@ -97,7 +98,8 @@ set(LAIGE_SIM_TEST_SOURCES entity_tests.cpp component_registry_tests.cpp
                            replay_diff_tests.cpp
                            zero_alloc_tests.cpp
                            profiler_tests.cpp
-                           budget_report_tests.cpp)
+                           budget_report_tests.cpp
+                           particles_tests.cpp)
 # M1-ALLOC-01: the test-only allocation counter no longer carries its
 # own global operator new/new[] overrides — they moved into
 # laige-core (src/laige-core/alloc_watch.cpp, the G-R1 counting
@@ -333,6 +335,19 @@ add_test(NAME budget_report
          COMMAND laige-sim_tests
          --gtest_filter=BudgetReport*)
 
+# M2-PART-01: CPU particle simulation (FR-2.7 — the budgeted, pooled,
+# deterministic CPU-sim particle half: the create domain + stopped
+# state, the addEmitter validation matrix, the burst/continuous
+# emission, the per-tick advance + death, the pool exhaustion table,
+# the exact color fade, the fixed-seed determinism + 4-draw Prng
+# contract, the stats feed, and the zero-allocation update window).
+# The step's Verify command is `ctest -R particles`; this entry
+# selects exactly the Particles* suites from the shared
+# laige-sim_tests executable. No GL environment needed.
+add_test(NAME particles
+         COMMAND laige-sim_tests
+         --gtest_filter=Particles*)
+
 # M1-DET-01: the G-R8 trait compile-checks (the compile-time half of
 # the determinism guarantee). Each fixture is compiled (not linked,
 # not run) with the engine policy flags; the positive fixture must
@@ -398,7 +413,7 @@ if(LAIGE_TSAN)
     system_timing game_loop presentation engine game_config
     determinism_mode
     replay_record replay_replay replay_diff zero_alloc profiler
-    budget_report
+    budget_report particles
     PROPERTIES
     ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
 endif()

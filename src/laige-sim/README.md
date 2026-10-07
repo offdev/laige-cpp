@@ -183,6 +183,19 @@ opt-in cached per-run report (`startBudgetReport` /
 surface (CTest entries `budget_report`, `laige_run_budget`; API
 contract in
 [docs/api/frame_budget.md](../docs/api/frame_budget.md)).
+M2-PART-01 landed the CPU particle simulation (FR-2.7 — the
+budgeted, pooled CPU-sim particle half) — `ParticleSystem<Backend>`:
+the bounded pre-allocated pool (drop-on-overflow, one rate-limited
+warn per tick), the dense-id emitter registry (burst + continuous
+emission), the once-per-sim-tick `update()` (advance → emit →
+overflow report, ARCH-002), the exact integer color fade, the
+fixed-seed determinism contract (the 4-draw Prng contract, the
+machine-greppable state hash), and `liveParticles()` as the
+render path's read-only surface (`include/laige/sim/particles.h`;
+API contract in
+[docs/api/particles.md](../docs/api/particles.md), tests under
+[tests/laige-sim](../tests/laige-sim), CTest entry `particles`).
+The render half (particles as batched sprites) lands in M2-PART-02.
 The editor overlay surface (M2), the detcheck matrix (M1-DET-04),
 and the remaining M1 steps land next; physics, input, and animation
 in M3.

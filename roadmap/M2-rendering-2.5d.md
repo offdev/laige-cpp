@@ -228,7 +228,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
 
 ## Particles
 
-- [ ] **M2-PART-01 · Particle simulation (CPU, 2D + depth)**
+- [x] **M2-PART-01 · Particle simulation (CPU, 2D + depth)**
   - **Refs:** FR-2.7 (CPU-simulated, budgeted, pooled)
   - **Depends:** M1-ECS-03
   - **Scope:**

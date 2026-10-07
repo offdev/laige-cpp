@@ -415,6 +415,22 @@ declared into the batcher of §4.7 (S-5) with the §4.1 keys:
   the tilemap's path, not this one); its `size`/`uv` fields are not
   validated.
 
+### 4.11 The particles: the CPU-sim particle state (M2-PART-01)
+
+The particle state (`ParticleSystem<Backend>::Particle`, the
+[particle simulation](../api/particles.md) step) lives in SIM space:
+each particle carries a 2D position `(x, y)` + a CONSTANT depth value
++ a per-tick velocity + a life (sim ticks) + a size. The per-tick
+advance (`age += 1`, `pos += vel` — one SimMath vector add, ADR
+0002) runs in the simulation tick (ARCH-002); the render path reads
+the state read-only (`liveParticles()` — the M2-GL-02 cull/batch
+stage). The particle's depth value is the §4.1 key input M2-PART-02
+feeds the batcher (particles render as batched sprites — one draw
+call per emitter set, RENDER-001). The state is deterministic
+(ARCH-010): a pure function of (seed, emitter definitions, operation
+sequence) — fpx16_16 bit-identical across platforms/builds,
+fp32_pinned same-build/same-platform.
+
 ## 5. Conversion rules (the module boundaries, RENDER-006)
 
 | Conversion | Direction | Owner | Status |
@@ -427,6 +443,7 @@ declared into the batcher of §4.7 (S-5) with the §4.1 keys:
 | Atlas frame → UV sub-rect | animation frame index + sheet layout → UV rect | `laige-render` (`spriteFrameUv`, M2-SPRITE-03) | **Shipped (M2-SPRITE-03)** |
 | Tile grid → tile quads | tile data + table keys (+ the animation's frame state; the parallax layer's `worldOffset`) → declared sprites | `laige-render` (`TileMap::declareTo` — static + animated frames, the parallax tile layer overload, M2-TILE-01/02) | **Shipped (M2-TILE-01 + M2-TILE-02)** |
 | Camera position → parallax offset | camera (x, y) + layer def → world-space offset (the exact formula) + wrap quads | `laige-render` (`ParallaxLayers::worldOffsetAt` / `declareTo`, M2-PAR-01) | **Shipped (M2-PAR-01)** |
+| Particle state → sprite items | particle (pos, depth, size, faded tint) → declared sprites (one batch per emitter set, the key from the particle's depth) | `laige-render` (M2-PART-02 — consumes `ParticleSystem<Backend>::liveParticles()`, read-only after the sim phase) | **Planned (M2-PART-02)** |
 
 ### 5.1 The isometric grid picking (M2-ISO-03)
 
@@ -536,6 +553,10 @@ state → same keys → same order, every frame (RENDER-003).
   contract: `ParallaxLayers` (the named bg/mid/fg model — the offset
   formula, the depth-layer values, the UV scroll + exact wrap, the
   2 x 2 wrap-split batch path) (M2-PAR-01).
+- [`api/particles.md`](../api/particles.md) — the CPU particle
+  simulation contract: `ParticleSystem` (the bounded pool, the
+  burst + continuous emitters, the per-tick advance, the exact
+  integer fade, the determinism contract) (M2-PART-01).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —
