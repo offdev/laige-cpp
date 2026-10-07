@@ -507,6 +507,18 @@ class ParticleSystem {
     ++spawnedTotal_;
   }
 
+  // An integer v < 2^24 as a Scalar — exact on both backends (the fpx
+  // raw units; the fp32 24-bit mantissa represents every integer < 2^24
+  // exactly). Not a static_cast: the fpx16_16 aggregate's single-member
+  // parenthesized cast is rejected by the older AppleClang of the
+  // macOS P0 toolchain.
+  static Scalar fromInt(std::uint32_t v) noexcept {
+    if constexpr (std::is_same_v<Backend, laige::sim::Fpx16_16>) {
+      return Scalar{static_cast<std::int32_t>(v)};
+    }
+    return static_cast<Scalar>(static_cast<std::int32_t>(v));
+  }
+
   // One uniform scalar in [lo, hi]: one 24-bit Prng tap resolved to
   // [0, 1) (u / 2^24 — the tap resolution, the header's
   // determinism section) and one SimMath lerp (the ADR 0002 rounding
@@ -514,8 +526,7 @@ class ParticleSystem {
   // beyond the documented draw).
   Scalar sampleScalar(Scalar lo, Scalar hi) noexcept {
     const std::uint32_t u = rng_.next_range(0, kParticleSampleDenominator);
-    const Scalar t =
-        M::div(static_cast<Scalar>(u), static_cast<Scalar>(kParticleSampleDenominator));
+    const Scalar t = M::div(fromInt(u), fromInt(kParticleSampleDenominator));
     return M::lerp(lo, hi, t);
   }
 
