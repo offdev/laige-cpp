@@ -4,32 +4,39 @@
 # Roadmap:  roadmap/M0-foundations.md, step M0-CI-01
 # PRD refs: §6 (P0 platforms, AC-6.1), §14 (cadence), §8.1 (build budget)
 #
-# Cadence (PRD §14: "one per PR, all per merge"): each pull request runs
-# exactly ONE P0 OS, selected by the PR's ci:* label; the default (no
-# label) is Linux. Merges to master run ALL P0 OSes via ci.yml, which is
-# the "all per merge" half of the cadence.
+# Cadence: the PR lane covers only the P0 OSes that cannot be verified
+# locally — Windows and macOS. Linux is verified on the developer
+# machine with the canonical trees from
+# docs/getting-started/building.md (including the LAIGE_ASAN=ON and
+# LAIGE_TSAN=ON instrumented trees), so this workflow carries no Linux
+# jobs. Merges to master run the FULL matrix — every P0 OS/variant job,
+# both sanitizer lanes, and all tooling jobs — via ci.yml, which is
+# the "all per merge" half of the PRD §14 cadence.
 #
-# Label selector (apply at most one per PR; if several are present the
-# highest-priority label wins, so exactly one P0 OS always runs):
+# Label selector (apply at most one per PR; if both are present
+# ci:macos wins, so exactly one P0 OS always runs):
 #
 #   ci:macos    → macos-arm64 + macos-intel jobs
 #   ci:windows  → windows-msvc job
-#   ci:linux    → linux-gcc + linux-clang jobs (also the no-label default)
+#   (no label)  → no P0 OS build; the platform-independent tooling jobs
+#                 (include-lint, determinism-lint, api-manifest,
+#                 detcheck) still run on every PR.
 #
 # NOTE: the labels must be created once in the repository settings
-# (GitHub does not create labels from workflows). A PR with an unknown
-# or missing ci:* label simply falls back to the Linux default.
+# (GitHub does not create labels from workflows). A PR with no ci:*
+# label simply runs the tooling jobs. The former ci:linux label is no
+# longer a selector (Linux is verified locally); a PR carrying it gets
+# the no-label treatment.
 #
 # Jobs, runner images, steps, and the 10-minute budget timeout are the
 # same as in ci.yml (see its header for the full matrix documentation
 # and the Windows multi-config note).
 #
-# Sanitizer lanes (M0-CI-02): linux-asan (LAIGE_ASAN=ON) and linux-tsan
-# (LAIGE_TSAN=ON) run under the same condition as the default Linux
-# jobs — i.e. on every PR that does not select another P0 OS — because
-# they are part of the Linux P0 check (PRD §14: one P0 OS per PR). See
-# the ci.yml header for the lane semantics (fatal sanitizer reports,
-# report archiving, toolchain choice).
+# Sanitizer lanes (M0-CI-02): the linux-asan (LAIGE_ASAN=ON) and
+# linux-tsan (LAIGE_TSAN=ON) lanes no longer run on PRs (no Linux jobs
+# in the PR lane); they run on every merge via ci.yml. See the ci.yml
+# header for the lane semantics (fatal sanitizer reports, report
+# archiving, toolchain choice).
 #
 # Fuzz lane (PRD §14 "every commit (bounded)"; M0-TEST-01): no separate
 # fuzz job — the `fuzz_json_parse` ctest entry (1000 deterministic runs
@@ -48,10 +55,7 @@
 #
 # Fork PRs: this workflow uses the pull_request event, which runs on the
 # merge ref with a read-only token; checkout + build + ctest need nothing
-# beyond contents:read. On such PRs the artifact upload (needs
-# actions:write) fails with a 403, so the upload steps carry
-# continue-on-error: true — the reports then remain in the job log and
-# the tee'd output instead of the artifact.
+# beyond contents:read (no job in this workflow uploads artifacts).
 # ============================================================================
 
 name: CI (pull request)
@@ -67,189 +71,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  linux-gcc:
-    name: Linux x64 (g++)
-    if: >-
-      !contains(github.event.pull_request.labels.*.name, 'ci:macos') &&
-      !contains(github.event.pull_request.labels.*.name, 'ci:windows')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install GLFW X11 headers (laige-render)
-        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
-        # CMakeLists.txt) needs only the X11 *headers* at configure time
-        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
-        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
-        # packages are the RUNTIME GL stack for the headless GL smoke
-        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
-        # GLAD load them by dlopen at runtime) (M2-GL-01).
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            libx11-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxext-dev \
-            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
-      - name: Build
-        run: cmake --build build -j
-      - name: Test (unit)
-        run: ctest --test-dir build --output-on-failure
-
-  linux-clang:
-    name: Linux x64 (clang++)
-    if: >-
-      !contains(github.event.pull_request.labels.*.name, 'ci:macos') &&
-      !contains(github.event.pull_request.labels.*.name, 'ci:windows')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install GLFW X11 headers (laige-render)
-        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
-        # CMakeLists.txt) needs only the X11 *headers* at configure time
-        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
-        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
-        # packages are the RUNTIME GL stack for the headless GL smoke
-        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
-        # GLAD load them by dlopen at runtime) (M2-GL-01).
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            libx11-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxext-dev \
-            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
-      - name: Build
-        run: cmake --build build -j
-      - name: Test (unit)
-        run: ctest --test-dir build --output-on-failure
-
-  linux-asan:
-    name: Linux x64 ASan+UBSan (clang++)
-    if: >-
-      !contains(github.event.pull_request.labels.*.name, 'ci:macos') &&
-      !contains(github.event.pull_request.labels.*.name, 'ci:windows')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    # Job-scoped token: the archive step below needs actions:write for
-    # PRs from the base repository (fork PR tokens stay read-only,
-    # whatever this declares — see header).
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install GLFW X11 headers (laige-render)
-        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
-        # CMakeLists.txt) needs only the X11 *headers* at configure time
-        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
-        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
-        # packages are the RUNTIME GL stack for the headless GL smoke
-        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
-        # GLAD load them by dlopen at runtime) (M2-GL-01).
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            libx11-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxext-dev \
-            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
-      - name: Configure (ASan+UBSan)
-        run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_ASAN=ON
-      - name: Build (ASan+UBSan)
-        run: cmake --build build-asan -j
-      - name: Test (unit, ASan+UBSan)
-        # Every sanitizer report is fatal to the test process: ASan via
-        # abort_on_error=1:halt_on_error=1 here, UBSan via
-        # -fno-sanitize-recover=all (wired by CMake). log_path keeps one
-        # report file per test process for the artifact upload below.
-        env:
-          ASAN_OPTIONS: "abort_on_error=1:halt_on_error=1:detect_leaks=1:log_path=${{ github.workspace }}/asan-reports/asan"
-        run: |
-          set -o pipefail
-          ctest --test-dir build-asan --output-on-failure 2>&1 | tee asan-ctest-output.txt
-      - name: Archive sanitizer reports
-        # continue-on-error: fork PRs run with a read-only token, so the
-        # upload 403s there (see header); the reports stay in the job log
-        # and the tee'd output. The job-level actions:write covers PRs
-        # from the base repository.
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-asan-reports
-          path: |
-            asan-ctest-output.txt
-            asan-reports/
-            build-asan/Testing/Temporary/LastTest.log
-
-  linux-tsan:
-    name: Linux x64 TSan (clang++)
-    if: >-
-      !contains(github.event.pull_request.labels.*.name, 'ci:macos') &&
-      !contains(github.event.pull_request.labels.*.name, 'ci:windows')
-    runs-on: ubuntu-24.04
-    # 30 min (not 10): TSan is the slowest lane by design (~5-15x
-    # instrumentation overhead), and the suite has grown past the old
-    # margin — the M2-ISO-01 10k-scene property suite (iso_depth_key
-    # entry) plus the M2-GL-02 3000-frame integration run. Evidence:
-    # the master merge run of PR #60 took 8.8 min (96 entries: setup +
-    # build ~1.7 min, the 96-entry TSan test step ~7.1 min); the
-    # M2-ISO-01 PR run needed ~11 min (setup + build 3.7 min on a
-    # slower runner, the 97-entry test step ~7.2 min — laige-sim_tests
-    # alone 177 s) and was CANCELLED at the 10-min cap ~50 s before
-    # completion. 30 min keeps a large margin for runner variance and
-    # the suite's continued growth without weakening the gate
-    # (M2-ISO-01, 2026-09-30).
-    timeout-minutes: 30
-    # Job-scoped token: the archive step below needs actions:write (see
-    # the linux-asan job comment).
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install GLFW X11 headers (laige-render)
-        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
-        # CMakeLists.txt) needs only the X11 *headers* at configure time
-        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
-        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
-        # packages are the RUNTIME GL stack for the headless GL smoke
-        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
-        # GLAD load them by dlopen at runtime) (M2-GL-01).
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            libx11-dev libxcursor-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxext-dev \
-            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
-      - name: Configure (TSan)
-        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_TSAN=ON
-      - name: Build (TSan)
-        run: cmake --build build-tsan -j
-      - name: Test (unit, TSan)
-        # TSAN_OPTIONS=halt_on_error=1 is applied per test by tests/
-        # (M0-BUILD-01), so the first data race report kills the test
-        # process and ctest fails. The race report is printed to stderr
-        # and captured by the tee below.
-        run: |
-          set -o pipefail
-          ctest --test-dir build-tsan --output-on-failure 2>&1 | tee tsan-ctest-output.txt
-      - name: Archive sanitizer reports
-        # continue-on-error and job-level permissions: same rationale as
-        # the linux-asan job (fork PRs read-only, base-repo PRs can
-        # upload).
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-tsan-reports
-          path: |
-            tsan-ctest-output.txt
-            build-tsan/Testing/Temporary/LastTest.log
-
   windows-msvc:
     name: Windows x64 (MSVC 2022)
     if: >-
