@@ -7,20 +7,23 @@
 # Cadence (PRD §14: "one per PR, all per merge"):
 #   * this workflow runs on every push to the default branch (master) —
 #     i.e. on merge — and on manual workflow_dispatch:
-#     ALL ten jobs run (the five P0 OS/variant jobs, the two sanitizer
-#     lanes (M0-CI-02), and the three platform-independent tooling jobs:
-#     the include-graph lint with dependency-count metric (M0-CI-03),
-#     the public API manifest drift check (M0-TOOL-01), the
-#     determinism source scan (M1-DET-01), and the determinism check
-#     (M0-TOOL-02)).
+#     ALL eleven jobs run (the seven P0 OS/variant jobs — the five P0 OS
+#     jobs plus the two sanitizer lanes (M0-CI-02) — and the four
+#     platform-independent tooling jobs: the include-graph lint with
+#     dependency-count metric (M0-CI-03), the public API manifest drift
+#     check (M0-TOOL-01), the determinism source scan (M1-DET-01), and
+#     the determinism check (M0-TOOL-02)).
 #
 # Fuzz lane (PRD §14 "every commit (bounded)"; M0-TEST-01): there is no
 # separate fuzz job — the `fuzz_json_parse` ctest entry (1000
 # deterministic runs of laige-fuzz on the json_parse target) runs inside
 # every build job's ctest above, instrumented in the ASan tree. Seed and
 # nightly-long-run conventions: docs/testing.md.
-#   * Pull requests run exactly ONE P0 OS (label-selectable, default
-#     Linux) in the companion workflow .github/workflows/ci-pull.yml.
+#   * Pull requests run only the P0 OSes that cannot be verified
+#     locally — Windows and/or macOS, selected by the PR's ci:windows /
+#     ci:macos label (no label: no P0 OS build; Linux is verified
+#     locally) — in the companion workflow
+#     .github/workflows/ci-pull.yml.
 #
 # One job per P0 OS/variant (PRD §6). Each job runs the canonical flow from
 # docs/getting-started/building.md — configure → build → ctest (unit tests
