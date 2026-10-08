@@ -156,7 +156,22 @@
 # layer) + the animated tile under the translation), the animationId
 # edit/load domain + the unset-slot declare failure, and the 1000-frame
 # advance + declare zero-allocation loop (standalone + parallax)) —
-# pure data + batcher bookkeeping: no GL environment needed.
+# pure data + batcher bookkeeping: no GL environment needed; and the
+# particle rendering (M2-PART-02) — the M2-PART-01 live particles
+# declared into the sprite batcher as sprites (particle_render_tests.cpp's
+# ParticleRender* suites: the per-particle declaration goldens on both
+# backends (the world position / square scale / tint + fade alpha / UV /
+# atlas / blend / layer fields, the engine-owned depth key against the
+# isoDepthKey oracle), the exact color fade through the declaration, the
+# depth conversion (the dyadic-domain quantization, the sub-unit
+# ties-to-even rounding, the packing-boundary saturation), the in-group
+# (key, live-order) ordering, the multi-emitter-set group count (one
+# draw call per emitter set), the stopped / closed-window failure
+# paths, the determinism contract (fixed seed -> identical declared
+# (key, position) sequence, the machine-greppable state hash), the
+# 1 000-frame zero-allocation declare loop, and the PRD §8.1-style
+# 10 000-particle conversion budget gate) — pure data + batcher
+# bookkeeping: no GL environment needed.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -181,11 +196,16 @@
 # M2-SPRITE-04 Verify command (`ctest -R render_counters`), the
 # `tilemap` entry is the M2-TILE-01 Verify command (`ctest -R
 # tilemap`), the `tilemap_anim` entry is the M2-TILE-02 Verify command
-# (`ctest -R tilemap_anim`), and the `parallax` entry is the M2-PAR-01
-# Verify command (`ctest -R parallax`), each selecting exactly its
-# suites from the shared executable. (The unanchored `ctest -R tilemap`
-# regex also selects the `tilemap_anim` entry — the M2-TILE-02 suites
-# run under the M2-TILE-01 command too; that is intended.)
+# (`ctest -R tilemap_anim`), the `parallax` entry is the M2-PAR-01
+# Verify command (`ctest -R parallax`), and the `particle_render`
+# entry is the M2-PART-02 Verify command (`ctest -R
+# particle_render`), each selecting exactly its suites from the
+# shared executable. (The unanchored `ctest -R tilemap` regex also
+# selects the `tilemap_anim` entry — the M2-TILE-02 suites run under
+# the M2-TILE-01 command too; that is intended. Likewise the
+# unanchored `ctest -R particle` regex selects the M2-PART-01
+# `particles` entry in tests/laige-sim alongside this one — both
+# steps' suites running under one command is intended.)
 #
 # Environment note: the GlContextSmoke, RenderThreadOffscreen,
 # SpriteDraw{State,Smoke,Pipeline}, and RenderCounters{Scene,Cap,
@@ -204,7 +224,7 @@ add_executable(laige-render_tests
   iso_camera_tests.cpp projection_tests.cpp iso_picking_tests.cpp
   depth_sort_tests.cpp sprite_batcher_tests.cpp sprite_draw_tests.cpp
   sprite_frames_tests.cpp render_counters_tests.cpp tilemap_tests.cpp
-  tilemap_anim_tests.cpp parallax_tests.cpp)
+  tilemap_anim_tests.cpp parallax_tests.cpp particle_render_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -367,10 +387,24 @@ add_test(NAME parallax COMMAND laige-render_tests
 add_test(NAME tilemap_anim COMMAND laige-render_tests
          --gtest_filter=TileMapAnim*)
 
+# M2-PART-02: the step's Verify command is `ctest -R
+# particle_render`. Pure data + batcher bookkeeping (no GL calls) —
+# runs in every local tree and in CI. The LAIGE_BUDGETS_PATH env var
+# points the budget suite at the repo budgets.json. The budget gate
+# compiles only on Linux in the non-instrumented trees
+# (LAIGE_PARTICLE_RENDER_BUDGET — the depth_sort / iso_picking
+# precedent); other platforms run the budget WORKLOAD ungated.
+add_test(NAME particle_render COMMAND laige-render_tests
+         --gtest_filter=ParticleRender*)
+set_tests_properties(particle_render PROPERTIES
+    ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_DEPTH_SORT_BUDGET=1)
+  target_compile_definitions(laige-render_tests
+    PRIVATE LAIGE_PARTICLE_RENDER_BUDGET=1)
   if(NOT CMAKE_BUILD_TYPE STREQUAL "")
     target_compile_definitions(laige-render_tests PRIVATE
       LAIGE_ISO_DEPTH_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
@@ -378,6 +412,8 @@ if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
       LAIGE_ISO_PICK_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
     target_compile_definitions(laige-render_tests PRIVATE
       LAIGE_DEPTH_SORT_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+    target_compile_definitions(laige-render_tests PRIVATE
+      LAIGE_PARTICLE_RENDER_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
   endif()
 endif()
 
@@ -403,7 +439,7 @@ if(LAIGE_TSAN)
   set_tests_properties(laige-render_tests gl_context render_thread matrices
     iso_depth_key iso_depth_table camera iso_camera projection
     iso_picking depth_sort batcher sprite_draw sprite_frames
-    render_counters tilemap tilemap_anim parallax PROPERTIES
+    render_counters tilemap tilemap_anim parallax particle_render PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 endif()
@@ -467,10 +503,12 @@ set_tests_properties(sprite_frames PROPERTIES TIMEOUT 60)
 set_tests_properties(tilemap PROPERTIES TIMEOUT 60)
 set_tests_properties(tilemap_anim PROPERTIES TIMEOUT 60)
 set_tests_properties(parallax PROPERTIES TIMEOUT 60)
-# The `iso_depth_table` and `depth_sort` entries include their budget
-# gates: 2 backends x (100 warm-up + 3000 measured) iterations of 10 000
-# setTile calls, and 3 000 sorts of 10 000 keys respectively — a few
-# seconds each on the canonical Debug tree; 120s is generous headroom
-# for a slow CI runner.
+# The `iso_depth_table`, `depth_sort`, and `particle_render` entries
+# include their budget gates: 2 backends x (100 warm-up + 3000
+# measured) iterations of 10 000 setTile calls, 10 000-key sorts, and
+# 10 000-particle conversion passes respectively — a few seconds each
+# on the canonical Debug tree; 120s is generous headroom for a slow CI
+# runner.
 set_tests_properties(iso_depth_table PROPERTIES TIMEOUT 120)
 set_tests_properties(depth_sort PROPERTIES TIMEOUT 120)
+set_tests_properties(particle_render PROPERTIES TIMEOUT 120)

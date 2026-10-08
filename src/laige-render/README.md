@@ -508,4 +508,59 @@ zero-allocation loop (standalone + parallax)). No standalone
 `budgets.json` entry: the per-frame declare + per-tick advance cost is
 part of the composite 50k render-CPU budget, measured with M2-PERF-01.
 
+M2-PART-02 landed the particle rendering — the render half of
+FR-2.7: `laige::render::declareParticles<Backend>(batcher, system,
+options)` (public header `include/laige/render/particle_render.h`,
+header-only — a template over the SimMath backends) turns every LIVE
+particle of a `ParticleSystem<Backend>` (M2-PART-01, read-only —
+ARCH-009) into one `SpriteItem` declaration in the sprite batcher's
+frame window (M2-SPRITE-01): the O(live) conversion pass, zero
+allocation (PERF-003 — FR-2.7 "pooled"), no GL. Per particle: the
+world position at the RENDER-006 boundary (one documented rounding per
+component per backend), the engine-owned depth key (G-R11) — the
+particle's constant depth is first quantized to an INTEGER step
+height by `particleDepthToStepHeight<Backend>` (clamp to ±2047 FIRST,
+then round nearest ties-to-even — fpx `fpx16_16::toInt32`, fp32
+`std::nearbyint`; the two backends agree on dyadic depths, the
+presentation-only zone per ARCH-009) and then packed by
+`isoDepthKey` (M2-ISO-01, the `Options::layer` — default ground),
+`depthOverride` false; the square scale `(size, size)`; the tint
+(u8 → float /255 RGB + the M2-PART-01 exact-u32 fade alpha /255); the
+shared `uv` rect + `atlasId` + `materialId` + `blend` from
+`ParticleDeclareOptions` (default `BlendMode::Additive` — the particle
+convention); `frameIndex`/`rotation` 0 (no per-particle animation or
+rotation in this step). One emitter set = one system = one
+`(atlasId, materialId, blend)` group = ONE instanced draw call
+(RENDER-001) — 10 000 particles of one set cost one draw call. The
+declaration order is the live-array order (spawn order with swap
+removal) — the deterministic tie-break within equal keys (RENDER-003).
+Failure protocol (the first failed add fails the call): a stopped
+batcher → `BudgetExhausted` (an empty system still succeeds — no adds
+attempted); a closed window (after `build`) → `InvalidArgument`; a
+frame-budget overflow applies the batcher's own drop-oldest + warn
+policy (the conversion itself succeeds). The `laige-render` →
+`laige-sim` link edge is the module stack's legal downward direction
+(PRD §10.1 — render MAY include sim public headers; the M2-GL-02
+"no render→sim edge" note covers the frame-pipeline HANDOFF, which
+stays opaque). API contract in
+[docs/api/particle_render.md](../docs/api/particle_render.md), tests
+under [tests/laige-render](../tests/laige-render) (CTest entry
+`particle_render` — pure data + batcher bookkeeping, no GL
+environment required: the per-particle declaration goldens against the
+M2-ISO-01 oracle + the hand-computed dyadic key goldens (both
+backends), the depth conversion (the sub-unit ties-to-even rounding,
+the ±2047 saturation), the exact fade through the declaration, the
+in-group (key, live-order) ordering, the multi-set group count (one
+draw call per emitter set), the failure paths, the fixed-seed
+determinism (the machine-greppable declared-sequence hash), the
+1 000-frame 10k-particle zero-allocation loop, and the
+`particle_render_10k` budget gate — 10 000-particle declare passes,
+both backends, gated on the Linux non-instrumented trees, ungated
+elsewhere). Budget: the new `particle_render_10k` entry in
+`budgets.json` (mean ≤ 2.0 ms, step-level — the conversion pass ONLY;
+the batcher's sort is the separate `depth_sort_10k` budget): recorded
+1.07798 ms (the worse of the two backends, canonical Debug tree — the
+`docs/benchmarks/baselines/m2-particle-render.md` baseline, the
+tenth).
+
 The remaining M2 steps (text/UI, M2-PERF-01) land in later steps.

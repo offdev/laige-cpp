@@ -230,12 +230,11 @@ class MemorySink : public laige::log::Sink {
   std::vector<Entry> entries;
 };
 
-MemorySink* sink = nullptr;
-
 // Install the capture sink (a 60 s rate window: the tests' repeated
 // events stay within one window, so the rate-limited repeats are
 // suppressed and summarized at shutdown — the scheduler_tests
-// pattern).
+// pattern). The tests read the entries back through the return
+// value.
 MemorySink* installCaptureSink() {
   auto mem = std::make_unique<MemorySink>();
   MemorySink* memPtr = mem.get();
@@ -246,7 +245,6 @@ MemorySink* installCaptureSink() {
     ADD_FAILURE() << "Logger::init failed";
     std::abort();
   }
-  sink = memPtr;
   return memPtr;
 }
 
@@ -256,7 +254,6 @@ void restoreConsoleSink() {
     ADD_FAILURE() << "Logger re-init with the default console sink failed";
     std::abort();
   }
-  sink = nullptr;
 }
 
 std::size_t countEvents(const MemorySink& s, const char* event) {
@@ -368,7 +365,6 @@ TEST(GameLoop, CreateValidatesTheConfig) {
   EXPECT_EQ(mem->entries[2].event, "rate_limited");
   EXPECT_STREQ(fieldValue(mem->entries[2], "event"), "tick_rate_invalid");
   EXPECT_STREQ(fieldValue(mem->entries[2], "suppressed"), "1");
-  sink = nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -518,7 +514,6 @@ TEST(GameLoop, OverloadDropsExactlyTheDocumentedAmountAndLogsOnce) {
               static_cast<unsigned long long>(st.droppedFrames),
               static_cast<unsigned long long>(st.ticks),
               static_cast<unsigned long long>(st.droppedTicks));
-  sink = nullptr;
 }
 
 // ---------------------------------------------------------------------------

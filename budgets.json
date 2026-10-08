@@ -67,6 +67,14 @@
       "workload": "10 000 32-bit depth keys, one stable radix sort (M2-SORT-01, PRD 8.1)"
     },
     {
+      "name": "particle_render_10k",
+      "metric": "mean",
+      "unit": "ms",
+      "target": 2.0,
+      "measured": 1.07798,
+      "workload": "10 000-particle particle-to-sprite conversion, one O(n) declare pass (M2-PART-02)"
+    },
+    {
       "name": "sim_heap_allocs",
       "metric": "max",
       "unit": "allocs_per_frame",
