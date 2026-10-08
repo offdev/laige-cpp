@@ -44,6 +44,17 @@
       "sha256": "f4785f292cafd2b6e060705cc81e22ebf5d5083e27f1f155493e0f252ab9b395",
       "license": "MIT",
       "justification": "PRD §11 (math foundation for the rendering side: cameras, projection matrices, incl. isometric camera matrices; sim keeps its own fixed-point math per §10.3 — the include-graph lint owner rule keeps GLM out of sim): header-only, vendored (the full glm/ library tree of the pinned tag; doc/test/cmake excluded; M2-GL-03, ADR 0008)"
+    },
+    {
+      "name": "stb",
+      "version": "2026-08-01",
+      "path": "deps/stb",
+      "owner": "src/laige-render",
+      "source_url": "https://github.com/nothings/stb",
+      "source_commit": "2c980bb59875b0d32144a71867fbdebb2f77cd20",
+      "sha256": "8f06584600718842d16098b13df213d0ec9ffecbf782a6fbadec3f4abf570685",
+      "license": "MIT-like (stb's no-warranty license; the text lives in deps/stb/LICENSE)",
+      "justification": "PRD §11 (font rasterization, FR-2.8 bitmap fonts P0 — the stb_truetype row): single-header C font rasterizer that M2-TEXT-01 uses to build the fixed bitmap glyph atlas (the M2-TEXT-03 SDF step reuses the same header); the implementation compiles in the laige-stb target with the plain compiler policy, pinned by this lock (M2-TEXT-01, ADR 0009)"
     }
   ]
 }

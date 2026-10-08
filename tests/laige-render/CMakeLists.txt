@@ -197,10 +197,11 @@
 # `tilemap` entry is the M2-TILE-01 Verify command (`ctest -R
 # tilemap`), the `tilemap_anim` entry is the M2-TILE-02 Verify command
 # (`ctest -R tilemap_anim`), the `parallax` entry is the M2-PAR-01
-# Verify command (`ctest -R parallax`), and the `particle_render`
-# entry is the M2-PART-02 Verify command (`ctest -R
-# particle_render`), each selecting exactly its suites from the
-# shared executable. (The unanchored `ctest -R tilemap` regex also
+# Verify command (`ctest -R parallax`), the `particle_render` entry
+# is the M2-PART-02 Verify command (`ctest -R
+# particle_render`), and the `font` entry is the M2-TEXT-01 Verify
+# command (`ctest -R font`), each selecting exactly its suites from
+# the shared executable. (The unanchored `ctest -R tilemap` regex also
 # selects the `tilemap_anim` entry — the M2-TILE-02 suites run under
 # the M2-TILE-01 command too; that is intended. Likewise the
 # unanchored `ctest -R particle` regex selects the M2-PART-01
@@ -216,7 +217,8 @@
 # documented environment contract (docs/api/gl_context.md), not an
 # engine failure. The GlContextGate/GlContextArgs/FrameClock/
 # RenderThreadHandoff/SpriteDrawCreate/RenderCountersCreate/TileMap*/
-# TileMapAnim*/Parallax* suites always run (they make no GL calls).
+# TileMapAnim*/Parallax*/Font* suites always run (they make no GL
+# calls).
 
 add_executable(laige-render_tests
   gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
@@ -224,7 +226,8 @@ add_executable(laige-render_tests
   iso_camera_tests.cpp projection_tests.cpp iso_picking_tests.cpp
   depth_sort_tests.cpp sprite_batcher_tests.cpp sprite_draw_tests.cpp
   sprite_frames_tests.cpp render_counters_tests.cpp tilemap_tests.cpp
-  tilemap_anim_tests.cpp parallax_tests.cpp particle_render_tests.cpp)
+  tilemap_anim_tests.cpp parallax_tests.cpp particle_render_tests.cpp
+  font_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -235,9 +238,11 @@ target_include_directories(laige-render_tests PRIVATE
 add_test(NAME laige-render_tests COMMAND laige-render_tests)
 # The unfiltered entry also runs the M2-ISO-02 budget suite (in the
 # gated builds it checks the entry), so it carries the same budgets
-# path:
+# path; the Font* suites (M2-TEXT-01) read the committed test font
+# through the LAIGE_TEST_FONT_PATH env var (tests/laige-render/assets/
+# vera.ttf — see the assets/ README for the provenance and license):
 set_tests_properties(laige-render_tests PROPERTIES
-  ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
+  ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 
 # M2-GL-01: the step's Verify command is `ctest -R gl_context`. The
 # gtest filter is one UNQUOTED argument (see
@@ -399,6 +404,20 @@ add_test(NAME particle_render COMMAND laige-render_tests
 set_tests_properties(particle_render PROPERTIES
     ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 
+# M2-TEXT-01: the step's Verify command is `ctest -R font`. Pure engine
+# data (no GL calls) — runs in every local tree and in CI. The
+# LAIGE_TEST_FONT_PATH env var points the suites at the committed test
+# font (tests/laige-render/assets/vera.ttf — the assets/ README
+# documents the provenance and the OFL 1.1 license). No budget gate:
+# the step's roadmap scope has no standalone budgets.json entry (the
+# atlas is built once at scene set-up — the per-frame text cost lands
+# with M2-TEXT-02, part of the composite 50k render-CPU budget,
+# M2-PERF-01).
+add_test(NAME font COMMAND laige-render_tests --gtest_filter=Font*)
+set_tests_properties(font PROPERTIES
+  ENVIRONMENT
+  "LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
@@ -439,9 +458,10 @@ if(LAIGE_TSAN)
   set_tests_properties(laige-render_tests gl_context render_thread matrices
     iso_depth_key iso_depth_table camera iso_camera projection
     iso_picking depth_sort batcher sprite_draw sprite_frames
-    render_counters tilemap tilemap_anim parallax particle_render PROPERTIES
+    render_counters tilemap tilemap_anim parallax particle_render font
+    PROPERTIES
     ENVIRONMENT
-    "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
+    "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
 
 if(LAIGE_ASAN)
@@ -465,10 +485,12 @@ if(LAIGE_ASAN)
   # stays fully active (the smoke still performs its GL work under
   # the sanitizer). The test-level ENVIRONMENT replaces the job-level
   # ASAN_OPTIONS (GitHub workflow), so mirror its options here.
+  # The unfiltered entry runs the Font* suites too (M2-TEXT-01), so the
+  # replacement environment carries the test-font path as well.
   set_tests_properties(laige-render_tests gl_context render_thread
     sprite_draw render_counters PROPERTIES
     ENVIRONMENT
-    "ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=${CMAKE_SOURCE_DIR}/asan-reports/asan")
+    "ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=${CMAKE_SOURCE_DIR}/asan-reports/asan;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
 
 # The offscreen smoke creates a real (software) context + FBO; give a
@@ -512,3 +534,7 @@ set_tests_properties(parallax PROPERTIES TIMEOUT 60)
 set_tests_properties(iso_depth_table PROPERTIES TIMEOUT 120)
 set_tests_properties(depth_sort PROPERTIES TIMEOUT 120)
 set_tests_properties(particle_render PROPERTIES TIMEOUT 120)
+# The `font` entry rasterizes the full Latin-1 range of the test font
+# a few times (create + determinism re-creates) — small work, 60s is
+# generous headroom, like the other pure-data entries.
+set_tests_properties(font PROPERTIES TIMEOUT 60)
