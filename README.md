@@ -5,23 +5,6 @@ building everything from small single-player games to large, long-running
 MMOs: 2D simulation with 3D presentation, deterministic by default,
 isometric-first rendering, and a server-authoritative MMO path.
 
-- **License:** MIT (engine code). Samples and assets are separately
-  licensed; each sample ships its own `LICENSE`
-  ([ADR 0001](docs/decisions/0001-name-and-license.md)).
-- **Status:** **M0 — Foundations complete** (exit gate M0-EXIT-01,
-  2026-09-13). The repository skeleton, CI on all P0 OSes, build system,
-  `laige-core` (math, pools, alloc, Result, logging, config), dependency
-  lock (`deps.lock` with vendored GoogleTest), and the API manifest
-  generator are in place — see
-  [roadmap/M0-foundations.md](roadmap/M0-foundations.md). Landed so far:
-  `laige::Result<T,E>` / `laige::Status` plus the error-code registry
-  (M0-CORE-01), the structured logging facade (M0-CORE-02), the SimMath
-  deterministic-math interface with the default `fpx16_16` backend
-  (M0-CORE-03/04), memory pools (M0-CORE-05), the deterministic PRNG
-  (M0-CORE-06), the bounded JSON parser + serializer (M0-CORE-07), and
-  the budget harness (M0-CORE-08). No game-facing engine features are
-  buildable yet.
-
 ## Built by a local LLM
 
 This project is being completely built by a local LLM. The engine is
