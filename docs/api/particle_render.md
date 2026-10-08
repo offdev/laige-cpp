@@ -132,13 +132,17 @@ batcher.build();
   loop thread (`ParticleRenderZeroAlloc`, the alloc-watch gate).
 - **Budget**: the conversion pass is budgeted — the
   `particle_render_10k` entry in [`budgets.json`](../../budgets.json)
-  (mean, ms, target 2.0, the PRD §8.1-style gate; measured 1.09108 on
-  the canonical Debug tree, the worse of the two backends). The
-  batcher's `build`/sort cost is the separate
+  (mean, ms, target 3.0 — re-baselined 2026-10-08 from 2.0 ms after the
+  CI reference lane (Clang 18.1.3, CMake Debug, ubuntu-24.04) measured
+  1.91–2.68 ms on unchanged engine code against the original 2.0 ms
+  bar; step-level gate, no PRD revision — the `depth_sort_10k`
+  precedent; measured 2.07786 on the CI reference lane, the worse of
+  the two backends). The batcher's `build`/sort cost is the separate
   `depth_sort_10k` budget (the frame protocol keeps the two
   quantities apart: the budget measures `declareParticles` alone —
   `beginFrame`/`build` are outside the measured window). Baseline:
-  [`docs/benchmarks/baselines/m2-particle-render.md`](../benchmarks/baselines/m2-particle-render.md).
+  [`docs/benchmarks/baselines/m2-particle-render-budget-rebaseline.md`](../benchmarks/baselines/m2-particle-render-budget-rebaseline.md)
+  (supersedes `m2-particle-render.md` as the latest recorded value).
 - **Batching**: one emitter set = one `(atlasId, materialId, blend)`
   group = ONE instanced draw call (RENDER-001) regardless of particle
   count — 10 000 particles of one set cost one draw call. Multiple
