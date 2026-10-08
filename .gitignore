@@ -27,6 +27,10 @@ samples/*/bin/
 *.fuzz
 coverage/
 
+# ASan/UBSan log output (the ASan test entries' log_path —
+# tests/laige-render/CMakeLists.txt)
+asan-reports/
+
 # Python artifacts (tools/ scripts)
 __pycache__/
 *.pyc
