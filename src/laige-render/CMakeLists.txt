@@ -93,6 +93,18 @@ laige_apply_engine_policy(laige-render)
 # Public internal dependency: laige-core (the public header uses
 # laige::Result/Status, CPP-010).
 target_link_libraries(laige-render PUBLIC laige-core)
+# M2-PART-02: the particle render path (particle_render.h, public)
+# reads the M2-PART-01 ParticleSystem<Backend> to declare the live
+# particles into the sprite batcher, so the public header includes
+# the laige-sim public header laige/sim/particles.h. The module
+# stack (PRD §10.1, NFR-8.11) places laige-render ABOVE laige-sim,
+# so this downward edge is legal — tools/laige-include-lint R2
+# enforces it (public headers only, arrows only downward). The
+# M2-GL-02 "no render-to-sim edge" note above covers the FRAME
+# PIPELINE handoff (it stays a POD FrameDescriptor + opaque pointer);
+# this edge is the render-phase read of the sim state, the
+# PresentationSnapshot pattern (ARCH-009), not a pipeline coupling.
+target_link_libraries(laige-render PUBLIC laige-sim)
 # GLFW and the GLAD loader are implementation detail behind a pimpl
 # (the public header never names vendor types) — PRIVATE.
 target_link_libraries(laige-render PRIVATE glfw laige-glad)

@@ -149,7 +149,14 @@ void markRun(std::uint32_t token) {
 }
 
 std::uint64_t schReadVelSum = 0;
+#if defined(LAIGE_ALLOC_COUNTER)
+// The zero-alloc test's second-component read-back: its read site is
+// LAIGE_ALLOC_COUNTER-gated (the zero-alloc window only builds in the
+// non-instrumented trees), and SchReadPos is registered only by that
+// test — without the gate, -Wunused-but-set-global on the
+// sanitizer clang trees:
 std::uint64_t schReadPosSum = 0;
+#endif
 
 }  // namespace
 
@@ -214,6 +221,7 @@ LAIGE_SYSTEM(SchReadPos, 1)
 void SchReadPos(laige::World& world, laige::SystemContext& ctx) {
   static_cast<void>(world);
   markRun(6);
+#if defined(LAIGE_ALLOC_COUNTER)
   schReadPosSum = 0;
   static_cast<void>(ctx.each<SchPos>(
       [](laige::Entity e, const SchPos& p) {
@@ -221,6 +229,9 @@ void SchReadPos(laige::World& world, laige::SystemContext& ctx) {
         schReadPosSum += static_cast<std::uint64_t>(static_cast<std::uint32_t>(p.x));
       },
       laige::Read{}));
+#else
+  static_cast<void>(ctx);
+#endif
 }
 
 // The no-op system (an ordering marker that declares no I/O).

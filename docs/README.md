@@ -333,8 +333,17 @@ still to land.
   constant depth + velocity + life + size, the exact integer color
   fade, the once-per-sim-tick `update()` (ARCH-002), and the
   fixed-seed determinism contract (the 4-draw Prng contract, the
-  machine-greppable state hash). The render half (particles as
-  batched sprites) lands in M2-PART-02.
+  machine-greppable state hash).
+  - [Particle rendering](api/particle_render.md) —
+  `laige::render::declareParticles`: the render half of FR-2.7
+  (M2-PART-02): the O(n) particle → sprite conversion pass — every
+  live particle becomes one batcher `SpriteItem` declaration (shared
+  particle atlas, one draw call per emitter set, the engine-owned
+  depth key from the particle's depth value — quantized to an
+  integer step height first, sub-unit depths ties-to-even), the
+  exact fade through the tint alpha, zero per-frame allocations,
+  the `particle_render_10k` conversion budget (the 10k declare
+  pass, both SimMath backends).
 
 ## Guides
 

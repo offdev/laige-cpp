@@ -8,8 +8,10 @@ per completed simulation tick: burst + continuous emitters, per-
 particle 2D position + constant depth, velocity, life, size, and an
 exact integer color fade. The rendering half — particles as batched
 sprites (shared particle atlas, one draw call per emitter set, depth
-from the particle's depth value) — is **M2-PART-02**, which consumes
-this header's read-only surface (`liveParticles()`). Public header:
+from the particle's depth value) — is implemented by
+[`particle_render.md`](particle_render.md) (**M2-PART-02**), which
+consumes this header's read-only surface (`liveParticles()`,
+`fadeAlpha`). Public header:
 `src/laige-sim/include/laige/sim/particles.h` (header-only — the API
 is a template over the SimMath backends, the
 [`presentation.h`](../../src/laige-sim/include/laige/sim/presentation.h)
@@ -226,10 +228,15 @@ system.addEmitter(sparks);
 // Per completed sim tick (the tick driver calls update() once):
 system.update();
 
-// Render phase (M2-PART-02): read-only.
-for (const auto& p : system.liveParticles()) {
-  // p.pos / p.depth / p.size / laige::ParticleSystem<...>::fadeAlpha(p)
-}
+// Render phase (M2-PART-02): read-only — the O(n) declare pass.
+// (M2-PART-02: one emitter set = one (atlas, material, blend) group =
+// one instanced draw call; the batcher's frame protocol applies.)
+laige::render::ParticleDeclareOptions opts;
+opts.atlasId = particleAtlas;
+// opts defaults: materialId 0, blend Additive, full atlas, layer 0
+batcher.beginFrame();
+laige::render::declareParticles(batcher, system, opts);
+batcher.build();
 ```
 
 **Misuse:** spawning from the render thread (the sim thread owns the
@@ -244,8 +251,10 @@ sorts by the depth key).
 
 ## Related
 
-- [`sprite_batcher.md`](sprite_batcher.md) — the render half
-  (M2-PART-02 consumes `liveParticles()`).
+- [`particle_render.md`](particle_render.md) — the render half
+  (M2-PART-02: the O(n) declare pass over `liveParticles()`).
+- [`sprite_batcher.md`](sprite_batcher.md) — the batcher the
+  declarations land in (M2-SPRITE-01).
 - [`iso_depth_key.md`](iso_depth_key.md) — the depth key the particle
   `depth` feeds (M2-ISO-01).
 - [`tilemap.md`](tilemap.md) — the `advanceAnimations` per-sim-tick

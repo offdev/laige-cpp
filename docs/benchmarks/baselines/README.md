@@ -83,3 +83,12 @@ Recorded so far:
   unchanged. **The eighth baseline** — supersedes
   `m2-iso-depth-table-workload-fix.md` as the latest recorded value of
   `iso_depthkey_rebuild`.
+- [m2-particle-render.md](m2-particle-render.md) (M2-PART-02,
+  2026-10-07) — the FR-2.7 particle → sprite conversion workload
+  (10 000-particle `declareParticles` pass, both SimMath backends,
+  the declare pass ONLY — the batcher's sort is the separate
+  `depth_sort_10k` budget): 1.07798 ms mean on the canonical Debug
+  tree (worse backend fpx16_16; 1.86× inside the 2.0 ms step-level
+  gate). **The tenth baseline** — updates `budgets.json` `measured`
+  for `particle_render_10k` to 1.07798 (the budgets.json entry count
+  moves 16 → 17 — the `budget_harness_tests.cpp` table pin).

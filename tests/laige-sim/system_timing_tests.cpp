@@ -226,12 +226,11 @@ class MemorySink : public laige::log::Sink {
   std::vector<Entry> entries;
 };
 
-MemorySink* sink = nullptr;
-
 // Install the capture sink (a 60 s rate window: the tests' repeated
 // events stay within one window, so the rate-limited repeats are
 // suppressed and summarized at shutdown — the scheduler_tests
-// pattern).
+// pattern). The tests read the entries back through the return
+// value.
 MemorySink* installCaptureSink() {
   auto mem = std::make_unique<MemorySink>();
   MemorySink* memPtr = mem.get();
@@ -242,7 +241,6 @@ MemorySink* installCaptureSink() {
     ADD_FAILURE() << "Logger::init failed";
     std::abort();
   }
-  sink = memPtr;
   return memPtr;
 }
 
@@ -252,7 +250,6 @@ void restoreConsoleSink() {
     ADD_FAILURE() << "Logger re-init with the default console sink failed";
     std::abort();
   }
-  sink = nullptr;
 }
 
 std::size_t countEvents(const MemorySink& s, const char* event) {
@@ -459,7 +456,6 @@ TEST(SystemTiming, OverBudgetSystemWarnsAtTheDocumentedMultiplier) {
   } else {
     EXPECT_TRUE(criticalSummary == nullptr);
   }
-  sink = nullptr;
 }
 
 TEST(SystemTiming, CriticallyOverBudgetSystemErrorsAfterTheWarn) {
@@ -659,7 +655,6 @@ TEST(SystemTiming, EventsFollowTheErrorGrammar) {
   EXPECT_STREQ(fieldValue(*overrunSummary, "suppressed"), "1");
   ASSERT_TRUE(criticalSummary != nullptr);
   EXPECT_STREQ(fieldValue(*criticalSummary, "suppressed"), "1");
-  sink = nullptr;
 }
 
 // ---------------------------------------------------------------------------

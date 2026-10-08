@@ -238,7 +238,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** `ctest -R particles` green.
   - **Size:** ~250 lines + tests
 
-- [ ] **M2-PART-02 · Particle rendering through the batcher**
+- [x] **M2-PART-02 · Particle rendering through the batcher**
   - **Refs:** FR-2.7, RENDER-001
   - **Depends:** M2-PART-01, M2-SPRITE-02
   - **Scope:**
