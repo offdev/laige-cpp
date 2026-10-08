@@ -39,6 +39,7 @@
 #include "laige/alloc_watch.h"
 #include "laige/errors.h"
 #include "laige/logging.h"
+#include "laige_test_seed.h"
 
 namespace {
 
@@ -54,17 +55,29 @@ using laige::ErrorCode;
 // ---------------------------------------------------------------------------
 
 std::vector<std::uint8_t> loadFont() {
-  const char* path = std::getenv("LAIGE_TEST_FONT_PATH");
-  if (path == nullptr) {
+  // The cross-platform env read (tests/support/laige_test_seed.h — MSVC
+  // deprecates plain getenv under /WX, C4996).
+  const std::string path = laige::testing::ReadEnvVar("LAIGE_TEST_FONT_PATH");
+  if (path.empty()) {
     ADD_FAILURE() << "LAIGE_TEST_FONT_PATH is not set (CTest ENVIRONMENT "
                      "contract — see tests/laige-render/CMakeLists.txt)";
     return {};
   }
-  std::FILE* f = std::fopen(path, "rb");
+  // The cross-platform open (fopen_s on MSVC — C4996; a read-only asset
+  // needs no _SH_DENYNO sharing, so the secure open is the plain form).
+  std::FILE* f = nullptr;
+#if defined(_MSC_VER)
+  if (fopen_s(&f, path.c_str(), "rb") != 0) {
+    ADD_FAILURE() << "Cannot open the test font: " << path;
+    return {};
+  }
+#else
+  f = std::fopen(path.c_str(), "rb");
   if (f == nullptr) {
     ADD_FAILURE() << "Cannot open the test font: " << path;
     return {};
   }
+#endif
   std::fseek(f, 0, SEEK_END);
   const long size = std::ftell(f);
   std::fseek(f, 0, SEEK_SET);
