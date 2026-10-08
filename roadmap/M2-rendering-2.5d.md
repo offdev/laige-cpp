@@ -250,7 +250,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
 
 ## Text & UI
 
-- [ ] **M2-TEXT-01 · Font rasterization (bitmap, P0)**
+- [x] **M2-TEXT-01 · Font rasterization (bitmap, P0)**
   - **Refs:** FR-2.8 (bitmap P0; SDF is P1 → M2-TEXT-03), PRD §11 (stb_truetype)
   - **Depends:** M2-GL-01
   - **Scope:**
@@ -259,6 +259,20 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     - Unit tests: atlas generation deterministic (same font+size → identical atlas bytes); missing glyph → documented fallback glyph, never crash.
   - **Verify:** `ctest -R font` green.
   - **Size:** ~200 lines + tests
+  - **Shipped:** M2-TEXT-01 (`laige/render/font.h`, the `laige-stb`
+    target — ADR 0009): the font bytes + `GlyphAtlas::Options`
+    (default 1024², 16 px, Latin-1 32..255) rasterize ONCE at scene
+    set-up into a fixed 8-bit alpha atlas (deterministic shelf
+    packing) + per-glyph `GlyphMetrics` (advance, bearingX/Y,
+    width/height — px at 1x; `lineHeight() == fontSize()`); the
+    untrusted-font guard (header + table directory, SCALE-004), the
+    documented failure order (InvalidArgument → MalformedInput →
+    BudgetExhausted), the fallback contract (out-of-range → the U+0020
+    space slot, else the zero metric; in-range unknown → the font's
+    .notdef), and the zero-alloc O(1) `glyph(code)` lookup (the
+    `font` suite: validation matrix, metric goldens against the
+    committed Vera test font, the deterministic-atlas bytes, the
+    fallback matrix, the 1000-lookup zero-alloc window).
 
 - [ ] **M2-TEXT-02 · Text items in the UI pass**
   - **Refs:** FR-2.8 (text widget, screen-space pass)

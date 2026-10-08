@@ -56,6 +56,17 @@ add_library(laige-glad STATIC ${CMAKE_SOURCE_DIR}/deps/glad/src/gl.c)
 target_include_directories(laige-glad PRIVATE
   ${CMAKE_SOURCE_DIR}/deps/glad/include)
 
+# stb_truetype (M2-TEXT-01, ADR 0009): the single-header font rasterizer,
+# pinned in deps/stb (deps.lock). The implementation compiles ONCE in
+# this target under the plain compiler policy (pinned vendor code,
+# DEP-005 — the laige-glad precedent); the engine boundary is
+# font.cpp, which includes the vendor header's declarations and links
+# this target (PRIVATE — the public header names no stb type, CPP-010,
+# DEP-004).
+add_library(laige-stb STATIC stb_truetype_impl.cpp)
+target_include_directories(laige-stb PRIVATE
+  ${CMAKE_SOURCE_DIR}/deps/stb)
+
 # M2-CAM-01 adds camera.cpp (the 3D camera core: position/look-at,
 # ortho/perspective with clamped zoom, the rectangular bounds
 # constraint, the smooth follow, the bounded decaying shake — the
@@ -78,9 +89,13 @@ target_include_directories(laige-glad PRIVATE
 # — iso default, side_view, top_down, free_cinematic — and the
 # screen<->world transforms: worldToScreen / screenToWorldRay /
 # screenToWorld, the FR-2.11 picking base; pure value math over the
-# M2-GL-03 / M2-CAM-01 matrices, no GL calls).
+# M2-GL-03 / M2-CAM-01 matrices, no GL calls). M2-TEXT-01 adds
+# font.cpp (the bitmap glyph atlas: the caller's font bytes + a
+# configured glyph range rasterized ONCE at scene set-up into a
+# fixed-size 8-bit alpha atlas + per-glyph metrics — the FR-2.8 P0
+# bitmap path, no GL calls; the vendor boundary is laige-stb, above).
 set(LAIGE_RENDER_SOURCES gl_context.cpp frame_pipeline.cpp matrices.cpp
-  camera.cpp iso_camera.cpp projection.cpp sprite_renderer.cpp)
+  camera.cpp iso_camera.cpp projection.cpp sprite_renderer.cpp font.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-render SHARED ${LAIGE_RENDER_SOURCES})
@@ -112,6 +127,12 @@ target_link_libraries(laige-render PRIVATE glfw laige-glad)
 # headers), likewise PRIVATE.
 target_include_directories(laige-render PRIVATE
   ${CMAKE_SOURCE_DIR}/deps/glad/include)
+# M2-TEXT-01: the stb_truetype boundary — font.cpp uses the vendor
+# header's declarations (the implementation lives in laige-stb); public
+# headers never name stb types (CPP-010, DEP-004, ADR 0009).
+target_link_libraries(laige-render PRIVATE laige-stb)
+target_include_directories(laige-render PRIVATE
+  ${CMAKE_SOURCE_DIR}/deps/stb)
 
 # GLM (M2-GL-03, ADR 0008): unlike GLFW/GLAD (opaque native resources
 # behind the pimpl), GLM is a pure value-type math library and is part

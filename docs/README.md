@@ -344,6 +344,15 @@ still to land.
   exact fade through the tint alpha, zero per-frame allocations,
   the `particle_render_10k` conversion budget (the 10k declare
   pass, both SimMath backends).
+- [Bitmap font atlas](api/font.md) —
+  `laige::render::GlyphAtlas` (M2-TEXT-01, the bitmap half of
+  FR-2.8): the configured TTF/OTF font bytes + glyph range
+  rasterized ONCE at scene set-up (the vendored `stb_truetype` —
+  ADR 0009) into a fixed-size 8-bit alpha glyph atlas + per-glyph
+  metrics (advance, bearing, line height — documented px at 1x),
+  the deterministic shelf packing (same font + options → identical
+  atlas bytes), the missing-glyph fallback contract (never a crash,
+  never silent), and the zero-allocation O(1) `glyph(code)` lookup.
 
 ## Guides
 

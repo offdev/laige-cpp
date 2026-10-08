@@ -15,3 +15,4 @@ alternatives, evidence, consequences, and review conditions; the full
 | [0006](0006-ui-scope.md) | M2 retained UI widget set: the seven FR-2.8 widgets (D-UI) | Accepted | 2026-09-25 |
 | [0007](0007-glfw-glad-vendoring.md) | Vendoring GLFW 3.5.1 and the GLAD 2.0.8-generated GL 3.3 loader | Accepted | 2026-09-28 |
 | [0008](0008-glm-vendoring.md) | Vendoring GLM 1.0.3 as the rendering-side math library | Accepted | 2026-09-29 |
+| [0009](0009-stb-truetype-vendoring.md) | Vendoring stb_truetype as the font rasterizer | Accepted | 2026-10-08 |

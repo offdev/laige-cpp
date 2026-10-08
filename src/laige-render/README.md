@@ -563,4 +563,49 @@ the batcher's sort is the separate `depth_sort_10k` budget): recorded
 `docs/benchmarks/baselines/m2-particle-render.md` baseline, the
 tenth).
 
-The remaining M2 steps (text/UI, M2-PERF-01) land in later steps.
+M2-TEXT-01 landed the bitmap font atlas — the bitmap half of
+FR-2.8: `laige::render::GlyphAtlas` (public header
+`include/laige/render/font.h`, implementation `font.cpp`) builds the
+configured font + glyph set ONCE at scene set-up —
+`GlyphAtlas::create(fontBytes, Options)` (default Options: 1024²
+atlas, 16 px font size, the Latin-1 range 32..255) validates the
+options (the documented order — first failure wins, no log),
+rejects untrusted font bytes (the header + table directory guard —
+stb's directory scan is not bounds-checked, so the engine guards it
+before any stb call — SCALE-004), then rasterizes every codepoint
+into the fixed 8-bit alpha atlas (deterministic shelf packing,
+cells are exactly the ink bitmap, empty glyphs take no space) and
+returns the move-only atlas + the per-codepoint `GlyphMetrics`
+(advance, bearingX/Y, width/height — all px at 1x, the scale factor
+documented; `lineHeight() == fontSize()` by the stbtt pixel-height
+convention). The lookup path is `glyph(code)` — total (null only on
+the stopped atlas), O(1), zero-allocation, never logs: in-range
+codes read their slot, out-of-range codes fall back to the U+0020
+space slot (or the zero metric when the range excludes the space),
+in-range codes the font lacks map to the font's .notdef. The vendor
+boundary is the `laige-stb` static library — the single
+`stb_truetype_impl.cpp` TU that compiles the vendored header (ADR
+0009, the plain-compiler policy of the vendor impl TUs — DEP-005);
+the engine TU (`font.cpp`) never sees the stb internals beyond the
+narrow include. No GL calls anywhere; the atlas is presentation
+state (ARCH-009) and lands in the M2-TEXT-02 UI pass as a
+white-on-alpha RGBA8 upload through the M2-SPRITE-02 `bindAtlas`
+path. API contract in
+[docs/api/font.md](../docs/api/font.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `font` —
+pure engine data, no GL environment required: the validation matrix,
+the untrusted-font boundary (truncated / non-font / degenerate
+vertical-metric bytes), the stopped state, the capacity guard, the
+metric goldens measured
+against the committed Vera test font
+(`tests/laige-render/assets/vera.ttf`), the deterministic-atlas
+contract (same font + options → identical bytes, the
+machine-greppable fingerprint line — no pinned cross-platform hash,
+the presentation-float scope of ARCH-009), the fallback matrix, the
+atlas invariants, and the 1000-lookup zero-allocation window). No
+standalone `budgets.json` entry: the atlas is built once at set-up,
+not per frame — the per-frame text cost lands with M2-TEXT-02
+(part of the composite 50k render-CPU budget, M2-PERF-01).
+
+The remaining M2 steps (text items/UI, M2-SCENE-01, M2-PERF-01) land
+in later steps.
