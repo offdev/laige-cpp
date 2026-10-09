@@ -556,12 +556,15 @@ determinism (the machine-greppable declared-sequence hash), the
 1 000-frame 10k-particle zero-allocation loop, and the
 `particle_render_10k` budget gate — 10 000-particle declare passes,
 both backends, gated on the Linux non-instrumented trees, ungated
-elsewhere). Budget: the new `particle_render_10k` entry in
-`budgets.json` (mean ≤ 2.0 ms, step-level — the conversion pass ONLY;
-the batcher's sort is the separate `depth_sort_10k` budget): recorded
-1.07798 ms (the worse of the two backends, canonical Debug tree — the
-`docs/benchmarks/baselines/m2-particle-render.md` baseline, the
-tenth).
+elsewhere). Budget: the `particle_render_10k` entry in
+`budgets.json` (mean ≤ 3.0 ms — re-baselined 2026-10-08 from 2.0 ms
+after the CI reference lane (Clang 18.1.3, CMake Debug, ubuntu-24.04)
+measured 1.91–2.68 ms on unchanged engine code against the original
+2.0 ms bar; step-level — the conversion pass ONLY; the batcher's sort
+is the separate `depth_sort_10k` budget): recorded 2.07786 ms (the
+worse of the two backends on the CI reference lane — the
+`docs/benchmarks/baselines/m2-particle-render-budget-rebaseline.md`
+baseline, the eleventh).
 
 M2-TEXT-01 landed the bitmap font atlas — the bitmap half of
 FR-2.8: `laige::render::GlyphAtlas` (public header

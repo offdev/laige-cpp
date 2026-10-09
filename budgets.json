@@ -70,8 +70,8 @@
       "name": "particle_render_10k",
       "metric": "mean",
       "unit": "ms",
-      "target": 2.0,
-      "measured": 1.07798,
+      "target": 3.0,
+      "measured": 2.07786,
       "workload": "10 000-particle particle-to-sprite conversion, one O(n) declare pass (M2-PART-02)"
     },
     {

@@ -92,3 +92,16 @@ Recorded so far:
   gate). **The tenth baseline** — updates `budgets.json` `measured`
   for `particle_render_10k` to 1.07798 (the budgets.json entry count
   moves 16 → 17 — the `budget_harness_tests.cpp` table pin).
+- [m2-particle-render-budget-rebaseline.md](m2-particle-render-budget-rebaseline.md)
+  (M2-PART-02 budget revision, 2026-10-08) — re-baselines the
+  `particle_render_10k` budget after the CI reference lane (Clang
+  18.1.3 -O0, ubuntu-24.04) measured 1.91–2.68 ms on unchanged engine
+  code against the 2.0 ms bar (three consecutive master merge-lane
+  failures since M2-PART-02 landed, no regression — the gate was
+  calibrated from local-machine runs and never verified with margin on
+  the CI reference toolchain): `budgets.json` `target` 2.0 → **3.0 ms**,
+  `measured` 1.07798 → **2.07786** (latest recorded reference-lane
+  value, worse backend). Step-level budget — no PRD revision (the
+  `depth_sort_10k` precedent); workload and engine code unchanged.
+  **The eleventh baseline** — supersedes `m2-particle-render.md` as the
+  latest recorded value of `particle_render_10k`.
