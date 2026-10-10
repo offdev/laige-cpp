@@ -171,7 +171,20 @@
 # (key, position) sequence, the machine-greppable state hash), the
 # 1 000-frame zero-allocation declare loop, and the PRD §8.1-style
 # 10 000-particle conversion budget gate) — pure data + batcher
-# bookkeeping: no GL environment needed.
+# bookkeeping: no GL environment needed; and the text items
+# (M2-TEXT-02) — the UI-pass text half of FR-2.8 (text_items_tests.cpp's
+# Text* suites: the StringTable's intern/dedup/bounds/stopped/move
+# contract, the width-measurement goldens on the committed test font,
+# the exact wrap model (word wrap, the character split, the oversized
+# single-character line, the alignment anchors, the line step), the
+# per-glyph quad goldens (pos/scale/uv/tint/depthOverride against the
+# M2-TEXT-01 oracle), the group + in-group order contract, the failure
+# paths incl. the nothing-declared screen-domain check, the 1 000-frame
+# zero-allocation declare loop, and the offscreen GL smoke — the
+# white-on-alpha RGBA8 upload through the M2-SPRITE-02 submit stage:
+# the draw-call count + exact pixel checks against the atlas bytes; the
+# smoke needs a usable OpenGL 3.3 environment and GTEST_SKIPs where
+# absent) — pure data + batcher bookkeeping except the GL smoke.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -227,7 +240,7 @@ add_executable(laige-render_tests
   depth_sort_tests.cpp sprite_batcher_tests.cpp sprite_draw_tests.cpp
   sprite_frames_tests.cpp render_counters_tests.cpp tilemap_tests.cpp
   tilemap_anim_tests.cpp parallax_tests.cpp particle_render_tests.cpp
-  font_tests.cpp)
+  font_tests.cpp text_items_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -418,6 +431,22 @@ set_tests_properties(font PROPERTIES
   ENVIRONMENT
   "LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 
+# M2-TEXT-02: the step's Verify command is `ctest -R text_items`. The
+# StringTable*/TextMeasure*/TextLayout*/TextDeclare*/TextZeroAlloc*
+# suites are pure data + batcher bookkeeping (no GL calls) — they run
+# in every local tree and in CI. The TextSmoke* suite needs the same
+# usable OpenGL 3.3 environment as the SpriteDrawSmoke suite (it
+# GTEST_SKIPs where absent — the documented environment contract) and
+# reads the committed test font through LAIGE_TEST_FONT_PATH. No
+# budget gate: the step's roadmap scope has no standalone budgets.json
+# entry (the per-frame text cost is part of the composite 50k
+# render-CPU budget, measured with M2-PERF-01).
+add_test(NAME text_items COMMAND laige-render_tests
+         --gtest_filter=TextStringTable.*:TextMeasure.*:TextLayout.*:TextDeclare.*:TextZeroAlloc.*:TextSmoke.*)
+set_tests_properties(text_items PROPERTIES
+  ENVIRONMENT
+  "LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
@@ -459,7 +488,7 @@ if(LAIGE_TSAN)
     iso_depth_key iso_depth_table camera iso_camera projection
     iso_picking depth_sort batcher sprite_draw sprite_frames
     render_counters tilemap tilemap_anim parallax particle_render font
-    PROPERTIES
+    text_items PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
@@ -485,10 +514,12 @@ if(LAIGE_ASAN)
   # stays fully active (the smoke still performs its GL work under
   # the sanitizer). The test-level ENVIRONMENT replaces the job-level
   # ASAN_OPTIONS (GitHub workflow), so mirror its options here.
-  # The unfiltered entry runs the Font* suites too (M2-TEXT-01), so the
-  # replacement environment carries the test-font path as well.
+  # The unfiltered entry runs the Font* suites too (M2-TEXT-01) and the
+  # TextSmoke* suite (M2-TEXT-02 — the offscreen smoke creates the same
+  # headless context as the other render entries), so the replacement
+  # environment carries the test-font path as well.
   set_tests_properties(laige-render_tests gl_context render_thread
-    sprite_draw render_counters PROPERTIES
+    sprite_draw render_counters text_items PROPERTIES
     ENVIRONMENT
     "ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=${CMAKE_SOURCE_DIR}/asan-reports/asan;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
@@ -538,3 +569,8 @@ set_tests_properties(particle_render PROPERTIES TIMEOUT 120)
 # a few times (create + determinism re-creates) — small work, 60s is
 # generous headroom, like the other pure-data entries.
 set_tests_properties(font PROPERTIES TIMEOUT 60)
+# The `text_items` entry includes the offscreen GL smoke (a 1024x1024
+# white-on-alpha glyph-atlas upload + one frame + pixel reads) plus the
+# 1 000-frame zero-allocation declare loop — generous headroom for a
+# slow headless runner, like the `render_counters` entry.
+set_tests_properties(text_items PROPERTIES TIMEOUT 120)

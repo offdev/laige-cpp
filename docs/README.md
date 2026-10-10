@@ -353,6 +353,15 @@ still to land.
   the deterministic shelf packing (same font + options → identical
   atlas bytes), the missing-glyph fallback contract (never a crash,
   never silent), and the zero-allocation O(1) `glyph(code)` lookup.
+   - [Text items](api/text_items.md) —
+   `laige::render::TextItem` / `declareText` (M2-TEXT-02, the
+   text-item half of FR-2.8): the scene's string table (interned u32
+   code points — PRD §10.4, no per-frame `std::string`), screen-space
+   layout (the first line's baseline anchor, the integer scale
+   [1, 16], the exact word-wrap model), one batched quad per ink
+   glyph in the UI pass (the white-on-alpha upload through
+   M2-SPRITE-02 `bindAtlas`, the hand-typed UI z through
+   `depthOverride`), and the O(glyphs) zero-allocation declare pass.
 
 ## Guides
 

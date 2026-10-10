@@ -274,7 +274,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     committed Vera test font, the deterministic-atlas bytes, the
     fallback matrix, the 1000-lookup zero-alloc window).
 
-- [ ] **M2-TEXT-02 · Text items in the UI pass**
+- [x] **M2-TEXT-02 · Text items in the UI pass**
   - **Refs:** FR-2.8 (text widget, screen-space pass)
   - **Depends:** M2-TEXT-01, M2-SPRITE-02
   - **Scope:**
@@ -283,6 +283,27 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     - Unit tests: width measurement golden-checked for known strings; wrap at max-width exact; empty/oversized string behavior documented.
   - **Verify:** `ctest -R text_items` green.
   - **Size:** ~200 lines + tests
+  - **Shipped:** M2-TEXT-02 (`laige/render/text_items.h`,
+    header-only, no GL calls): the scene's `StringTable` (interned
+    u32 code points, two budgeted allocations, idempotent `intern`,
+    `BudgetExhausted` + one rate-limited Warn `string_table/table_full`
+    at the pool bounds) feeds `TextItem` (first line's baseline
+    anchor, the integer scale in [1, 16], left/center/right per-line
+    alignment, `maxWidth` word wrap with the exact collapsed-space /
+    character-split / oversized-character model) into one batched
+    `SpriteItem` per ink glyph (the centered quad at the ink center,
+    the atlas cell's uv rect, `depthOverride = true` with the
+    hand-typed UI z — the G-R11 escape hatch); one (atlas, material,
+    blend) group = one instanced draw call (RENDER-001).
+    `measureText` is the no-wrap O(glyphs) width probe;
+    `expandGlyphAtlasRgba8` fills the white-on-alpha RGBA8 upload
+    (the M2-SPRITE-02 `bindAtlas` input). A failed `declareText`
+    declares nothing (the pre-check walks every line first). The
+    declare path is O(glyphs), zero allocation, zero logging, zero
+    GL (the `text_items` suite: StringTable contract, width
+    goldens against the committed Vera test font, the exact wrap
+    model, the per-glyph quad goldens, the failure paths, the
+    1000-frame zero-alloc window, the offscreen GL smoke).
 
 - [ ] **M2-TEXT-03 · SDF font rendering (P1)**
   - **Refs:** FR-2.8 (SDF — P1, placed here: it is a text/render feature next to the bitmap path; PRD §7 P1 = M6–M7), PRD §11 (stb_truetype)
