@@ -435,6 +435,23 @@ deterministic
 sequence) — fpx16_16 bit-identical across platforms/builds,
 fp32_pinned same-build/same-platform.
 
+### 4.12 The text: screen-space UI quads (M2-TEXT-02)
+
+The text items ([`text_items.md`](../api/text_items.md), the UI-pass
+text half of FR-2.8) live in **SCREEN space, y DOWN** — the UI pass's
+coordinate system, not world or sim space. The anchor is
+`TextItem.x` / `TextItem.y` (the first line's baseline, by the item's
+alignment), the line step is `lineHeight() * scale` px (M2-TEXT-01),
+and `scale` is an INTEGER factor in [1, 16] (every metric is multiplied
+by the scale — exact, no fractional-pixel rasterization; the only
+float is the final presentation conversion, ARCH-009). Each glyph with
+ink becomes one `SpriteItem` in the batcher (the M2-SPRITE-02 quad
+model: centered quad, the atlas cell's uv rect, the hand-tuned UI z
+through `depthOverride` — the G-R11 escape hatch). Text is
+presentation-only (ARCH-009): never sim state, never in the sim hash
+or replay; the string bytes come from the scene's string table
+(PRD §10.4 — no per-frame `std::string`).
+
 ## 5. Conversion rules (the module boundaries, RENDER-006)
 
 | Conversion | Direction | Owner | Status |
@@ -448,6 +465,7 @@ fp32_pinned same-build/same-platform.
 | Tile grid → tile quads | tile data + table keys (+ the animation's frame state; the parallax layer's `worldOffset`) → declared sprites | `laige-render` (`TileMap::declareTo` — static + animated frames, the parallax tile layer overload, M2-TILE-01/02) | **Shipped (M2-TILE-01 + M2-TILE-02)** |
 | Camera position → parallax offset | camera (x, y) + layer def → world-space offset (the exact formula) + wrap quads | `laige-render` (`ParallaxLayers::worldOffsetAt` / `declareTo`, M2-PAR-01) | **Shipped (M2-PAR-01)** |
 | Particle state → sprite items | particle (pos, depth, size, faded tint) → declared sprites (one batch per emitter set, the key from the particle's depth) | `laige-render` (`declareParticles` / `particleDepthToStepHeight` — consumes `ParticleSystem<Backend>::liveParticles()`, read-only after the sim phase, M2-PART-02) | **Shipped (M2-PART-02)** |
+| Text item → glyph quads | string handle + metrics + anchor (screen px, y down) → declared glyph quads (one per ink glyph; the UI z through `depthOverride`) | `laige-render` (`measureText` / `declareText` — consumes `GlyphAtlas::glyph` + the string table, M2-TEXT-02) | **Shipped (M2-TEXT-02)** |
 
 ### 5.1 The isometric grid picking (M2-ISO-03)
 
@@ -566,6 +584,10 @@ state → same keys → same order, every frame (RENDER-003).
   particle → sprite pass — the engine-owned depth key from the
   particle's depth, the exact fade through the tint, one draw call
   per emitter set) (M2-PART-02).
+- [`api/text_items.md`](../api/text_items.md) — the text-item
+  contract: `declareText` (the O(glyphs) string → glyph-quad pass —
+  screen space y down, the exact wrap model, the white-on-alpha
+  upload) (M2-TEXT-02).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —

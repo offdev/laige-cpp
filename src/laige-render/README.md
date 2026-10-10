@@ -591,9 +591,9 @@ boundary is the `laige-stb` static library — the single
 0009, the plain-compiler policy of the vendor impl TUs — DEP-005);
 the engine TU (`font.cpp`) never sees the stb internals beyond the
 narrow include. No GL calls anywhere; the atlas is presentation
-state (ARCH-009) and lands in the M2-TEXT-02 UI pass as a
-white-on-alpha RGBA8 upload through the M2-SPRITE-02 `bindAtlas`
-path. API contract in
+state (ARCH-009); the M2-TEXT-02 text pass uploads it as a
+white-on-alpha RGBA8 atlas through the M2-SPRITE-02 `bindAtlas`
+path (the next paragraph). API contract in
 [docs/api/font.md](../docs/api/font.md), tests under
 [tests/laige-render](../tests/laige-render) (CTest entry `font` —
 pure engine data, no GL environment required: the validation matrix,
@@ -610,5 +610,42 @@ standalone `budgets.json` entry: the atlas is built once at set-up,
 not per frame — the per-frame text cost lands with M2-TEXT-02
 (part of the composite 50k render-CPU budget, M2-PERF-01).
 
-The remaining M2 steps (text items/UI, M2-SCENE-01, M2-PERF-01) land
+M2-TEXT-02 landed the text items — the text-item half of FR-2.8:
+`laige::render::TextItem` + `declareText` (public header-only
+`include/laige/render/text_items.h`) declares a block of text into
+the batcher as batched glyph quads in the UI pass (screen space, y
+down). The string bytes come from the scene's `StringTable`
+(interned u32 code points — PRD §10.4, no per-frame `std::string` in
+the path); `StringTable::create` makes two budgeted allocations
+(defaults: 4096 strings / 16384 code points, both bounded at 2^24)
+and `intern` is idempotent (same bytes, same handle) with the
+`BudgetExhausted` + one rate-limited Warn `string_table/table_full`
+when a pool bound is exceeded. Layout is exact integers: the first
+line's baseline anchor, the integer `scale` in [1, 16] (every metric
+× scale), the `maxWidth` word-wrap model (one collapsed space per
+inter-word gap; an over-wide word splits by character; an over-wide
+single character takes its own line), each line aligned
+independently (left/center/right). Each glyph with ink becomes one
+`SpriteItem` (the centered quad at the ink center, the atlas cell's
+uv rect, `depthOverride = true` with the hand-typed UI z — the G-R11
+escape hatch), one (atlas, material, blend) group = one instanced
+draw call (RENDER-001). `measureText` is the no-wrap O(glyphs)
+width probe; `expandGlyphAtlasRgba8` fills the caller's `W·H·4`
+buffer with the white-on-alpha RGBA8 upload bytes (the setup path,
+once per font). A failed `declareText` declares nothing (the
+pre-check walks every line first); a batcher failure stops the call
+(the `declareParticles` precedent). The declare path is O(glyphs),
+zero allocation, zero logging, zero GL (the 1000-frame zero-alloc
+window in the test suite). API contract in
+[docs/api/text_items.md](../docs/api/text_items.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `text_items`
+— the StringTable contract, the width-measurement goldens against
+the committed Vera test font, the exact wrap model, the per-glyph
+quad goldens, the group + order contract, the failure paths, the
+1000-frame zero-allocation declare loop, and the offscreen GL smoke
+that needs a usable OpenGL 3.3 environment and `GTEST_SKIP`s where
+absent). No standalone `budgets.json` entry: the per-frame text cost
+is part of the composite 50k render-CPU budget (M2-PERF-01).
+
+The remaining M2 steps (the UI pass, M2-SCENE-01, M2-PERF-01) land
 in later steps.

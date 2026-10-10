@@ -5,9 +5,10 @@ The bitmap half of FR-2.8 — "Text rendering: ... bitmap (P0)"
 are rasterized **once, at scene set-up**, into a fixed-size 8-bit alpha
 glyph atlas + per-glyph metrics (advance, bearing, line height). There
 is **no runtime re-rasterization**: after `create`, `glyph(code)` is a
-pure O(1) table lookup. The text widget / layout pass lands in
-M2-TEXT-02; the SDF path (P1) lands in M2-TEXT-03 on top of the same
-vendored rasterizer (ADR 0009).
+pure O(1) table lookup. The text-item / layout pass ships in
+M2-TEXT-02 ([`text_items.md`](text_items.md)); the SDF path (P1)
+lands in M2-TEXT-03 on top of the same vendored rasterizer
+(ADR 0009).
 
 Public header:
 `src/laige-render/include/laige/render/font.h`
@@ -112,9 +113,10 @@ UV rect for the M2-SPRITE-02 upload is
 `(atlasX/W, atlasY/H, (atlasX+width)/W, (atlasY+height)/H)`
 (the M2-SPRITE-03 v-axis convention: v = 0 = first uploaded texel row).
 
-The atlas bytes are 8-bit alpha; the M2-TEXT-02 pass uploads them as a
+The atlas bytes are 8-bit alpha; the text-item pass
+([`text_items.md`](text_items.md), M2-TEXT-02) uploads them as a
 white-on-alpha RGBA8 atlas through the M2-SPRITE-02 `bindAtlas`
-path.
+path (`expandGlyphAtlasRgba8`).
 
 ## Missing glyphs (the documented fallback)
 
@@ -167,8 +169,9 @@ A failed create returns the error; no atlas is produced.
 
 `GlyphAtlas` owns its atlas bytes + slot table (move-only, the
 `SpriteBatcher` precedent). One owner (the scene set-up thread); the
-render phase reads it (the M2-GL-02 cull/batch stage uploads the atlas
-+ declares text quads — M2-TEXT-02). The font bytes are a
+render phase reads it (the M2-GL-02 cull/batch stage uploads the
+atlas + declares text quads — [`text_items.md`](text_items.md),
+M2-TEXT-02). The font bytes are a
 **non-owning span**: the caller owns them (the game's asset pipeline —
 the M3 asset system); they are read only during `create` and may be
 freed immediately after. Presentation-only (ARCH-009): the atlas is
@@ -190,8 +193,9 @@ anywhere in this API.
   blocks). The returned pointer is valid until the atlas is
   moved/destroyed (the slot table is never reallocated after create).
 - No `budgets.json` entry: the atlas is built once at set-up, not per
-  frame — the per-frame text cost lands with M2-TEXT-02 (part of the
-  composite 50k render-CPU budget, M2-PERF-01).
+  frame — the per-frame text cost ships with
+  [`text_items.md`](text_items.md) (M2-TEXT-02; part of the composite
+  50k render-CPU budget, M2-PERF-01).
 
 **Common trap:** rasterizing in a per-frame code path. The atlas is a
 set-up artifact — `create` per frame re-parses and re-rasterizes the
@@ -202,16 +206,18 @@ this reason).
 
 ```cpp
 // Scene set-up (once): read the font file (the asset pipeline owns
-// the bytes), build the atlas, upload it (M2-TEXT-02), and keep the
-// GlyphAtlas for the frame pipeline's declaration stage.
+// the bytes), build the atlas, upload it
+// (expandGlyphAtlasRgba8 — M2-TEXT-02), and keep the GlyphAtlas for
+// the frame pipeline's declaration stage.
 std::vector<std::uint8_t> fontBytes = readAsset("fonts/vera.ttf");
 auto atlas = laige::render::GlyphAtlas::create(fontBytes,
                                                laige::render::GlyphAtlas::Options{});
 if (atlas.isError()) { /* handle: the font asset is invalid */ }
 fontBytes.clear();  // safe: the atlas owns a copy of the bitmap
-// Per frame (M2-TEXT-02): one quad per drawn glyph —
-// metrics = atlas.glyph(code); quad uv = (atlasX/W, atlasY/H,
-// (atlasX+width)/W, (atlasY+height)/H); advance pen by advance * scale.
+// Per frame (M2-TEXT-02): declareText (text_items.h) turns the
+// string into one quad per drawn glyph — metrics = atlas.glyph(code),
+// quad uv = (atlasX/W, atlasY/H, (atlasX+width)/W, (atlasY+height)/H),
+// pen advances by advance * scale.
 ```
 
 ## Misuse warnings
@@ -228,10 +234,12 @@ fontBytes.clear();  // safe: the atlas owns a copy of the bitmap
 
 ## Related
 
-- [`sprite_batcher.md`](sprite_batcher.md) — the batcher the M2-TEXT-02
-  text quads are declared into.
+- [`text_items.md`](text_items.md) — the text-item / layout pass
+  (M2-TEXT-02) that consumes this atlas.
+- [`sprite_batcher.md`](sprite_batcher.md) — the batcher the text
+  quads are declared into.
 - [`sprite_frames.md`](sprite_frames.md) — the atlas UV conventions
   (the v-axis, the float-exact domain).
-- [`particle_render.md`](particle_render.md) — the sibling render-phase
-  declaration pass (the pattern M2-TEXT-02 follows).
+- [`particle_render.md`](particle_render.md) — the sibling
+  render-phase declaration pass (the pattern the text pass follows).
 - ADR 0009 — the stb_truetype vendoring (the dependency this step adds).

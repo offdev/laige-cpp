@@ -8,7 +8,8 @@
 // bearing, line height). There is NO runtime re-rasterization: after
 // `create`, `glyph(code)` is a pure table lookup. The SDF path (P1)
 // lands in M2-TEXT-03 on top of the same vendored rasterizer (ADR
-// 0009); the text widget / layout pass lands in M2-TEXT-02.
+// 0009); the text-item / layout pass ships in text_items.h
+// (M2-TEXT-02).
 //
 //   GlyphAtlas          The configured glyph atlas (create + lookup)
 //   GlyphMetrics        Per-glyph metrics + atlas cell origin
@@ -23,7 +24,7 @@
 // convention: the font's ascent + descent scaled to exactly that
 // height). To render at an integer scale s, multiply every metric by
 // s (exact for integer s); the atlas bitmap itself is then drawn at
-// s× its texel size (the M2-TEXT-02/M2-SPRITE-02 sprite `scale`).
+// s× its texel size (the text_items.h/M2-SPRITE-02 sprite `scale`).
 //
 // `GlyphAtlas::create(font, options)`:
 //
@@ -117,14 +118,15 @@
 //
 // `GlyphAtlas` owns its atlas bytes and slot table (move-only, the
 // `SpriteBatcher` precedent); one owner (the scene set-up thread); the
-// render phase reads it (the M2-GL-02 cull/batch stage uploads the atlas
-// + declares text quads — M2-TEXT-02). Presentation-only (ARCH-009):
+// render phase reads it (the M2-GL-02 cull/batch stage uploads the
+// atlas + declares text quads — text_items.h, M2-TEXT-02).
+// Presentation-only (ARCH-009):
 // the atlas is never part of the sim state hash or replay state. No GL
 // calls anywhere in this header.
 //
 // Canonical narrative: docs/api/font.md (the full contract).
 // The text feature's place in the 2.5D model:
-// docs/concepts/coordinates.md (the M2-TEXT-02 row, planned).
+// docs/concepts/coordinates.md (§4.12 — the text row, shipped).
 
 #pragma once
 
@@ -252,8 +254,8 @@ class GlyphAtlas {
 
   // The atlas bytes: 8-bit alpha, row-major, `atlasWidth() × atlasHeight()`
   // texels (empty in the stopped state). The render read path: the
-  // M2-TEXT-02 pass uploads this as a white-on-alpha RGBA8 atlas
-  // (the M2-SPRITE-02 `bindAtlas` contract). O(1); never writes.
+  // text_items.h (M2-TEXT-02) uploads this as a white-on-alpha RGBA8
+  // atlas (the M2-SPRITE-02 `bindAtlas` contract). O(1); never writes.
   [[nodiscard]] std::span<const std::uint8_t> atlas() const noexcept {
     return atlas_;
   }
