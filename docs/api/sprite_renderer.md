@@ -10,7 +10,10 @@ below). The renderer consumes the M2-SPRITE-01 batcher's BUILT frame
 and makes exactly ONE `glDrawArraysInstanced` per (atlas, material,
 blend) group; the per-group state (one texture bind, one blend
 function) is set once, so state changes are O(group count), not
-O(sprite count).
+O(sprite count). The M2-TEXT-03 SDF mode extends the same program
+with a per-atlas SDF fragment branch (the `bindSdfAtlas` bind — the
+SDF glyph atlas's field is thresholded with a screen-space-derivative
+AA band, so SDF text stays crisp at any zoom; the shader section).
 
 Render observability + the draw-call budget (M2-SPRITE-04, PRD §9.3
 G-R2): the counters carry the profiler's per-frame fields — program
@@ -88,6 +91,9 @@ class SpriteRenderer {
   [[nodiscard]] std::uint32_t maxDrawCalls() const noexcept;
   [[nodiscard]] Status bindAtlas(std::uint32_t atlasId, std::uint32_t w,
                                  std::uint32_t h, std::span<const std::uint8_t> rgba);
+  [[nodiscard]] Status bindSdfAtlas(std::uint32_t atlasId, std::uint32_t w,
+                                    std::uint32_t h, std::span<const std::uint8_t> rgba,
+                                    float threshold);
   [[nodiscard]] Status submit(SpriteBatcher& batcher, const Mat4& worldToNdc);
   [[nodiscard]] SpriteDrawStats frameStats() const noexcept;  // last success (else zero)
   [[nodiscard]] SpriteDrawTotals totals() const noexcept;
@@ -132,6 +138,21 @@ class SpriteRenderer {
   failures: `InvalidArgument` (no GL work, no logging — the
   precondition contract); a GL upload failure: `GlUnavailable` + one
   Error (`atlas_upload_failed`).
+- **`bindSdfAtlas(atlasId, w, h, rgba, threshold)`** (M2-TEXT-03) is
+  the same set-up/asset path for an **SDF glyph atlas**
+  ([`font_sdf.md`](font_sdf.md)): the upload is identical (GL_RGBA8,
+  `GL_NEAREST`, `GL_CLAMP_TO_EDGE`, no mipmaps — the SDF quads are
+  1:1-mapped, the fragment's smoothstep does the edge work), plus the
+  per-atlas **shader mode**: this atlas is drawn by the shader's SDF
+  branch (below) with `threshold ∈ [0, 1]` (the field's 0.5-coverage
+  contour at 0.5 — the documented default). The mode travels WITH the
+  texture: a re-bind on the id replaces the texture AND the mode (a
+  bitmap re-bind clears the SDF flag and vice versa), and the submit
+  publishes the matching `uSdf`/`uSdfThreshold` uniforms at each
+  group's texture bind (the per-atlas state — one set per group, not
+  per frame). Validation: the same argument domain as `bindAtlas` +
+  the threshold domain (outside `[0, 1]` → `InvalidArgument`, no GL
+  work, no log).
 - **`submit(batcher, worldToNdc)`** is the per-frame draw (the frame
   protocol: after the batch stage's `beginFrame()`/`add()`×n/`build()`).
   Preconditions, checked in order (first failure wins — a FAILED
@@ -290,6 +311,29 @@ matrix + the atlas unit):
 - **Fragment**: `texture(uAtlas, vUv) * vTint` (the multiplicative
   RGBA tint — the `SpriteItem.tint` contract), blended per the
   per-group BlendMode.
+- **Fragment, SDF mode (M2-TEXT-03)**: for an atlas bound through
+  `bindSdfAtlas`, the sampled texture's ALPHA channel is the signed
+  distance field (128 = the 0.5-coverage contour — font_sdf.md) and
+  the branch renders
+
+  ```text
+  aa = max(length(vec2(dFdx(t.a), dFdy(t.a))), 1/255)
+  alpha = smoothstep(uSdfThreshold - aa, uSdfThreshold + aa, t.a)
+  out = vec4(t.rgb, alpha) * vTint
+  ```
+
+  (`t.a` is the field normalized to [0, 1]). `aa` is the field's
+  **screen-space derivative** (GLSL `dFdx`/`dFdy` — the standard SDF
+  anti-aliasing, the "screen-space derivative" rule), floored at one
+  quantization step (1/255): the AA band is exactly **one screen
+  pixel wide at any zoom** — the P1 motivation (FR-2.8: text stays
+  crisp at any zoom). The documented edge behavior (font_sdf.md): a
+  texel more than one distance-px inside the glyph renders exactly
+  opaque, one more than one distance-px outside renders exactly
+  transparent, the band between renders anti-aliased. `uSdf` /
+  `uSdfThreshold` are per-atlas state set at the texture bind of each
+  group (the 0/0.5 defaults are inert — the branch only runs when
+  `uSdf > 0.5`).
 
 The pass's GL state model (what `submit` establishes per frame, in
 order): the render-target frame buffer (`GlContext::frameBuffer()` —
@@ -377,8 +421,13 @@ state.
   `maxSprites` — a frame above the renderer's budget fails
   `BudgetExhausted` (the batcher's own overflow policy bounds the
   frame to ITS budget first).
-- `bindAtlas` is the setup/asset path (one call per atlas per scene
-  load), not a per-frame call: it creates a GL texture.
+- `bindAtlas` / `bindSdfAtlas` are the setup/asset path (one call per
+  atlas per scene load), not per-frame calls: they create a GL
+  texture.
+- An SDF field must be bound through `bindSdfAtlas` (and an SDF-mode
+  text item's `atlasId` must name that bind): the per-atlas shader
+  mode travels with the texture, and the bitmap branch would draw the
+  field's raw alpha (the text_items.md misuse note).
 - `submit` requires the batcher BUILT for the current frame — an open
   window with declared items fails `InvalidArgument`; it is never
   drawn as an empty frame (CORE-008).
@@ -395,6 +444,11 @@ state.
 
 - `docs/api/sprite_batcher.md` — the declare/build half the renderer
   consumes (M2-SPRITE-01).
+- `docs/api/font_sdf.md` — the SDF glyph atlas the `bindSdfAtlas`
+  upload carries (M2-TEXT-03): the field model, the threshold edge
+  behavior, the padded-cell quads.
+- `docs/api/text_items.md` — the text pass that declares the SDF
+  quads (`TextItem.mode`, M2-TEXT-02/03).
 - `docs/api/depth_sort.md` — the back-to-front order (M2-SORT-01).
 - `docs/api/iso_camera.md` — the world → NDC matrix (M2-CAM-02).
 - `docs/api/gl_context.md` — the context, the FBO render target, the

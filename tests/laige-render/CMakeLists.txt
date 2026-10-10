@@ -240,7 +240,7 @@ add_executable(laige-render_tests
   depth_sort_tests.cpp sprite_batcher_tests.cpp sprite_draw_tests.cpp
   sprite_frames_tests.cpp render_counters_tests.cpp tilemap_tests.cpp
   tilemap_anim_tests.cpp parallax_tests.cpp particle_render_tests.cpp
-  font_tests.cpp text_items_tests.cpp)
+  font_tests.cpp text_items_tests.cpp font_sdf_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -447,6 +447,23 @@ set_tests_properties(text_items PROPERTIES
   ENVIRONMENT
   "LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 
+# M2-TEXT-03: the step's Verify command is `ctest -R font_sdf`. The
+# FontSdf* suites (the SDF atlas create/validate, the metrics parity
+# with the bitmap path, the determinism property, the threshold edge
+# behavior, the fallback, the upload bytes, the zero-alloc lookup) are
+# pure engine data (no GL calls) — they run in every local tree and in
+# CI; the FontSdfSmoke suite needs the same usable OpenGL 3.3
+# environment as the TextSmoke suite (it GTEST_SKIPs where absent —
+# the documented environment contract). All read the committed test
+# font through LAIGE_TEST_FONT_PATH. No budget gate: the step's
+# roadmap scope has no standalone budgets.json entry (the SDF atlas is
+# built once at scene set-up — the per-frame text cost is part of the
+# composite 50k render-CPU budget, M2-PERF-01).
+add_test(NAME font_sdf COMMAND laige-render_tests --gtest_filter=FontSdf*)
+set_tests_properties(font_sdf PROPERTIES
+  ENVIRONMENT
+  "LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
@@ -488,7 +505,7 @@ if(LAIGE_TSAN)
     iso_depth_key iso_depth_table camera iso_camera projection
     iso_picking depth_sort batcher sprite_draw sprite_frames
     render_counters tilemap tilemap_anim parallax particle_render font
-    text_items PROPERTIES
+    text_items font_sdf PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
@@ -514,12 +531,13 @@ if(LAIGE_ASAN)
   # stays fully active (the smoke still performs its GL work under
   # the sanitizer). The test-level ENVIRONMENT replaces the job-level
   # ASAN_OPTIONS (GitHub workflow), so mirror its options here.
-  # The unfiltered entry runs the Font* suites too (M2-TEXT-01) and the
-  # TextSmoke* suite (M2-TEXT-02 — the offscreen smoke creates the same
+  # The unfiltered entry runs the Font* suites too (M2-TEXT-01), the
+  # FontSdf* suites (M2-TEXT-03), and the TextSmoke* / FontSdfSmoke*
+  # suites (M2-TEXT-02/03 — the offscreen smokes create the same
   # headless context as the other render entries), so the replacement
   # environment carries the test-font path as well.
   set_tests_properties(laige-render_tests gl_context render_thread
-    sprite_draw render_counters text_items PROPERTIES
+    sprite_draw render_counters text_items font_sdf PROPERTIES
     ENVIRONMENT
     "ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=${CMAKE_SOURCE_DIR}/asan-reports/asan;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
@@ -574,3 +592,8 @@ set_tests_properties(font PROPERTIES TIMEOUT 60)
 # 1 000-frame zero-allocation declare loop — generous headroom for a
 # slow headless runner, like the `render_counters` entry.
 set_tests_properties(text_items PROPERTIES TIMEOUT 120)
+# The `font_sdf` entry is the same shape (the SDF atlas's create is a
+# two-pass distance transform over the Latin-1 range at set-up; the
+# smoke is one 1024x1024 SDF-field upload + one frame + pixel reads,
+# and the zero-alloc loop is 1 000 lookups).
+set_tests_properties(font_sdf PROPERTIES TIMEOUT 120)

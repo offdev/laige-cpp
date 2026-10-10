@@ -7,8 +7,8 @@ glyph atlas + per-glyph metrics (advance, bearing, line height). There
 is **no runtime re-rasterization**: after `create`, `glyph(code)` is a
 pure O(1) table lookup. The text-item / layout pass ships in
 M2-TEXT-02 ([`text_items.md`](text_items.md)); the SDF path (P1)
-lands in M2-TEXT-03 on top of the same vendored rasterizer
-(ADR 0009).
+ships in M2-TEXT-03 ([`font_sdf.md`](font_sdf.md)) on top of the
+same vendored rasterizer (ADR 0009).
 
 Public header:
 `src/laige-render/include/laige/render/font.h`
@@ -234,8 +234,11 @@ fontBytes.clear();  // safe: the atlas owns a copy of the bitmap
 
 ## Related
 
+- [`font_sdf.md`](font_sdf.md) — the SDF glyph atlas (M2-TEXT-03):
+  the same vendor boundary and metrics, the distance field, the
+  padded cells, the threshold edge behavior.
 - [`text_items.md`](text_items.md) — the text-item / layout pass
-  (M2-TEXT-02) that consumes this atlas.
+  (M2-TEXT-02/03) that consumes both atlases.
 - [`sprite_batcher.md`](sprite_batcher.md) — the batcher the text
   quads are declared into.
 - [`sprite_frames.md`](sprite_frames.md) — the atlas UV conventions

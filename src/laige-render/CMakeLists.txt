@@ -95,7 +95,8 @@ target_include_directories(laige-stb PRIVATE
 # fixed-size 8-bit alpha atlas + per-glyph metrics — the FR-2.8 P0
 # bitmap path, no GL calls; the vendor boundary is laige-stb, above).
 set(LAIGE_RENDER_SOURCES gl_context.cpp frame_pipeline.cpp matrices.cpp
-  camera.cpp iso_camera.cpp projection.cpp sprite_renderer.cpp font.cpp)
+  camera.cpp iso_camera.cpp projection.cpp sprite_renderer.cpp font.cpp
+  font_sdf.cpp)
 
 if(LAIGE_BUILD_SHARED)
   add_library(laige-render SHARED ${LAIGE_RENDER_SOURCES})
@@ -127,9 +128,10 @@ target_link_libraries(laige-render PRIVATE glfw laige-glad)
 # headers), likewise PRIVATE.
 target_include_directories(laige-render PRIVATE
   ${CMAKE_SOURCE_DIR}/deps/glad/include)
-# M2-TEXT-01: the stb_truetype boundary — font.cpp uses the vendor
-# header's declarations (the implementation lives in laige-stb); public
-# headers never name stb types (CPP-010, DEP-004, ADR 0009).
+# M2-TEXT-01/03: the stb_truetype boundary — font.cpp (the bitmap
+# atlas) and font_sdf.cpp (the SDF atlas, M2-TEXT-03) use the vendor
+# header's declarations (the implementation lives in laige-stb);
+# public headers never name stb types (CPP-010, DEP-004, ADR 0009).
 target_link_libraries(laige-render PRIVATE laige-stb)
 target_include_directories(laige-render PRIVATE
   ${CMAKE_SOURCE_DIR}/deps/stb)

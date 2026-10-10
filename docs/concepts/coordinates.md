@@ -435,7 +435,7 @@ deterministic
 sequence) — fpx16_16 bit-identical across platforms/builds,
 fp32_pinned same-build/same-platform.
 
-### 4.12 The text: screen-space UI quads (M2-TEXT-02)
+### 4.12 The text: screen-space UI quads (M2-TEXT-02/03)
 
 The text items ([`text_items.md`](../api/text_items.md), the UI-pass
 text half of FR-2.8) live in **SCREEN space, y DOWN** — the UI pass's
@@ -447,7 +447,15 @@ by the scale — exact, no fractional-pixel rasterization; the only
 float is the final presentation conversion, ARCH-009). Each glyph with
 ink becomes one `SpriteItem` in the batcher (the M2-SPRITE-02 quad
 model: centered quad, the atlas cell's uv rect, the hand-tuned UI z
-through `depthOverride` — the G-R11 escape hatch). Text is
+through `depthOverride` — the G-R11 escape hatch). The item's
+`FontRenderMode` selects the glyph path (M2-TEXT-03): the bitmap
+atlas's ink cell (default) or the SDF atlas's **padded cell** (the
+ink grown by the field radius — the SDF field needs the surrounding
+space to carry the outside distances; the fragment's smoothstep
+produces the screen-space edge, so the SDF text stays crisp at any
+zoom). The layout is the same on both paths: the pen advances by the
+identical M2-TEXT-01 metrics, so the widths match exactly (tolerance
+0 — [`font_sdf.md`](../api/font_sdf.md)). Text is
 presentation-only (ARCH-009): never sim state, never in the sim hash
 or replay; the string bytes come from the scene's string table
 (PRD §10.4 — no per-frame `std::string`).
@@ -465,7 +473,7 @@ or replay; the string bytes come from the scene's string table
 | Tile grid → tile quads | tile data + table keys (+ the animation's frame state; the parallax layer's `worldOffset`) → declared sprites | `laige-render` (`TileMap::declareTo` — static + animated frames, the parallax tile layer overload, M2-TILE-01/02) | **Shipped (M2-TILE-01 + M2-TILE-02)** |
 | Camera position → parallax offset | camera (x, y) + layer def → world-space offset (the exact formula) + wrap quads | `laige-render` (`ParallaxLayers::worldOffsetAt` / `declareTo`, M2-PAR-01) | **Shipped (M2-PAR-01)** |
 | Particle state → sprite items | particle (pos, depth, size, faded tint) → declared sprites (one batch per emitter set, the key from the particle's depth) | `laige-render` (`declareParticles` / `particleDepthToStepHeight` — consumes `ParticleSystem<Backend>::liveParticles()`, read-only after the sim phase, M2-PART-02) | **Shipped (M2-PART-02)** |
-| Text item → glyph quads | string handle + metrics + anchor (screen px, y down) → declared glyph quads (one per ink glyph; the UI z through `depthOverride`) | `laige-render` (`measureText` / `declareText` — consumes `GlyphAtlas::glyph` + the string table, M2-TEXT-02) | **Shipped (M2-TEXT-02)** |
+| Text item → glyph quads | string handle + metrics + anchor (screen px, y down) → declared glyph quads (one per ink glyph; the UI z through `depthOverride`; the mode's cell — bitmap ink or SDF padded) | `laige-render` (`measureText` / `declareText` — consumes `GlyphAtlas::glyph` / `SdfGlyphAtlas::glyph` + the string table, M2-TEXT-02/03) | **Shipped (M2-TEXT-02 + M2-TEXT-03)** |
 
 ### 5.1 The isometric grid picking (M2-ISO-03)
 

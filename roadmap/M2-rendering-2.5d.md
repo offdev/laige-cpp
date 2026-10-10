@@ -305,7 +305,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     model, the per-glyph quad goldens, the failure paths, the
     1000-frame zero-alloc window, the offscreen GL smoke).
 
-- [ ] **M2-TEXT-03 · SDF font rendering (P1)**
+- [x] **M2-TEXT-03 · SDF font rendering (P1)**
   - **Refs:** FR-2.8 (SDF — P1, placed here: it is a text/render feature next to the bitmap path; PRD §7 P1 = M6–M7), PRD §11 (stb_truetype)
   - **Depends:** M2-TEXT-02
   - **Scope:**
@@ -315,6 +315,46 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     - Unit tests: SDF atlas generation deterministic (same font+size → identical bytes); SDF text width matches the bitmap path within documented tolerance; threshold-edge behavior documented.
   - **Verify:** `ctest -R font_sdf` green.
   - **Size:** ~150 lines + tests
+  - **Shipped:** M2-TEXT-03 (`laige/render/font_sdf.h`,
+    `font_sdf.cpp`, plus the `SpriteRenderer` SDF mode and the
+    `TextItem.mode` / `FontRenderMode` key): `SdfGlyphAtlas::create`
+    converts the same font bytes + glyph range ONCE at scene set-up
+    (the vendored `stb_truetype`, ADR 0009, same pin as M2-TEXT-01)
+    into a fixed-size 8-bit signed distance-field atlas. Per glyph,
+    the 1x ink's 0.5-coverage pixels (alpha > 127) become the inside
+    set of a two-pass 8-neighborhood distance transform (the Felice
+    & Nienhuis 8SDD — CORE-014, orthogonal 1.0 / diagonal
+    sqrt(2)) over the glyph's PADDED cell (the ink grown by the
+    radius `r ∈ [1, 16]` on all four sides), quantized to
+    `byte = clamp(128 + round(127·d/r), 0, 255)` with d positive
+    inside: 128 = the 0.5-coverage contour, exact within `r` px
+    (byte 255/1 at exactly `|d| = r`), clamped to 0/255 beyond
+    (the documented threshold edge behavior — a texel more than one
+    distance-px inside renders exactly opaque, one more than one
+    outside exactly transparent, the band between anti-aliased). The
+    metrics are the M2-TEXT-01 `GlyphMetrics` unchanged (the layout
+    is identical on both paths — the width match is EXACT, tolerance
+    0), `atlasX/Y` mark the padded cell's origin, the packing is
+    shelf-wise and deterministic (same font + options → identical
+    bytes, the `font-sdf-determinism` line), and `glyph(code)` is
+    the M2-TEXT-01 fallback (total, never a crash). `TextItem.mode`
+    + `TextItem.sdfFont` select the path (Bitmap the default); the
+    SDF quads cover the padded cell; the `SpriteRenderer` gained
+    `bindSdfAtlas` (the per-atlas shader mode travels with the
+    texture bind) and the fragment shader's SDF branch thresholds
+    the field with a screen-space-derivative AA band (one screen
+    pixel wide at any zoom — the P1 crispness motivation,
+    FR-2.8). The `font_sdf` suite: the validation matrix, the
+    untrusted-font boundary, the capacity guard, the metrics parity
+    + exact width match, the determinism contract, the threshold
+    edge behavior (byte-exact against a brute-force min-distance
+    oracle), the fallback, the upload bytes, the 1000-lookup
+    zero-alloc window, and the offscreen SDF GL smoke (the
+    deep-inside / corner / anti-alias-band probes; `GTEST_SKIP`s
+    where no usable OpenGL 3.3 environment). No standalone
+    `budgets.json` entry (the atlas builds once at set-up; the
+    per-frame cost is part of the composite 50k render-CPU budget,
+    M2-PERF-01).
 
 - [ ] **M2-UI-01 · UI widget tree (retained, screen-space)**
   - **Refs:** FR-2.8 (panel, button, text, image, list, slider, input), FR-4.4 (UI input routing base)

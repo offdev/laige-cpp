@@ -361,7 +361,18 @@ still to land.
    [1, 16], the exact word-wrap model), one batched quad per ink
    glyph in the UI pass (the white-on-alpha upload through
    M2-SPRITE-02 `bindAtlas`, the hand-typed UI z through
-   `depthOverride`), and the O(glyphs) zero-allocation declare pass.
+   `depthOverride`), the glyph-path selection (`FontRenderMode`,
+   M2-TEXT-03), and the O(glyphs) zero-allocation declare pass.
+   - [SDF glyph atlas](api/font_sdf.md) —
+   `laige::render::SdfGlyphAtlas` (M2-TEXT-03, the SDF half of
+   FR-2.8): the same font bytes + glyph range converted ONCE at scene
+   set-up into a fixed-size 8-bit signed distance-field glyph atlas
+   (the Felice & Nienhuis 8SDD transform — CORE-014), the padded
+   cells, the documented field model (128 = the 0.5-coverage
+   contour, exact within the radius, the threshold edge behavior),
+   the identical M2-TEXT-01 metrics (the width match, tolerance 0),
+   and the deterministic packing (same font + options → identical
+   bytes).
 
 ## Guides
 
