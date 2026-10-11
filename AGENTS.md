@@ -128,6 +128,39 @@ Before finishing:
 5. Do not claim success when required validation was skipped. Explain exactly what
    remains and why.
 
+### Local Linux test gate (before any push to GitHub)
+
+Before pushing any branch to GitHub, the agent MUST build all four
+Linux CI trees and run their FULL `ctest` suites locally to green,
+using the canonical commands of
+[docs/getting-started/building.md](docs/getting-started/building.md)
+(the identical commands the Linux jobs of
+`.github/workflows/ci.yml` run):
+
+1. Linux g++: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+   -DCMAKE_CXX_COMPILER=g++`, then `cmake --build build -j`, then
+   `ctest --test-dir build --output-on-failure`.
+2. Linux clang++: the same canonical commands with
+   `-DCMAKE_CXX_COMPILER=clang++`, in its own build directory.
+3. Linux ASan+UBSan: `cmake -S . -B build-asan
+   -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+   -DLAIGE_ASAN=ON`, then `cmake --build build-asan -j`, then
+   `ctest --test-dir build-asan --output-on-failure`.
+4. Linux TSan: `cmake -S . -B build-tsan
+   -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+   -DLAIGE_TSAN=ON`, then `cmake --build build-tsan -j`, then
+   `ctest --test-dir build-tsan --output-on-failure`.
+
+When the machine has enough cores and memory, the four trees MUST run
+in parallel (independent build directories; one build plus one full
+ctest per tree). "All the tests" means the complete unfiltered `ctest`
+list of each tree — no filter, no subset: the merge-lane Linux jobs
+run the unfiltered suite, and the local gate MUST match it. A push to
+GitHub without the gate is a rule violation (CORE-008): the PR lane
+(`.github/workflows/ci-pull.yml`) now runs the full matrix including
+all four Linux trees, but the gate exists so a red Linux tree is
+caught on the developer machine before it reaches GitHub.
+
 ## 6. Architecture boundaries
 
 - **ARCH-001:** Keep simulation, rendering, platform, asset, audio, networking,

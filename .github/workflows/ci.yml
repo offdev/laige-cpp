@@ -4,7 +4,8 @@
 # Roadmap:  roadmap/M0-foundations.md, step M0-CI-01
 # PRD refs: §6 (P0 platforms, AC-6.1), §14 (cadence), §8.1 (build budget)
 #
-# Cadence (PRD §14: "one per PR, all per merge"):
+# Cadence (PRD §14, as amended 2026-10-11 — "test everything, all the
+# time"):
 #   * this workflow runs on every push to the default branch (master) —
 #     i.e. on merge — and on manual workflow_dispatch:
 #     ALL eleven jobs run (the seven P0 OS/variant jobs — the five P0 OS
@@ -19,11 +20,13 @@
 # deterministic runs of laige-fuzz on the json_parse target) runs inside
 # every build job's ctest above, instrumented in the ASan tree. Seed and
 # nightly-long-run conventions: docs/testing.md.
-#   * Pull requests run only the P0 OSes that cannot be verified
-#     locally — Windows and/or macOS, selected by the PR's ci:windows /
-#     ci:macos label (no label: no P0 OS build; Linux is verified
-#     locally) — in the companion workflow
-#     .github/workflows/ci-pull.yml.
+#   * Pull requests run the SAME eleven jobs, unconditionally, in the
+#     companion workflow .github/workflows/ci-pull.yml. The former
+#     ci:windows / ci:macos label selector is removed: no job is gated
+#     on a label and no test is ever skipped (Linux included). Local
+#     verification of the Linux trees before pushing remains a
+#     developer obligation (AGENTS.md, section 5: the local Linux test
+#     gate).
 #
 # One job per P0 OS/variant (PRD §6). Each job runs the canonical flow from
 # docs/getting-started/building.md — configure → build → ctest (unit tests
@@ -472,9 +475,9 @@ jobs:
     #       stated per ARCH-010).
     #
     # Like include-lint and api-manifest, the job runs on every PR and
-    # merge, independent of the ci:* label selector — it is a tooling
-    # check, not an additional P0 OS build (the PRD §14 cadence is
-    # unchanged).
+    # merge unconditionally (no label selector — see the header) — it is
+    # a tooling check, not an additional P0 OS build (the PRD §14
+    # cadence is unchanged).
     name: Determinism check
     runs-on: ubuntu-24.04
     timeout-minutes: 20
