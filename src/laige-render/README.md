@@ -684,5 +684,45 @@ distance oracle, the fallback, the upload bytes, the zero-alloc
 lookup window, and the offscreen SDF GL smoke that `GTEST_SKIP`s
 where no usable OpenGL 3.3 environment).
 
-The remaining M2 steps (M2-UI-01, M2-SCENE-01, M2-PERF-01) land in
+M2-UI-01 landed the retained UI widget tree — the retained-data half
+of the UI work: `laige::render::UiTree` (public header
+`include/laige/render/ui_widgets.h`, header-only, no GL, no new
+dependency) is a pool-backed retained tree of the ADR 0006 widget
+set — exactly panel, button, text, image, list, slider, input, in
+the ADR's canonical order — with stable generation-checked widget
+ids (`laige::PoolHandle`, `kInvalidUiWidgetId` never live). The
+layout pass is one deterministic preorder pass per frame (the nine
+anchor points against the container's padded content box, the list
+stacking in insertion order with the normalized scroll, the computed
+coordinates saturated into ±(2^21 − 1) — the documented model in the
+header). The focus system tracks one focused widget (the focusable
+kinds are button, slider, input) with a deterministic preorder tab
+order (wraparound; a pointer press on a focusable widget takes the
+focus; a removal clears it). The frame protocol processes one raw
+`UiPointerState` per frame into a bounded list of the ADR 0006
+events (pointer enter/leave/press/release, `ButtonPressed` on a
+same-widget press + release, `SliderChanged` on the pointer drag,
+`InputText` from `setInputText`), with the first-`maxEvents`
+overflow policy (a dropped event counts in
+`droppedEventsTotal()` + one rate-limited Warn
+`ui_tree/event_overflow`). `pointerHit()` is the FR-4.4 UI-first
+routing hook: a hit means the UI consumed the frame's pointer input.
+The tree owns two allocations at `create` (the fixed-capacity widget
+pool — `maxWidgets` INCLUDING the root — and the event array); every
+per-frame path is allocation-free and owner-thread-only. No
+rendering (the UI draw pass lands with M2-UI-02), no simulation
+coupling (ARCH-009), no standalone `budgets.json` entry (the per-
+frame cost is part of the composite 50k render-CPU budget,
+M2-PERF-01). API contract in
+[docs/api/ui_widgets.md](../docs/api/ui_widgets.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `ui_tree` —
+the create validation + stopped state + move semantics, the tree
+CRUD (the seven kinds, the domain validation, the widget budget, the
+subtree removal + LIFO slot recycling), the layout goldens (the
+nine-anchor matrix, padding, list stacking + scroll, saturation),
+the focus system, the scripted pointer sequences (the button click,
+the slider drag, the input text, the event overflow), and the 1 000-
+frame zero-allocation loop).
+
+The remaining M2 steps (M2-UI-02, M2-SCENE-01, M2-PERF-01) land in
 later steps.

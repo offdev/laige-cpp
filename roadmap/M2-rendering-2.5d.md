@@ -356,7 +356,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     per-frame cost is part of the composite 50k render-CPU budget,
     M2-PERF-01).
 
-- [ ] **M2-UI-01 · UI widget tree (retained, screen-space)**
+- [x] **M2-UI-01 · UI widget tree (retained, screen-space)**
   - **Refs:** FR-2.8 (panel, button, text, image, list, slider, input), FR-4.4 (UI input routing base)
   - **Depends:** M2-DEC-02, M2-TEXT-02, M2-SPRITE-02
   - **Scope:**
@@ -366,6 +366,26 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     - Unit tests: tree CRUD + layout golden checks; focus traversal order deterministic; event delivery for scripted pointer sequences.
   - **Verify:** `ctest -R ui_tree` green.
   - **Size:** ~400 lines + tests (largest UI step; split into layout / focus if needed)
+  - **Shipped:** M2-UI-01 (`laige/render/ui_widgets.h`,
+    header-only, no GL calls, no new dependency): `UiTree` is a
+    pool-backed retained tree of the ADR 0006 set (panel, button,
+    text, image, list, slider, input — exactly the confirmed widget
+    list, M2-DEC-02), with stable generation-checked widget ids
+    (`laige::PoolHandle`), the documented layout model (the nine
+    anchors against the padded content box, the list stacking in
+    insertion order with the normalized scroll, the coordinates
+    saturated into ±(2^21 − 1)), the focus system (button / slider /
+    input focusable; the deterministic preorder tab order; the
+    pointer-press focus; the removal clears), and the per-frame
+    bounded pointer-event list (enter/leave/press/release,
+    `ButtonPressed` on the same-widget press + release,
+    `SliderChanged` on the pointer drag, `InputText` from
+    `setInputText`; the first-`maxEvents` overflow policy + the
+    rate-limited `ui_tree/event_overflow` warn). `pointerHit()` is
+    the FR-4.4 UI-first routing hook (a hit = the UI consumed the
+    frame's pointer input). Two allocations at `create` only; every
+    per-frame path is allocation-free and owner-thread-only (the
+    1 000-frame zero-allocation loop in `ctest -R ui_tree`).
 
 - [ ] **M2-UI-02 · UI rendering pass**
   - **Refs:** FR-2.8 (separate render pass, screen-space)

@@ -373,6 +373,15 @@ still to land.
    the identical M2-TEXT-01 metrics (the width match, tolerance 0),
    and the deterministic packing (same font + options → identical
    bytes).
+ - [UI widget tree](api/ui_widgets.md) —
+   `laige::render::UiTree` (M2-UI-01, the retained-data half of the
+   UI work): the pool-backed retained tree of the ADR 0006 widget
+   set (panel, button, text, image, list, slider, input), the
+   stable generation-checked widget ids, the deterministic per-frame
+   layout pass (the nine anchors, the list stacking + scroll, the
+   coordinate saturation), the focus system (button / slider /
+   input), and the per-frame bounded pointer-event list (the FR-4.4
+   UI-first routing hook through `pointerHit`).
 
 ## Guides
 

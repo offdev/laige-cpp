@@ -460,6 +460,40 @@ presentation-only (ARCH-009): never sim state, never in the sim hash
 or replay; the string bytes come from the scene's string table
 (PRD §10.4 — no per-frame `std::string`).
 
+### 4.13 The UI widget tree: screen-space retained layout (M2-UI-01)
+
+The UI widget tree ([`ui_widgets.md`](../api/ui_widgets.md)) lives in
+**SCREEN space, y DOWN** — the UI pass's coordinate system, not
+world or sim space. The root node is the layout-only screen
+container with the rect `(0, 0, screenWidth, screenHeight)`
+(`Options::screenWidth/screenHeight`, the documented domain
+`[1, 2^20]` px); it never receives pointer events. A widget's
+laid-out rect is computed from its parent's **content box** (the
+parent's rect inset by its padding, clamped to 0 x 0) by the
+widget's anchor point + its offset minus its anchor offset in its
+own size (the nine `UiAnchor` values — `TopLeft` places its
+top-left corner on the content's top-left, `Center` places its
+center on the content center, `BottomRight` its bottom-right
+corner on the content's bottom-right, and so on). The spec
+domains: width/height/padding/scroll in `[0, 2^20]`, x/y in
+`±2^20`; the computed coordinates are saturated into
+`±(2^21 − 1)` (`kUiMaxCoordPx`) — a widget pushed that far off
+screen renders nothing (the M2-UI-02 cull), and the saturation
+keeps the int32 storage exact. A **list** stacks its children
+top-to-bottom in insertion order at the content's left edge (the
+children's anchors and offsets are ignored), shifted up by the
+list's `scroll` px, which `layout()` normalizes into
+`[0, totalContentHeight − contentHeight]`. The layout is
+deterministic (RENDER-003: integer math only, same tree + specs →
+same rects on every platform), and a node's rect is zero until
+the next `layout()` (a fresh `addChild` or `setPlacement` zeros
+it). The pointer hit test is half-open containment of the pointer
+point in the laid-out rects (`left ≤ x < right`, `top ≤ y <
+bottom`), topmost = the last containing node in traversal order.
+The UI tree is presentation-only (ARCH-009): it consumes raw
+pointer state (the FR-4.4 hook — `UiPointerState` in the same
+screen px, y down) and never mutates simulation state.
+
 ## 5. Conversion rules (the module boundaries, RENDER-006)
 
 | Conversion | Direction | Owner | Status |
@@ -474,6 +508,7 @@ or replay; the string bytes come from the scene's string table
 | Camera position → parallax offset | camera (x, y) + layer def → world-space offset (the exact formula) + wrap quads | `laige-render` (`ParallaxLayers::worldOffsetAt` / `declareTo`, M2-PAR-01) | **Shipped (M2-PAR-01)** |
 | Particle state → sprite items | particle (pos, depth, size, faded tint) → declared sprites (one batch per emitter set, the key from the particle's depth) | `laige-render` (`declareParticles` / `particleDepthToStepHeight` — consumes `ParticleSystem<Backend>::liveParticles()`, read-only after the sim phase, M2-PART-02) | **Shipped (M2-PART-02)** |
 | Text item → glyph quads | string handle + metrics + anchor (screen px, y down) → declared glyph quads (one per ink glyph; the UI z through `depthOverride`; the mode's cell — bitmap ink or SDF padded) | `laige-render` (`measureText` / `declareText` — consumes `GlyphAtlas::glyph` / `SdfGlyphAtlas::glyph` + the string table, M2-TEXT-02/03) | **Shipped (M2-TEXT-02 + M2-TEXT-03)** |
+| UI widget spec → laid-out rect | widget spec (anchor, offsets, size; the parent's content box) → computed rect (screen px, y down; the coordinate saturation; the list stacking + scroll) | `laige-render` (`UiTree::layout` / `UiTree::handlePointer` — the retained tree + pointer hit test, M2-UI-01) | **Shipped (M2-UI-01)** |
 
 ### 5.1 The isometric grid picking (M2-ISO-03)
 
@@ -596,6 +631,11 @@ state → same keys → same order, every frame (RENDER-003).
   contract: `declareText` (the O(glyphs) string → glyph-quad pass —
   screen space y down, the exact wrap model, the white-on-alpha
   upload) (M2-TEXT-02).
+- [`api/ui_widgets.md`](../api/ui_widgets.md) — the retained UI
+  widget tree contract: `UiTree` (the pool-backed widget tree —
+  screen space y down, the nine anchors, the layout pass, the
+  focus, the per-frame pointer events, the FR-4.4 routing hook)
+  (M2-UI-01).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —
