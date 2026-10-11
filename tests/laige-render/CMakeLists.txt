@@ -417,10 +417,16 @@ add_test(NAME particle_render COMMAND laige-render_tests
 set_tests_properties(particle_render PROPERTIES
     ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
 
-# M2-TEXT-01: the step's Verify command is `ctest -R font`. Pure engine
-# data (no GL calls) — runs in every local tree and in CI. The
-# LAIGE_TEST_FONT_PATH env var points the suites at the committed test
-# font (tests/laige-render/assets/vera.ttf — the assets/ README
+# M2-TEXT-01: the step's Verify command is `ctest -R font`. The bitmap
+# Font* suites are pure engine data (no GL calls) and run in every local
+# tree and in CI. Since M2-TEXT-03 the `Font*` filter also matches the
+# `FontSdf*` suites, so this entry also runs the FontSdfSmoke offscreen
+# GL smoke (GTEST_SKIP where no usable OpenGL 3.3 environment — the
+# documented environment contract); the LAIGE_ASAN block below puts this
+# entry on the detect_leaks=0 list for that reason (the headless smoke's
+# EGL display is process-lifetime vendor state — see the note there).
+# The LAIGE_TEST_FONT_PATH env var points the suites at the committed
+# test font (tests/laige-render/assets/vera.ttf — the assets/ README
 # documents the provenance and the OFL 1.1 license). No budget gate:
 # the step's roadmap scope has no standalone budgets.json entry (the
 # atlas is built once at scene set-up — the per-frame text cost lands
@@ -523,21 +529,27 @@ if(LAIGE_ASAN)
   # `leak:` suppression lines abort ASan's own suppression parser at
   # init (mutually exclusive formats in one file, verified against
   # compiler-rt), and the leak roots are libEGL-internal state objects
-  # the engine never holds a pointer to. detect_leaks=0 for the render
-  # entries instead (render_thread's RenderThreadOffscreen suite,
-  # sprite_draw's SpriteDraw{State,Smoke,Pipeline} suites, and
-  # render_counters's RenderCounters{Scene,Cap,Memory} suites create
-  # the same headless context): in-run ASan/UBSan error detection
-  # stays fully active (the smoke still performs its GL work under
-  # the sanitizer). The test-level ENVIRONMENT replaces the job-level
-  # ASAN_OPTIONS (GitHub workflow), so mirror its options here.
-  # The unfiltered entry runs the Font* suites too (M2-TEXT-01), the
-  # FontSdf* suites (M2-TEXT-03), and the TextSmoke* / FontSdfSmoke*
-  # suites (M2-TEXT-02/03 — the offscreen smokes create the same
-  # headless context as the other render entries), so the replacement
-  # environment carries the test-font path as well.
+  # the engine never holds a pointer to. detect_leaks=0 for every entry
+  # whose suites can create that context instead (gl_context's
+  # GlContextSmoke, render_thread's RenderThreadOffscreen, sprite_draw's
+  # SpriteDraw{State,Smoke,Pipeline}, render_counters's
+  # RenderCounters{Scene,Cap,Memory}, text_items's TextSmoke, and
+  # font_sdf's FontSdfSmoke suites create the same headless context):
+  # in-run ASan/UBSan error detection stays fully active (the smoke
+  # still performs its GL work under the sanitizer). The font entry is
+  # on the list for the same reason since M2-TEXT-03: its `Font*` filter
+  # also matches the `FontSdf*` suites, so it runs the FontSdfSmoke
+  # offscreen smoke too. It was missing from this list when that
+  # happened (2026-10-11 CI run 38097683448: the entry then inherited
+  # the job-level detect_leaks=1 and LSan aborted it on the vendor-state
+  # leak at process exit). The test-level ENVIRONMENT replaces the
+  # job-level ASAN_OPTIONS (GitHub workflow), so mirror its options
+  # here. Several entries on the list run the font suites (the
+  # unfiltered laige-render_tests entry, and text_items, font, and
+  # font_sdf), so the replacement environment carries the test-font
+  # path as well (harmless on the entries that do not use it).
   set_tests_properties(laige-render_tests gl_context render_thread
-    sprite_draw render_counters text_items font_sdf PROPERTIES
+    sprite_draw render_counters text_items font font_sdf PROPERTIES
     ENVIRONMENT
     "ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=${CMAKE_SOURCE_DIR}/asan-reports/asan;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
@@ -584,9 +596,11 @@ set_tests_properties(iso_depth_table PROPERTIES TIMEOUT 120)
 set_tests_properties(depth_sort PROPERTIES TIMEOUT 120)
 set_tests_properties(particle_render PROPERTIES TIMEOUT 120)
 # The `font` entry rasterizes the full Latin-1 range of the test font
-# a few times (create + determinism re-creates) — small work, 60s is
-# generous headroom, like the other pure-data entries.
-set_tests_properties(font PROPERTIES TIMEOUT 60)
+# a few times (create + determinism re-creates) and, since M2-TEXT-03,
+# also runs the offscreen GL smoke (the `Font*` filter matches the
+# `FontSdf*` suites) — 120s, like the same-shaped `text_items` and
+# `font_sdf` entries.
+set_tests_properties(font PROPERTIES TIMEOUT 120)
 # The `text_items` entry includes the offscreen GL smoke (a 1024x1024
 # white-on-alpha glyph-atlas upload + one frame + pixel reads) plus the
 # 1 000-frame zero-allocation declare loop — generous headroom for a
