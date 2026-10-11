@@ -387,7 +387,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     per-frame path is allocation-free and owner-thread-only (the
     1 000-frame zero-allocation loop in `ctest -R ui_tree`).
 
-- [ ] **M2-UI-02 · UI rendering pass**
+- [x] **M2-UI-02 · UI rendering pass**
   - **Refs:** FR-2.8 (separate render pass, screen-space)
   - **Depends:** M2-UI-01, M2-SPRITE-02
   - **Scope:**
@@ -396,6 +396,31 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     - Golden image test fixture: a fixed UI scene renders to the committed reference image (M2-GOLD-01).
   - **Verify:** `ctest -R ui_render` green (offscreen); golden image matches within documented tolerance.
   - **Size:** ~250 lines + tests
+  - **Shipped:** M2-UI-02 (`laige/render/ui_render.h`,
+    header-only, no GL calls): `declareUi` is the screen-space UI
+    pass on the identity camera (the M2-SPRITE-02 submit stage with
+    `uiScreenMatrix` — screen px, y down → NDC; nothing
+    world-space leaks in, RENDER-006). It walks the M2-UI-01 tree's
+    laid-out rects in the deterministic traversal order, culls the
+    invisible widgets (the documented simple model: the offscreen
+    rule on all four half-open edges + the zero-area rule, and the
+    later-opaque-panel occlusion rule — the ADR 0006 occlusion
+    model), and declares one centered quad per visible widget (the
+    seven ADR 0006 kinds) plus the glyph quads of the text widgets
+    and the pass-generated button labels / input content through the
+    M2-TEXT-02 `declareText` path. The UI pass is its own
+    `SpriteBatcher` (one batcher per sprite pass); every quad
+    carries the monotone per-node UI z with `depthOverride = true`
+    (the G-R11 escape hatch — counted + warned at build),
+    materialId 0 + `BlendMode::Alpha`, one texture per atlas. The
+    golden image fixture (`UiRenderSmoke` in `ctest -R ui_render`)
+    renders a fixed 128×128 UI scene offscreen through the real
+    submit stage and compares the whole frame against a CPU
+    reference rasterizer within the documented ± 1 byte tolerance
+    (the committed reference-image infra lands with M2-GOLD-01). No
+    standalone `budgets.json` entry (the per-frame UI cost is part
+    of the composite 50k render-CPU budget, M2-PERF-01); the
+    1 000-frame zero-allocation declare loop is in the entry.
 
 ## Reference scene & performance acceptance
 
