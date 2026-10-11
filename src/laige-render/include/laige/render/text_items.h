@@ -1,30 +1,36 @@
 // laige-render text items (M2-TEXT-02): the text half of FR-2.8 —
 // screen-space text items for the UI pass.
 //
-// FR-2.8: "Text rendering: ... bitmap font atlas (P0) ...; UI is a
-// separate render pass, screen-space." The P0 bitmap half (M2-TEXT-01)
-// owns the font rasterization (`laige/render/font.h` — the
-// `GlyphAtlas`). This header is the UI pass's text side: the
-// `StringTable` (PRD §10.4 — strings live in an engine-owned table with
-// `StringRef` handles; no per-frame `std::string` in the path), the
-// `TextItem` value (string, font, scale, color, alignment, max-width
-// wrap), the O(glyphs) width measurement, and the `declareText` pass
-// that turns one `TextItem` into batched glyph quads in the UI pass's
-// sprite batcher (S-5: rendering goes through the batcher — text is
-// never drawn directly). The M2-UI-01 widget tree declares its text
-// widgets through this same pass; the M2-UI-02 render pass submits the
-// UI batcher through the M2-SPRITE-02 `SpriteRenderer` (identity
-// screen-space matrix — RENDER-006).
+// FR-2.8: "Text rendering: ... bitmap font atlas (P0), SDF (P1) ...;
+// UI is a separate render pass, screen-space." The P0 bitmap half
+// (M2-TEXT-01) owns the font rasterization (`laige/render/font.h` —
+// the `GlyphAtlas`); the P1 SDF half (M2-TEXT-03) owns the signed
+// distance-field atlas (`laige/render/font_sdf.h` — the
+// `SdfGlyphAtlas`). This header is the UI pass's text side: the
+// `StringTable` (PRD §10.4 — strings live in an engine-owned table
+// with `StringRef` handles; no per-frame `std::string` in the path),
+// the `TextItem` value (string, font, glyph path, scale, color,
+// alignment, max-width wrap), the O(glyphs) width measurement, and the
+// `declareText` pass that turns one `TextItem` into batched glyph quads
+// in the UI pass's sprite batcher (S-5: rendering goes through the
+// batcher — text is never drawn directly). The M2-UI-01 widget tree
+// declares its text widgets through this same pass; the M2-UI-02
+// render pass submits the UI batcher through the M2-SPRITE-02
+// `SpriteRenderer` (identity screen-space matrix — RENDER-006).
 //
 //   StringRef               The string-table handle (PRD §10.4)
 //   StringTable             The engine-owned interned string storage
 //   TextAlignment           The per-line alignment (left/center/right)
+//   FontRenderMode          The glyph path (bitmap default / SDF)
 //   TextItem                One declared text item (UI pass, screen px)
 //   measureText             The O(glyphs) width measurement
 //   declareText             The O(glyphs) text -> glyph-quads pass
 //   expandGlyphAtlasRgba8   The 8-bit alpha atlas -> white-on-alpha
 //                           RGBA8 upload bytes (the M2-SPRITE-02
 //                           `bindAtlas` input)
+//   expandSdfGlyphAtlasRgba8 The 8-bit SDF atlas -> white-on-alpha
+//                           RGBA8 upload bytes (the M2-SPRITE-02
+//                           `bindSdfAtlas` input, M2-TEXT-03)
 //
 // ---------------------------------------------------------------------------
 // The model (documented units)
@@ -95,6 +101,24 @@
 //   rotation    0 (per-glyph rotation is not a text feature in M2),
 //   frameIndex  0 (glyph animation is not a feature in M2 — the SDF
 //               pass of M2-TEXT-03 changes the shader, not this hook).
+//
+// The SDF glyph path (M2-TEXT-03): the SAME quad model with the quad
+// covering the glyph's PADDED CELL instead of the ink rect — the ink
+// rect grown by the atlas's distance-field radius on all four sides
+// (the SDF field needs the surrounding space to carry the outside
+// distances, and the fragment's smoothstep is what produces the sharp
+// screen-space edge). So per glyph: the quad's `scale` is
+// `(width + 2r, height + 2r) * scale`, its `pos` is the padded cell's
+// center, and its `uv` is the padded cell's rect in the SDF atlas
+// (`GlyphMetrics.atlasX/atlasY` are already the padded cell's origin
+// on the SDF path — the font_sdf.h preamble). The LAYOUT is
+// UNCHANGED: the pen advances by the ink's `advance` exactly as on the
+// the bitmap path, so `measureText` returns the SAME width for the
+// same text on both paths (the documented width-match contract —
+// tolerance 0: both paths read the same M2-TEXT-01 metrics). The SDF
+// atlas's texture must be bound through `SpriteRenderer::bindSdfAtlas`
+// (the per-atlas shader mode travels with the texture bind); the scene
+// gives the item the matching `atlasId`.
 //
 // Declaration order is the ROW-MAJOR order (line by line, code point by
 // code point): the UI pass's deterministic order (RENDER-003) — all
@@ -171,14 +195,16 @@
 // `StringTable` is move-only (the `SpriteBatcher` precedent): one owner
 // (the scene set-up thread); the render phase reads it (`declareText`
 // / `measureText` read the spans) — the table is never shared with a
-// concurrent writer (the single-owner pattern). `GlyphAtlas` is the
-// scene's (M2-TEXT-01): a `TextItem.font` is a NON-OWNING pointer that
+// concurrent writer (the single-owner pattern). `GlyphAtlas` (M2-TEXT-
+// 01) and `SdfGlyphAtlas` (M2-TEXT-03) are the scene's: a
+// `TextItem.font` / `TextItem.sdfFont` is a NON-OWNING pointer that
 // MUST outlive every frame that declares through it (the scene owns
-// the atlas, the frame owns the items). `TextItem` is a plain value
-// (no ownership, nothing to release). Presentation-only (ARCH-009):
-// none of this is sim state (no state-hash / replay involvement).
-// No GL calls anywhere in this header (the GL half is the existing
-// M2-SPRITE-02 `SpriteRenderer::submit` + `bindAtlas`).
+// the atlas, the frame owns the items — the mode's atlas is the one
+// read). `TextItem` is a plain value (no ownership, nothing to
+// release). Presentation-only (ARCH-009): none of this is sim state
+// (no state-hash / replay involvement). No GL calls anywhere in this
+// header (the GL half is the M2-SPRITE-02 `SpriteRenderer::submit` +
+// `bindAtlas` / `bindSdfAtlas`).
 //
 // ---------------------------------------------------------------------------
 // Performance (PERF-002/003/004, DOC-004)
@@ -207,6 +233,8 @@
 //                        before the one-time `bindAtlas` upload —
 //                        RENDER-004: no unexpected GPU work in the
 //                        frame hot path).
+//   expandSdfGlyphAtlasRgba8 the same, for the SDF field (M2-TEXT-03,
+//                        before the one-time `bindSdfAtlas` upload).
 //
 // Call site: once per frame per text item, in the RENDER phase (the
 // M2-GL-02 cull/batch stage of the UI pass) — never in the simulation
@@ -224,12 +252,15 @@
 //   - StringTable::intern: stopped table → InvalidArgument (no log);
 //     beyond either bound → BudgetExhausted + one rate-limited Warn
 //     `string_table/table_full` (fields: `limit`, `capacity`);
-//   - measureText: stopped/missing font, invalid scale, or an invalid
-//     handle → InvalidArgument (no log — the precondition contract);
-//   - declareText: stopped/missing font, invalid scale, an invalid
-//     handle, an out-of-domain maxWidth, or a line wider than
-//     kTextMaxLineWidthPx → InvalidArgument, NOTHING declared (the
-//     pre-check runs before the first add — no partial text); a
+//   - measureText: stopped/missing font (the mode's font — `font` for
+//     Bitmap, `sdfFont` for SDF), invalid scale, or an invalid handle
+//     → InvalidArgument (no log — the precondition contract);
+//   - declareText: stopped/missing font (the item's mode selects it:
+//     Bitmap reads `font`, SDF reads `sdfFont` — a null or stopped one
+//     fails), invalid scale, an invalid handle, an out-of-domain
+//     maxWidth, or a line wider than kTextMaxLineWidthPx →
+//     InvalidArgument, NOTHING declared (the pre-check runs before the
+//     first add — no partial text); a
 //     failed batcher add (stopped batcher → BudgetExhausted, closed
 //     window → InvalidArgument) fails the call with the batcher's
 //     error — the items already declared by the call remain in the
@@ -254,8 +285,16 @@
 //   it for the frame's total glyph count (a 100-character label at
 //   4x scale is ~100 quads).
 // - Do not expect sub-pixel text: the scale is INTEGER (the
-//   M2-TEXT-01 convention); fractional scales are out of scope in M2
-//   (the SDF pass, M2-TEXT-03, is the zoom-crispness path).
+//   M2-TEXT-01 convention); fractional scales are out of scope in M2.
+//   The SDF path (M2-TEXT-03, `FontRenderMode::Sdf`) is the
+//   zoom-crispness path: same integer scale, but the glyph's screen
+//   edge is thresholded from the distance field with a screen-space
+//   AA band, so it stays crisp at any zoom (the font_sdf.h preamble).
+// - An SDF-mode item's `atlasId` must name the atlas the scene bound
+//   with `bindSdfAtlas` (the per-atlas shader mode travels with the
+//   texture bind — binding the SDF field with `bindAtlas` would draw
+//   it with the bitmap branch and the field's raw alpha would render
+//   wrong).
 //
 // Canonical narrative: docs/concepts/coordinates.md §4.12 (ARCH-008);
 // API contract: docs/api/text_items.md.
@@ -272,6 +311,7 @@
 #include "laige/errors.h"
 #include "laige/logging.h"
 #include "laige/render/font.h"
+#include "laige/render/font_sdf.h"
 #include "laige/render/sprite_batcher.h"
 #include "laige/result.h"
 
@@ -518,6 +558,21 @@ StringTable::intern(std::span<const std::uint32_t> codes) noexcept {
 // The per-item presentation values (UI pass, screen px)
 // ---------------------------------------------------------------------------
 
+// The glyph path of a text item (M2-TEXT-03 — the documented scene-
+// config key that selects the font): Bitmap is the default (the
+// M2-TEXT-01 glyph atlas — `TextItem.font`); Sdf is the signed
+// distance-field atlas (the M2-TEXT-03 `SdfGlyphAtlas` —
+// `TextItem.sdfFont`): the same metrics and layout, the glyph's
+// screen edge thresholded from the field (the header's glyph-quad
+// section).
+enum class FontRenderMode : std::uint8_t {
+  // The M2-TEXT-01 bitmap glyph atlas (`TextItem.font`).
+  Bitmap = 0,
+  // The M2-TEXT-03 signed distance-field glyph atlas (`TextItem.
+  // sdfFont`).
+  Sdf = 1,
+};
+
 // The per-line alignment of the text block (the header's model
 // section: the anchor semantics of TextItem.x).
 enum class TextAlignment : std::uint8_t {
@@ -540,8 +595,14 @@ struct TextItem {
   // std::string in the path).
   StringRef text{};
   // The glyph atlas (M2-TEXT-01) — non-owning (scene-owned; must
-  // outlive the frame).
+  // outlive the frame). Read when `mode == FontRenderMode::Bitmap`.
   const GlyphAtlas* font{};
+  // The glyph path (M2-TEXT-03 — the documented scene-config key):
+  // Bitmap (default) draws from `font`, Sdf from `sdfFont`.
+  FontRenderMode mode{FontRenderMode::Bitmap};
+  // The SDF glyph atlas (M2-TEXT-03) — non-owning (scene-owned; must
+  // outlive the frame). Read when `mode == FontRenderMode::Sdf`.
+  const SdfGlyphAtlas* sdfFont{};
   // The text block's anchor x, screen px (the header's model section:
   // left/center/right edge by `alignment`).
   float x{};
@@ -598,8 +659,12 @@ struct TextLine {
 // widths are in screen px at the item's `scale` (the integer-scale
 // convention — every advance is multiplied by the scale). Pure
 // (no allocation, no logging): a handful of integer sums over the
-// line's codes.
-[[nodiscard]] inline bool nextLine(const GlyphAtlas& font,
+// line's codes. Templated over the font type (M2-TEXT-03): the walk
+// reads only `glyph(code)->advance` — the `GlyphAtlas` and the
+// `SdfGlyphAtlas` expose the identical metrics (the same M2-TEXT-01
+// metrics), so one walk serves both glyph paths.
+template <typename Font>
+[[nodiscard]] inline bool nextLine(const Font& font,
                                    std::span<const std::uint32_t> codes,
                                    std::uint32_t scale,
                                    std::int64_t maxWidth, std::uint32_t pos,
@@ -671,18 +736,16 @@ struct TextLine {
 // The width measurement (the M2-UI-01 panel-sizing read)
 // ---------------------------------------------------------------------------
 
-// The rendered ink-block width of `text` in screen px at `scale`
-// (the header's wrap model, no-wrap: the sum of the glyph advances +
-// one space advance per inter-word gap, leading/trailing spaces
-// excluded — exactly what the declared quads span). O(glyphs); no
-// allocation, no logging, no GL.
-//
-// Fails (no log — the precondition contract): a stopped/missing font,
-// a scale outside [1, kTextMaxScale], or a handle the table does not
-// own → InvalidArgument. An empty string (or an all-space one)
-// measures 0.
-[[nodiscard]] inline laige::Result<std::int64_t> measureText(
-    const GlyphAtlas& font, const StringTable& table, StringRef text,
+namespace detail {
+
+// The shared measurement walk (M2-TEXT-03): one code path for both
+// glyph paths — the metrics are the M2-TEXT-01 metrics on either
+// atlas, so the width is EXACTLY the same for the same text on the
+// bitmap and the SDF path (the documented width-match contract,
+// tolerance 0).
+template <typename Font>
+[[nodiscard]] inline laige::Result<std::int64_t> measureTextImpl(
+    const Font& font, const StringTable& table, StringRef text,
     std::uint32_t scale) noexcept {
   if (!font.valid() || scale < 1 || scale > kTextMaxScale ||
       !table.isValid(text)) {
@@ -698,37 +761,18 @@ struct TextLine {
   return laige::Result<std::int64_t>::success(line.width);
 }
 
-// ---------------------------------------------------------------------------
-// The text -> glyph-quads pass (the UI pass's declaration)
-// ---------------------------------------------------------------------------
-
-// Declares `item`'s glyphs into `batcher` under its (atlasId,
-// materialId, blend) group (the header's model + wrap + domain
-// sections): O(glyphs), no allocation, no logging on the happy path,
-// no GL. The batcher must be live (created, nonzero capacity) and its
-// frame window OPEN (the frame-protocol contract, the
-// `declareParticles` precedent): a stopped batcher fails the first add
-// with BudgetExhausted, a closed window with InvalidArgument. A line
-// wider than kTextMaxLineWidthPx fails InvalidArgument BEFORE the
-// first add (nothing declared — the pre-check). An empty text declares
-// nothing and succeeds. The first failed add fails the call with the
-// batcher's error (the items already declared remain in the frame —
-// the batcher owns the frame state).
-[[nodiscard]] inline laige::Status declareText(
-    SpriteBatcher& batcher, const StringTable& table,
-    const TextItem& item) noexcept {
-  // The preconditions (first failure wins, InvalidArgument, no log —
-  // the header's failure section): the scene-owned storage is live,
-  // the item fields are in domain.
-  if (item.font == nullptr || !item.font->valid() ||
-      !table.isValid(item.text) || item.scale < 1 ||
-      item.scale > kTextMaxScale ||
-      (item.maxWidth != 0 &&
-       (item.maxWidth < 1 ||
-        item.maxWidth > static_cast<std::int32_t>(kTextMaxLineWidthPx)))) {
-    return laige::Status::failure(laige::ErrorCode::InvalidArgument);
-  }
-  const GlyphAtlas& font = *item.font;
+// The shared declare walk (M2-TEXT-03): one code path for both glyph
+// paths. `pad` is the distance-field radius in px at 1x (0 on the
+// bitmap path, the atlas's `radius()` on the SDF path): the quad
+// covers the ink rect grown by `pad` on all four sides (the padded
+// cell — the header's glyph-quad section), the pen still advances by
+// the ink's advance, and the layout is otherwise unchanged. The font
+// type's metrics are the M2-TEXT-01 metrics on either atlas; its
+// `atlasX`/`atlasY` are the (padded) cell's origin on both.
+template <typename Font>
+[[nodiscard]] inline laige::Status declareTextImpl(
+    SpriteBatcher& batcher, const StringTable& table, const TextItem& item,
+    const Font& font, std::int32_t pad) noexcept {
   const std::span<const std::uint32_t> codes = table.text(item.text);
   const std::int64_t maxWidth =
       static_cast<std::int64_t>(item.maxWidth);  // 0 = no wrap
@@ -783,18 +827,26 @@ struct TextLine {
       }
       const GlyphMetrics& m = *font.glyph(code);
       if (m.width > 0 && m.height > 0) {
-        // The ink rect (exact int math, one float conversion per
-        // field — the header's screen-domain section).
-        const float inkW = static_cast<float>(
-            static_cast<std::int64_t>(m.width) * item.scale);
-        const float inkH = static_cast<float>(
-            static_cast<std::int64_t>(m.height) * item.scale);
-        const float inkLeft =
-            pen + static_cast<float>(static_cast<std::int64_t>(m.bearingX) *
-                                     item.scale);
-        const float inkTop =
-            baselineY - static_cast<float>(static_cast<std::int64_t>(
-                            m.bearingY) * item.scale);
+        // The quad's cell rect: the ink rect grown by `pad` on all
+        // four sides (exact int math, one float conversion per field
+        // — the header's screen-domain section). pad = 0 on the
+        // bitmap path (the M2-TEXT-02 ink rect, verbatim); pad = the
+        // SDF radius on the SDF path (the padded cell — the
+        // header's glyph-quad section).
+        const std::int32_t cellW = m.width + 2 * pad;
+        const std::int32_t cellH = m.height + 2 * pad;
+        const float inkW =
+            static_cast<float>(static_cast<std::int64_t>(cellW) *
+                               item.scale);
+        const float inkH =
+            static_cast<float>(static_cast<std::int64_t>(cellH) *
+                               item.scale);
+        const float inkLeft = pen +
+            static_cast<float>(static_cast<std::int64_t>(m.bearingX - pad) *
+                               item.scale);
+        const float inkTop = baselineY -
+            static_cast<float>(static_cast<std::int64_t>(m.bearingY + pad) *
+                               item.scale);
         SpriteItem quad;
         quad.pos = Vec2{inkLeft + inkW * 0.5f, inkTop + inkH * 0.5f};
         quad.depthKey = item.depthKey;
@@ -804,11 +856,9 @@ struct TextLine {
         quad.uv = SpriteUvRect{
             static_cast<float>(m.atlasX) / static_cast<float>(atlasW),
             static_cast<float>(m.atlasY) / static_cast<float>(atlasH),
-            static_cast<float>(m.atlasX +
-                               static_cast<std::uint32_t>(m.width)) /
+            static_cast<float>(m.atlasX + static_cast<std::uint32_t>(cellW)) /
                 static_cast<float>(atlasW),
-            static_cast<float>(m.atlasY +
-                               static_cast<std::uint32_t>(m.height)) /
+            static_cast<float>(m.atlasY + static_cast<std::uint32_t>(cellH)) /
                 static_cast<float>(atlasH)};
         quad.frameIndex = 0;
         quad.rotation = 0.0f;
@@ -833,24 +883,109 @@ struct TextLine {
   return laige::Status{};
 }
 
+}  // namespace detail
+
+// The rendered ink-block width of `text` in screen px at `scale`
+// (the header's wrap model, no-wrap: the sum of the glyph advances +
+// one space advance per inter-word gap, leading/trailing spaces
+// excluded — exactly what the declared quads span). O(glyphs); no
+// allocation, no logging, no GL.
+//
+// Fails (no log — the precondition contract): a stopped/missing font,
+// a scale outside [1, kTextMaxScale], or a handle the table does not
+// own → InvalidArgument. An empty string (or an all-space one)
+// measures 0.
+[[nodiscard]] inline laige::Result<std::int64_t> measureText(
+    const GlyphAtlas& font, const StringTable& table, StringRef text,
+    std::uint32_t scale) noexcept {
+  return detail::measureTextImpl(font, table, text, scale);
+}
+
+// The SDF overload (M2-TEXT-03): the SAME width for the same text —
+// both paths read the identical M2-TEXT-01 metrics (the documented
+// width-match contract, tolerance 0).
+[[nodiscard]] inline laige::Result<std::int64_t> measureText(
+    const SdfGlyphAtlas& font, const StringTable& table, StringRef text,
+    std::uint32_t scale) noexcept {
+  return detail::measureTextImpl(font, table, text, scale);
+}
+
 // ---------------------------------------------------------------------------
-// The atlas upload bytes (the M2-SPRITE-02 bindAtlas input)
+// The text -> glyph-quads pass (the UI pass's declaration)
 // ---------------------------------------------------------------------------
 
-// Expands the 8-bit alpha glyph atlas into the white-on-alpha RGBA8
-// bytes the M2-SPRITE-02 `bindAtlas` uploads (one call per font per
-// scene load — the SETUP/asset path, before the one-time texture
-// upload, RENDER-004). Every texel becomes (255, 255, 255, alpha):
-// the M2-SPRITE-02 shader's multiplicative tint then makes the drawn
-// color = tint × glyph alpha (the header's glyph-quad section — the
-// standard text coloring). O(W·H); no allocation (the caller owns the
-// span — one W·H·4-byte buffer at set-up), no logging, no GL.
+// Declares `item`'s glyphs into `batcher` under its (atlasId,
+// materialId, blend) group (the header's model + wrap + domain
+// sections): O(glyphs), no allocation, no logging on the happy path,
+// no GL. The batcher must be live (created, nonzero capacity) and its
+// frame window OPEN (the frame-protocol contract, the
+// `declareParticles` precedent): a stopped batcher fails the first add
+// with BudgetExhausted, a closed window with InvalidArgument. A line
+// wider than kTextMaxLineWidthPx fails InvalidArgument BEFORE the
+// first add (nothing declared — the pre-check). An empty text declares
+// nothing and succeeds. The first failed add fails the call with the
+// batcher's error (the items already declared remain in the frame —
+// the batcher owns the frame state).
+//
+// The item's MODE selects the font (M2-TEXT-03 — the documented scene-
+// config key): `FontRenderMode::Bitmap` (default) declares from
+// `item.font` with the ink-cell quads; `FontRenderMode::Sdf` declares
+// from `item.sdfFont` with the padded-cell quads (the header's
+// glyph-quad section — the layout and the width are UNCHANGED, the
+// quad covers the field's padded cell).
+[[nodiscard]] inline laige::Status declareText(
+    SpriteBatcher& batcher, const StringTable& table,
+    const TextItem& item) noexcept {
+  // The mode-independent preconditions (first failure wins,
+  // InvalidArgument, no log — the header's failure section): the
+  // string handle is live, the item fields are in domain.
+  if (!table.isValid(item.text) || item.scale < 1 ||
+      item.scale > kTextMaxScale ||
+      (item.maxWidth != 0 &&
+       (item.maxWidth < 1 ||
+        item.maxWidth > static_cast<std::int32_t>(kTextMaxLineWidthPx)))) {
+    return laige::Status::failure(laige::ErrorCode::InvalidArgument);
+  }
+  // The mode selects the scene-owned font (the header's failure
+  // section: a null or stopped one fails — first failure wins, no
+  // log).
+  if (item.mode == FontRenderMode::Sdf) {
+    if (item.sdfFont == nullptr || !item.sdfFont->valid()) {
+      return laige::Status::failure(laige::ErrorCode::InvalidArgument);
+    }
+    return detail::declareTextImpl(
+        batcher, table, item, *item.sdfFont,
+        static_cast<std::int32_t>(item.sdfFont->radius()));
+  }
+  if (item.font == nullptr || !item.font->valid()) {
+    return laige::Status::failure(laige::ErrorCode::InvalidArgument);
+  }
+  return detail::declareTextImpl(batcher, table, item, *item.font, 0);
+}
+
+// ---------------------------------------------------------------------------
+// The atlas upload bytes (the M2-SPRITE-02 bindAtlas / bindSdfAtlas
+// input)
+// ---------------------------------------------------------------------------
+
+namespace detail {
+
+// The shared atlas upload-byte expansion: every texel becomes
+// (255, 255, 255, value) — the white-on-alpha RGBA8 the M2-SPRITE-02
+// `bindAtlas` / `bindSdfAtlas` upload (one call per font per scene
+// load — the SETUP/asset path, before the one-time texture upload,
+// RENDER-004). The M2-SPRITE-02 shader's multiplicative tint then
+// makes the drawn color = tint × the texel's alpha (the header's
+// glyph-quad section — the standard text coloring). O(W·H); no
+// allocation (the caller owns the span — one W·H·4-byte buffer at
+// set-up), no logging, no GL.
 //
 // Fails (no GL work, no log — the precondition contract): a stopped
 // atlas, or `rgba` not exactly `atlasWidth * atlasHeight * 4` bytes →
 // InvalidArgument.
-[[nodiscard]] inline laige::Status expandGlyphAtlasRgba8(
-    const GlyphAtlas& atlas, std::span<std::uint8_t> rgba) noexcept {
+template <typename Atlas>
+[[nodiscard]] inline laige::Status expandGlyphAtlasRgba8Impl(
+    const Atlas& atlas, std::span<std::uint8_t> rgba) noexcept {
   if (!atlas.valid()) {
     return laige::Status::failure(laige::ErrorCode::InvalidArgument);
   }
@@ -860,9 +995,9 @@ struct TextLine {
   if (rgba.size() != need) {
     return laige::Status::failure(laige::ErrorCode::InvalidArgument);
   }
-  const std::span<const std::uint8_t> alpha = atlas.atlas();
+  const std::span<const std::uint8_t> values = atlas.atlas();
   for (std::uint64_t i = 0; i < need / 4; ++i) {
-    const std::uint8_t a = alpha[static_cast<std::size_t>(i)];
+    const std::uint8_t a = values[static_cast<std::size_t>(i)];
     std::uint8_t* px = rgba.data() + i * 4;
     px[0] = 255;
     px[1] = 255;
@@ -870,6 +1005,27 @@ struct TextLine {
     px[3] = a;
   }
   return laige::Status{};
+}
+
+}  // namespace detail
+
+// Expands the 8-bit alpha glyph atlas (M2-TEXT-01) into the
+// white-on-alpha RGBA8 bytes the M2-SPRITE-02 `bindAtlas` uploads
+// (see the shared implementation above — one call per font per scene
+// load, before the one-time texture upload, RENDER-004).
+[[nodiscard]] inline laige::Status expandGlyphAtlasRgba8(
+    const GlyphAtlas& atlas, std::span<std::uint8_t> rgba) noexcept {
+  return detail::expandGlyphAtlasRgba8Impl(atlas, rgba);
+}
+
+// Expands the 8-bit SDF glyph atlas (M2-TEXT-03) into the white-on-
+// alpha RGBA8 bytes the M2-SPRITE-02 `bindSdfAtlas` uploads (the same
+// expansion — the SDF field's value is the texture's alpha channel;
+// the shader's SDF branch thresholds it). One call per font per
+// scene load, before the one-time texture upload (RENDER-004).
+[[nodiscard]] inline laige::Status expandSdfGlyphAtlasRgba8(
+    const SdfGlyphAtlas& atlas, std::span<std::uint8_t> rgba) noexcept {
+  return detail::expandGlyphAtlasRgba8Impl(atlas, rgba);
 }
 
 }  // namespace laige::render

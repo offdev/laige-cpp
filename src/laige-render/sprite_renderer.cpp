@@ -76,11 +76,33 @@ constexpr const char* kVertexShader =
 constexpr const char* kFragmentShader =
     "#version 330 core\n"
     "uniform sampler2D uAtlas;\n"
+    // The SDF mode (M2-TEXT-03): 0.0 = the bitmap path (the alpha is
+    // the texel's own alpha), 1.0 = the SDF glyph atlas (the alpha is
+    // the distance field thresholded below). Per-ATLAS state: set at
+    // the texture bind of each group (the atlas registry carries it),
+    // never per instance (the instance buffer's 52 B layout is
+    // unchanged).
+    "uniform float uSdf;\n"
+    // The SDF threshold in the field's 0..1 domain (the bindSdfAtlas
+    // argument; 0.5 = the 0.5-coverage contour = the 128 byte value).
+    "uniform float uSdfThreshold;\n"
     "in vec2 vUv;\n"
     "in vec4 vTint;\n"
     "out vec4 outColor;\n"
     "void main() {\n"
-    "  outColor = texture(uAtlas, vUv) * vTint;\n"
+    "  vec4 t = texture(uAtlas, vUv);\n"
+    "  float alpha = t.a;\n"
+    "  if (uSdf > 0.5) {\n"
+    // The SDF anti-aliasing: the screen-space derivative band (the
+    // standard SDF rule — the band tracks the field's on-screen slope,
+    // so it is exactly one screen pixel wide at ANY zoom). The floor
+    // is one 8-bit quantization step of the field, 1/255 (the
+    // kSdfMinSpread of the font_sdf.h threshold section).
+    "    float aa = max(length(vec2(dFdx(t.a), dFdy(t.a))),\n"
+    "                   0.00392156862745098f);\n"
+    "    alpha = smoothstep(uSdfThreshold - aa, uSdfThreshold + aa, t.a);\n"
+    "  }\n"
+    "  outColor = vec4(t.rgb, alpha) * vTint;\n"
     "}\n";
 
 // One float in the per-instance staging layout (52 B per instance):
@@ -145,6 +167,12 @@ struct SpriteRenderer::Impl {
     // width/height (w * h * 4 bytes, GL_RGBA8).
     std::uint32_t width{0};
     std::uint32_t height{0};
+    // The SDF mode (M2-TEXT-03): this atlas is a signed distance-field
+    // glyph atlas (font_sdf.h) rather than a bitmap; the shader's
+    // uSdf/uSdfThreshold uniforms are set from these at the texture
+    // bind of each group (the fragment shader's per-atlas state).
+    bool sdf{false};
+    float sdfThreshold{0.5f};
     bool bound{false};
   };
   std::unique_ptr<Atlas[]> atlases;
@@ -160,16 +188,27 @@ struct SpriteRenderer::Impl {
   // pinned by the GLSL layout qualifiers, 1..5).
   int locMatrix{-1};
   int locAtlas{-1};
+  // The SDF mode uniforms (M2-TEXT-03 — per-atlas state, set at the
+  // texture bind of each group; the 0/0.5 defaults are inert: the
+  // fragment shader only reads them when uSdf > 0.5, and the first
+  // group of the first submit always sets them on its bind).
+  int locSdf{-1};
+  int locSdfThreshold{-1};
 
   // The opt-in PRIMITIVES_GENERATED query (the header's Options
   // section: diagnostic mode, zero cost when off).
   bool primitiveQuery{false};
 
   // Per-frame state (reset at the start of every submit; a failed
-  // submit leaves them ZERO).
+  // submit leaves them ZERO). The last-TEXTURE (not last-atlas-id)
+  // tracking: a re-bind on the SAME atlas id (the bindAtlas "last
+  // bind wins" contract) replaces the texture OBJECT — the change
+  // detection must see the new object, or the next frame would draw
+  // the deleted old texture (and publish the old per-atlas SDF state,
+  // M2-TEXT-03) from a stale bind.
   SpriteDrawStats frame{};
-  std::uint32_t lastAtlas{0};
-  bool haveLastAtlas{false};
+  std::uint32_t lastTexture{0};
+  bool haveLastTexture{false};
   BlendMode lastBlend{BlendMode::Alpha};
   bool haveLastBlend{false};
 
@@ -206,6 +245,15 @@ struct SpriteRenderer::Impl {
       program = 0;
     }
   }
+
+  // The shared bind path (the GL texture upload + the registry slot
+  // commit — defined after the struct, below the lifecycle section):
+  // the per-atlas shader state (the SDF mode, M2-TEXT-03) is committed
+  // WITH the texture, so a re-bind replaces both.
+  laige::Status uploadAtlas(std::uint32_t atlasId, std::uint32_t width,
+                            std::uint32_t height,
+                            std::span<const std::uint8_t> rgba, bool sdf,
+                            float sdfThreshold);
 
   ~Impl() { destroy(); }
 };
@@ -394,7 +442,11 @@ laige::Result<SpriteRenderer, laige::ErrorCode> SpriteRenderer::create(
                                                           "uWorldToNdc"));
   impl->locAtlas = static_cast<int>(
       glGetUniformLocation(program, "uAtlas"));
-  if (impl->locMatrix < 0 || impl->locAtlas < 0) {
+  impl->locSdf = static_cast<int>(glGetUniformLocation(program, "uSdf"));
+  impl->locSdfThreshold =
+      static_cast<int>(glGetUniformLocation(program, "uSdfThreshold"));
+  if (impl->locMatrix < 0 || impl->locAtlas < 0 || impl->locSdf < 0 ||
+      impl->locSdfThreshold < 0) {
     return fail("uniform_lookup", glGetError(), nullptr);
   }
 
@@ -481,7 +533,8 @@ laige::Result<SpriteRenderer, laige::ErrorCode> SpriteRenderer::create(
 }
 
 // ------------------------------------------------------------------------
-// bindAtlas — the setup/asset path (never the frame hot path)
+// bindAtlas / bindSdfAtlas — the setup/asset path (never the frame hot
+// path)
 // ------------------------------------------------------------------------
 
 laige::Status SpriteRenderer::bindAtlas(std::uint32_t atlasId,
@@ -505,7 +558,49 @@ laige::Status SpriteRenderer::bindAtlas(std::uint32_t atlasId,
       static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u) {
     return laige::Status(laige::ErrorCode::InvalidArgument);
   }
-  const laige::Status current = i.ctx->makeCurrent();
+  return i.uploadAtlas(atlasId, width, height, rgba, false, 0.5f);
+}
+
+laige::Status SpriteRenderer::bindSdfAtlas(std::uint32_t atlasId,
+                                           std::uint32_t width,
+                                           std::uint32_t height,
+                                           std::span<const std::uint8_t> rgba,
+                                           float threshold) {
+  if (!valid()) {  // the stopped state: impl_ is null
+    return laige::Status(laige::ErrorCode::InvalidArgument);
+  }
+  Impl& i = *impl_;
+  // The SDF threshold domain (the field's 0..1 domain —
+  // font_sdf.h's field section): outside it the shader's smoothstep
+  // band would be degenerate (the precondition contract — no log).
+  if (threshold < 0.0f || threshold > 1.0f) {
+    return laige::Status(laige::ErrorCode::InvalidArgument);
+  }
+  // The argument domain (the bindAtlas check, verbatim).
+  if (atlasId >= i.maxAtlases) {
+    return laige::Status(laige::ErrorCode::InvalidArgument);
+  }
+  if (width < 1 || static_cast<std::uint32_t>(i.maxTextureSize) < width ||
+      height < 1 || static_cast<std::uint32_t>(i.maxTextureSize) < height) {
+    return laige::Status(laige::ErrorCode::InvalidArgument);
+  }
+  if (rgba.size() !=
+      static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u) {
+    return laige::Status(laige::ErrorCode::InvalidArgument);
+  }
+  return i.uploadAtlas(atlasId, width, height, rgba, true, threshold);
+}
+
+// The shared bind path (Impl member — the setup/asset path only): the
+// GL texture upload + the registry slot commit. The atlas's per-frame
+// shader state (the fragment shader's per-atlas SDF mode, M2-TEXT-03)
+// is committed WITH the texture — the submit's texture bind of each
+// group publishes the matching uSdf/uSdfThreshold uniforms from the
+// slot (a re-bind replaces both).
+laige::Status SpriteRenderer::Impl::uploadAtlas(
+    std::uint32_t atlasId, std::uint32_t width, std::uint32_t height,
+    std::span<const std::uint8_t> rgba, bool sdf, float sdfThreshold) {
+  const laige::Status current = ctx->makeCurrent();
   if (current.isError()) {
     return current;
   }
@@ -543,21 +638,25 @@ laige::Status SpriteRenderer::bindAtlas(std::uint32_t atlasId,
   // The last bind wins: replace any previous texture on this id.
   // The M2-SPRITE-04 VRAM estimate tracks the replacement (subtract
   // the old upload, add the new — both exact GL_RGBA8 byte counts).
-  Impl::Atlas& slot = i.atlases[atlasId];
+  // The per-atlas shader state is replaced WITH the texture (a
+  // bitmap re-bind clears the SDF flag and vice versa).
+  Atlas& slot = atlases[atlasId];
   const std::uint64_t newBytes =
       static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) *
       4u;
   if (slot.bound) {
     glDeleteTextures(1, &slot.texture);
-    i.textureMemoryBytes -=
+    textureMemoryBytes -=
         static_cast<std::uint64_t>(slot.width) *
         static_cast<std::uint64_t>(slot.height) * 4u;
   }
   slot.texture = texture;
   slot.width = width;
   slot.height = height;
+  slot.sdf = sdf;
+  slot.sdfThreshold = sdfThreshold;
   slot.bound = true;
-  i.textureMemoryBytes += newBytes;
+  textureMemoryBytes += newBytes;
   return laige::Status{};
 }
 
@@ -731,10 +830,18 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
   }
   std::uint32_t base = 0;
   for (const SpriteBatch& b : batcher.batches()) {
-    if (!i.haveLastAtlas || b.atlasId != i.lastAtlas) {
+    if (!i.haveLastTexture ||
+        i.atlases[b.atlasId].texture != i.lastTexture) {
       glBindTexture(GL_TEXTURE_2D, i.atlases[b.atlasId].texture);
-      i.lastAtlas = b.atlasId;
-      i.haveLastAtlas = true;
+      // The per-atlas SDF state (M2-TEXT-03): the shader's uSdf/
+      // uSdfThreshold uniforms travel WITH the texture bind (a group
+      // draws with the SDF branch iff its atlas was bound through
+      // bindSdfAtlas). The 0/0.5 defaults are never observed: the
+      // first group of the first submit always takes this branch.
+      glUniform1f(i.locSdf, i.atlases[b.atlasId].sdf ? 1.0f : 0.0f);
+      glUniform1f(i.locSdfThreshold, i.atlases[b.atlasId].sdfThreshold);
+      i.lastTexture = i.atlases[b.atlasId].texture;
+      i.haveLastTexture = true;
       i.frame.textureBinds += 1;
     }
     if (!i.haveLastBlend || b.blend != i.lastBlend) {

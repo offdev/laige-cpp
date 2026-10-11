@@ -68,6 +68,18 @@
 // is engine-owned (FR-2.2 / M2-ISO-01), never derived from the
 // projection.
 //
+// The SDF mode (M2-TEXT-03): per-ATLAS state, set at the texture bind
+// of each group from the atlas registry (an atlas bound through
+// `bindSdfAtlas` — a font_sdf.h SDF glyph atlas — draws with the SDF
+// branch, an atlas bound through `bindAtlas` draws with the bitmap
+// branch; the per-instance layout is UNCHANGED — no SDF flag in the
+// 52 B instance). The SDF branch thresholds the field's alpha with
+// alpha = smoothstep(t − aa, t + aa, field/255): `t` is the atlas's
+// threshold (the `bindSdfAtlas` argument), `aa` is the screen-space
+// derivative band (the field's `dFdx`/`dFdy`, floored at one 8-bit
+// quantization step, 1/255 — the band is one screen pixel wide at
+// ANY zoom: the P1 "sharp at any zoom" property of FR-2.8).
+//
 // The GPU's cos/sin (the rotation) is driver-float: bit-exact across
 // runs of the same driver, not across drivers — the golden-image
 // contract (M2-GOLD-01) pins the environment; this step's tests
@@ -149,9 +161,9 @@
 //     maxSprites — a frame above the renderer's budget fails
 //     BudgetExhausted (the batcher's own overflow policy bounds the
 //     frame to ITS budget first);
-//   - bindAtlas is the SETUP/asset path (one call per atlas per
-//     scene load — the asset system streams them later, M3), not a
-//     per-frame call: it creates a GL texture;
+//   - bindAtlas / bindSdfAtlas are the SETUP/asset path (one call
+//     per atlas per scene load — the asset system streams them
+//     later, M3), not a per-frame call: they create a GL texture;
 //   - submit requires the batcher BUILT for the current frame — an
 //     open window with declared items fails InvalidArgument, it is
 //     never drawn as an empty frame (CORE-008);
@@ -332,6 +344,27 @@ class SpriteRenderer {
                                         std::uint32_t width,
                                         std::uint32_t height,
                                         std::span<const std::uint8_t> rgba);
+
+  // Bind one SDF atlas texture (M2-TEXT-03) — the same setup/asset
+  // path as `bindAtlas` (one call per atlas per scene load; the same
+  // GL texture contract: GL_RGBA8, GL_NEAREST, GL_CLAMP_TO_EDGE, the
+  // same argument domains and failure behavior — an invalid
+  // `threshold` is InvalidArgument with no GL work, no logging), with
+  // one extra argument: the SDF threshold in the field's 0..1 domain
+  // (the fragment shader's `uSdfThreshold`; 0.5 = the 0.5-coverage
+  // contour — the documented default). The atlas's bytes are a
+  // font_sdf.h SDF field uploaded as white-on-alpha RGBA8 (the
+  // text_items.h `expandSdfGlyphAtlasRgba8`). Re-binding an id
+  // REPLACES both the texture and the SDF state (the last bind
+  // wins). The per-group SDF branch + threshold travel with the
+  // texture bind in `submit` (the header's shader section).
+  // @budget one-time per atlas: one glTexImage2D (width*height*4 B
+  // upload); no loop, no allocation beyond the texture object.
+  [[nodiscard]] laige::Status bindSdfAtlas(std::uint32_t atlasId,
+                                           std::uint32_t width,
+                                           std::uint32_t height,
+                                           std::span<const std::uint8_t> rgba,
+                                           float threshold);
 
   // The submit stage: draw the batcher's BUILT frame (the frame
   // protocol, the header preamble). Preconditions (checked in order,

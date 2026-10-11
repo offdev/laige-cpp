@@ -647,5 +647,42 @@ that needs a usable OpenGL 3.3 environment and `GTEST_SKIP`s where
 absent). No standalone `budgets.json` entry: the per-frame text cost
 is part of the composite 50k render-CPU budget (M2-PERF-01).
 
-The remaining M2 steps (the UI pass, M2-SCENE-01, M2-PERF-01) land
-in later steps.
+M2-TEXT-03 landed the SDF glyph atlas — the SDF half of FR-2.8:
+`laige::render::SdfGlyphAtlas` (public header
+`include/laige/render/font_sdf.h`, implementation `font_sdf.cpp`)
+converts the same font bytes + glyph range ONCE at scene set-up into
+a fixed-size 8-bit signed distance-field glyph atlas (the Felice &
+Nienhuis 8SDD transform — CORE-014): per glyph, the 1× ink's
+0.5-coverage pixels (alpha > 127) become the inside set of a
+two-pass 8-neighborhood distance transform over the glyph's PADDED
+cell (the ink grown by the radius `r ∈ [1, 16]` on all four sides),
+quantized to `byte = clamp(128 + round(127·d/r), 0, 255)` with d
+positive inside (128 = the contour, exact within `r` px, saturated
+beyond — the documented threshold edge behavior). The metrics are
+the M2-TEXT-01 `GlyphMetrics` unchanged (the text layout is
+identical on both paths — the width match, tolerance 0),
+`GlyphMetrics.atlasX/atlasY` are the padded cell's origin, and the
+atlas is packed shelf-wise, deterministically (same font + options →
+identical bytes — the `font-sdf-determinism` line). `glyph(code)` is
+the same total fallback function as M2-TEXT-01. The text pass
+selects the path per item (`TextItem.mode` + `TextItem.sdfFont`,
+`FontRenderMode` — the documented scene-config key), the SDF quads
+cover the padded cell, and the `SpriteRenderer` gained the per-atlas
+SDF mode: `bindSdfAtlas(id, w, h, rgba, threshold)` uploads the
+field (through `expandSdfGlyphAtlasRgba8`) and the fragment shader's
+SDF branch thresholds it with a screen-space-derivative AA band (one
+screen pixel wide at any zoom — the P1 crispness motivation). No
+standalone `budgets.json` entry (the atlas is built once at set-up;
+the per-frame cost is part of the composite 50k render-CPU budget,
+M2-PERF-01). API contract in
+[docs/api/font_sdf.md](../docs/api/font_sdf.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `font_sdf` —
+the validation matrix, the untrusted-font boundary, the capacity
+guard, the metrics parity + exact width match, the determinism
+contract, the threshold edge behavior against a brute-force
+distance oracle, the fallback, the upload bytes, the zero-alloc
+lookup window, and the offscreen SDF GL smoke that `GTEST_SKIP`s
+where no usable OpenGL 3.3 environment).
+
+The remaining M2 steps (M2-UI-01, M2-SCENE-01, M2-PERF-01) land in
+later steps.
