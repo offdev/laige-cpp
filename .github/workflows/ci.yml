@@ -84,6 +84,19 @@
 # include-lint job is a lint job, not a build, and carries its own
 # timeout-minutes: 5.
 #
+# macOS exception: the two macOS build jobs carry timeout-minutes: 15
+# instead. The shared GitHub macOS runners' tail latency (runner
+# preemption) exceeds the 10-min budget: the M2-UI-01 PR lane (run
+# 38138278150) saw three consecutive 10-min cancellations of the
+# macOS arm64 job (11m25s in Build, 10m18s in Test, 10m32s in Build)
+# while the identical build + test finished in 5m37s on the macOS
+# Intel lane. The 15-min cap gives the shared runners headroom without
+# hiding a real hang (a job that runs 15 min is still well past the
+# 10-min budget and gets investigated). Raised on user decision
+# 2026-10-11; if macOS lanes keep hitting the 15-min wall, the
+# evidence is persistent runner degradation, not a code regression —
+# revisit the budget, never silently lower the cap back.
+#
 # Windows note: CMake's default generator there is the multi-config
 # "Visual Studio 17 2022" generator, which ignores CMAKE_BUILD_TYPE and
 # would build every configuration from the canonical `cmake --build build
@@ -342,7 +355,9 @@ jobs:
   macos-arm64:
     name: macOS arm64 (AppleClang)
     runs-on: macos-15
-    timeout-minutes: 10
+    # The shared macOS runners' tail latency exceeds the 10-min build
+    # budget (the macOS exception, documented in this file's header).
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Configure
@@ -355,7 +370,9 @@ jobs:
   macos-intel:
     name: macOS Intel (AppleClang)
     runs-on: macos-14
-    timeout-minutes: 10
+    # The shared macOS runners' tail latency exceeds the 10-min build
+    # budget (the macOS exception, documented in this file's header).
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Configure

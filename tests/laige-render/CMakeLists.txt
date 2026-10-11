@@ -184,7 +184,25 @@
 # white-on-alpha RGBA8 upload through the M2-SPRITE-02 submit stage:
 # the draw-call count + exact pixel checks against the atlas bytes; the
 # smoke needs a usable OpenGL 3.3 environment and GTEST_SKIPs where
-# absent) — pure data + batcher bookkeeping except the GL smoke.
+# absent) — pure data + batcher bookkeeping except the GL smoke; and
+# the retained UI widget tree (M2-UI-01) — the ADR 0006 widget set
+# (ui_tree_tests.cpp's UiTree* suites: the create validation + the
+# stopped state + the move semantics, the tree CRUD (the seven kinds,
+# the child-list structure, the kind / parent / geometry / slider
+# domain validation, the widget budget failure + one rate-limited
+# warn, the subtree removal (the stale ids, the LIFO slot recycling),
+# the root's non-removability), the layout goldens (the nine-anchor
+# matrix against hand-computed rects, the offsets, the container
+# padding, the list stacking + scroll normalization, the negative
+# rects, the coordinate saturation, the zero-rect-before-layout, the
+# layout idempotence), the focus system (the focusable kinds only,
+# the deterministic tab traversal order, the wrap, the pointer-press
+# focus, the removal clears the focus), the scripted pointer sequences
+# (the enter/leave/press/release transitions, the button click, the
+# slider drag, the input text event, the panel press, the zero-size
+# widgets, the event overflow (the drop count + the warn)), and the
+# 1 000-frame zero-allocation loop (PERF-003)) — pure retained data:
+# no GL calls (the rendering lands with M2-UI-02).
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -212,8 +230,9 @@
 # (`ctest -R tilemap_anim`), the `parallax` entry is the M2-PAR-01
 # Verify command (`ctest -R parallax`), the `particle_render` entry
 # is the M2-PART-02 Verify command (`ctest -R
-# particle_render`), and the `font` entry is the M2-TEXT-01 Verify
-# command (`ctest -R font`), each selecting exactly its suites from
+# particle_render`), the `font` entry is the M2-TEXT-01 Verify command
+# (`ctest -R font`), and the `ui_tree` entry is the M2-UI-01 Verify
+# command (`ctest -R ui_tree`), each selecting exactly its suites from
 # the shared executable. (The unanchored `ctest -R tilemap` regex also
 # selects the `tilemap_anim` entry — the M2-TILE-02 suites run under
 # the M2-TILE-01 command too; that is intended. Likewise the
@@ -240,7 +259,7 @@ add_executable(laige-render_tests
   depth_sort_tests.cpp sprite_batcher_tests.cpp sprite_draw_tests.cpp
   sprite_frames_tests.cpp render_counters_tests.cpp tilemap_tests.cpp
   tilemap_anim_tests.cpp parallax_tests.cpp particle_render_tests.cpp
-  font_tests.cpp text_items_tests.cpp font_sdf_tests.cpp)
+  font_tests.cpp text_items_tests.cpp font_sdf_tests.cpp ui_tree_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -470,6 +489,14 @@ set_tests_properties(font_sdf PROPERTIES
   ENVIRONMENT
   "LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 
+# M2-UI-01: the step's Verify command is `ctest -R ui_tree`. The
+# UiTree* suites are pure retained data (no GL calls, no font asset,
+# no environment variables) — they run in every local tree and in CI.
+# No budget gate: the step's roadmap scope has no standalone
+# budgets.json entry (the per-frame UI cost is part of the composite
+# 50k render-CPU budget, M2-PERF-01).
+add_test(NAME ui_tree COMMAND laige-render_tests --gtest_filter=UiTree*)
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
@@ -511,7 +538,7 @@ if(LAIGE_TSAN)
     iso_depth_key iso_depth_table camera iso_camera projection
     iso_picking depth_sort batcher sprite_draw sprite_frames
     render_counters tilemap tilemap_anim parallax particle_render font
-    text_items font_sdf PROPERTIES
+    text_items font_sdf ui_tree PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()

@@ -28,9 +28,11 @@
 # longer a selector (Linux is verified locally); a PR carrying it gets
 # the no-label treatment.
 #
-# Jobs, runner images, steps, and the 10-minute budget timeout are the
-# same as in ci.yml (see its header for the full matrix documentation
-# and the Windows multi-config note).
+# Jobs, runner images, steps, and the build-budget timeouts are the
+# same as in ci.yml — including the macOS exception (the two macOS
+# jobs carry timeout-minutes: 15, the shared-runners tail latency),
+# documented in ci.yml's header (the full matrix documentation and
+# the Windows multi-config note).
 #
 # Sanitizer lanes (M0-CI-02): the linux-asan (LAIGE_ASAN=ON) and
 # linux-tsan (LAIGE_TSAN=ON) lanes no longer run on PRs (no Linux jobs
@@ -116,7 +118,9 @@ jobs:
     name: macOS arm64 (AppleClang)
     if: contains(github.event.pull_request.labels.*.name, 'ci:macos')
     runs-on: macos-15
-    timeout-minutes: 10
+    # The shared macOS runners' tail latency exceeds the 10-min build
+    # budget (the macOS exception, documented in ci.yml's header).
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Configure
@@ -130,7 +134,9 @@ jobs:
     name: macOS Intel (AppleClang)
     if: contains(github.event.pull_request.labels.*.name, 'ci:macos')
     runs-on: macos-14
-    timeout-minutes: 10
+    # The shared macOS runners' tail latency exceeds the 10-min build
+    # budget (the macOS exception, documented in ci.yml's header).
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Configure
