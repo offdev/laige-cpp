@@ -47,9 +47,11 @@
 // The UI pass's ORDER is the tree's traversal order (preorder,
 // children in insertion order — the M2-UI-01 draw-order contract,
 // RENDER-003): the pass hands the batcher a MONOTONE per-node UI z —
-// the index of the node among the nodes that declare something, in
-// traversal order (a node that declares nothing, culled or not, takes
-// no z). Every declared quad carries `depthKey = the node's z` and
+// the index of the node among the nodes that declare, in traversal
+// order (a culled node, a list, a non-opaque panel, and an input
+// without a default font take no z — a Text widget with empty
+// content still takes one: its declareText succeeds, with no quads).
+// Every declared quad carries `depthKey = the node's z` and
 // `depthOverride = true` (the G-R11 escape hatch: the UI pass is
 // screen-space, there is no isoDepthKey in this pass — the manual UI
 // z is the documented order value, counted + warned at build by the
