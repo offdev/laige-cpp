@@ -710,7 +710,8 @@ routing hook: a hit means the UI consumed the frame's pointer input.
 The tree owns two allocations at `create` (the fixed-capacity widget
 pool — `maxWidgets` INCLUDING the root — and the event array); every
 per-frame path is allocation-free and owner-thread-only. No
-rendering (the UI draw pass lands with M2-UI-02), no simulation
+rendering of its own (the UI draw pass is `ui_render.h`, M2-UI-02),
+no simulation
 coupling (ARCH-009), no standalone `budgets.json` entry (the per-
 frame cost is part of the composite 50k render-CPU budget,
 M2-PERF-01). API contract in
@@ -724,5 +725,43 @@ the focus system, the scripted pointer sequences (the button click,
 the slider drag, the input text, the event overflow), and the 1 000-
 frame zero-allocation loop).
 
-The remaining M2 steps (M2-UI-02, M2-SCENE-01, M2-PERF-01) land in
-later steps.
+M2-UI-02 landed the UI render pass — the draw half of the UI work:
+`declareUi` (public header `include/laige/render/ui_render.h`,
+header-only, no GL) is the screen-space UI pass (FR-2.8: "UI is a
+separate render pass, screen-space" — the identity camera, nothing
+world-space leaks in, RENDER-006). It walks the M2-UI-01 tree's
+laid-out rects in the deterministic traversal order (RENDER-003),
+culls the invisible widgets (the documented simple model: the
+offscreen rule on all four half-open edges + the zero-area rule, and
+the later-opaque-panel occlusion rule — the ADR 0006 occlusion
+model), and declares one M2-SPRITE-02 centered quad per visible
+widget (the seven ADR 0006 kinds — the opaque-panel background, the
+button art + centered label, the text item verbatim with the pass's
+z, the image quad, the list nothing, the slider track + interior-
+only fill, the input's left-aligned content) plus the pass-generated
+text through the M2-TEXT-02 `declareText` path. The UI pass is its
+own `SpriteBatcher` (one batcher per sprite pass, M2-SPRITE-01), its
+quads carry the monotone per-node UI z with `depthOverride = true`
+(the G-R11 escape hatch — counted + warned at build), materialId 0 +
+`BlendMode::Alpha` throughout, and one texture per atlas (the scene
+binds its UI atlas + glyph atlas(es) through the existing
+`bindAtlas` / `bindSdfAtlas`). The GL half is the M2-SPRITE-02
+`SpriteRenderer::submit` with `uiScreenMatrix` (screen px, y down →
+NDC, the column-major identity-camera matrix). No standalone
+`budgets.json` entry (the per-frame UI cost is part of the composite
+50k render-CPU budget, measured with M2-PERF-01). API contract in
+[docs/api/ui_render.md](../docs/api/ui_render.md), tests under
+[tests/laige-render](../tests/laige-render) (CTest entry `ui_render` —
+the identity screen matrix + its out-of-domain fallback, the
+per-widget declaration goldens against the hand-computed layout +
+glyph quads, the culling model (offscreen + occlusion + the
+exceptions), the slider fill rule, the failure paths (first failure
+wins, the partial-state-on-failure precedent), the 1 000-frame
+zero-allocation declare loop, and the golden image fixture
+(`UiRenderSmoke` — the fixed UI scene rendered offscreen through the
+real submit stage, the whole 128×128 frame against a CPU reference
+rasterizer within the documented ± 1 byte tolerance + the exact
+probe pixels; it `GTEST_SKIP`s where no usable OpenGL 3.3
+environment).
+
+The remaining M2 steps (M2-SCENE-01, M2-PERF-01) land in later steps.

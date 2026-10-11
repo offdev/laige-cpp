@@ -5,8 +5,9 @@ pool-backed tree of the ADR 0006 widget set — exactly **panel,
 button, text, image, list, slider, input**, in that canonical order —
 with stable generation-checked widget ids, a per-frame layout pass,
 a focus system, and a per-frame bounded list of pointer events. This
-step is the **retained data only**: no rendering (the draw pass lands
-with M2-UI-02), no simulation coupling (ARCH-009: the tree is
+step is the **retained data only**: no rendering of its own (the
+draw pass is [`ui_render.md`](ui_render.md), M2-UI-02), no
+simulation coupling (ARCH-009: the tree is
 presentation state, owned by the game's UI update, and never mutates
 authoritative state).
 
@@ -139,8 +140,8 @@ chain is safe), exact integer math:
   shorter than its rect never scrolls).
 - Computed coordinates are saturated into `±(2^21 − 1)`
   (`kUiMaxCoordPx`): a node pushed that far offscreen renders nothing
-  (the M2-UI-02 cull), and the saturation keeps the int32 storage
-  exact.
+  (the M2-UI-02 cull — [`ui_render.md`](ui_render.md)), and the
+  saturation keeps the int32 storage exact.
 - A node's rect is **zero until the next `layout()`** — a fresh
   `addChild` and every `setPlacement` zero the node's rect. Zero-rect
   nodes contain no pointer point.

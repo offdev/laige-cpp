@@ -202,7 +202,22 @@
 # slider drag, the input text event, the panel press, the zero-size
 # widgets, the event overflow (the drop count + the warn)), and the
 # 1 000-frame zero-allocation loop (PERF-003)) — pure retained data:
-# no GL calls (the rendering lands with M2-UI-02).
+# no GL calls (the rendering lands with M2-UI-02); and the UI render
+# pass (M2-UI-02) — the screen-space widget quads + text (ui_render_tests.cpp's
+# UiRender* suites: the identity screen matrix + its out-of-domain
+# fallback, the per-widget declaration goldens against the hand-
+# computed layout + glyph quads (the seven ADR 0006 kinds, the group
+# count, the in-group traversal order, the G-R11 override count), the
+# culling model (the offscreen rule on all four edges + the zero-area
+# rule, the later-opaque-panel occlusion rule + its exceptions), the
+# slider fill rule (0 < t < 1 only), the failure paths (first failure
+# wins, the nothing-declared preconditions, the partial-state-on-
+# failure precedent), the 1 000-frame zero-allocation declare loop
+# (PERF-003), and the golden image fixture (UiRenderSmoke: the fixed
+# UI scene rendered offscreen through the M2-SPRITE-02 submit stage,
+# the whole frame against a CPU reference rasterizer within the
+# documented +/- 1 byte tolerance, the exact probe pixels) — pure
+# data + batcher bookkeeping except the GL smoke.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -231,9 +246,10 @@
 # Verify command (`ctest -R parallax`), the `particle_render` entry
 # is the M2-PART-02 Verify command (`ctest -R
 # particle_render`), the `font` entry is the M2-TEXT-01 Verify command
-# (`ctest -R font`), and the `ui_tree` entry is the M2-UI-01 Verify
-# command (`ctest -R ui_tree`), each selecting exactly its suites from
-# the shared executable. (The unanchored `ctest -R tilemap` regex also
+# (`ctest -R font`), the `ui_tree` entry is the M2-UI-01 Verify
+# command (`ctest -R ui_tree`), and the `ui_render` entry is the
+# M2-UI-02 Verify command (`ctest -R ui_render`), each selecting
+# exactly its suites from the shared executable. (The unanchored `ctest -R tilemap` regex also
 # selects the `tilemap_anim` entry — the M2-TILE-02 suites run under
 # the M2-TILE-01 command too; that is intended. Likewise the
 # unanchored `ctest -R particle` regex selects the M2-PART-01
@@ -259,7 +275,8 @@ add_executable(laige-render_tests
   depth_sort_tests.cpp sprite_batcher_tests.cpp sprite_draw_tests.cpp
   sprite_frames_tests.cpp render_counters_tests.cpp tilemap_tests.cpp
   tilemap_anim_tests.cpp parallax_tests.cpp particle_render_tests.cpp
-  font_tests.cpp text_items_tests.cpp font_sdf_tests.cpp ui_tree_tests.cpp)
+  font_tests.cpp text_items_tests.cpp font_sdf_tests.cpp ui_tree_tests.cpp
+  ui_render_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -497,6 +514,23 @@ set_tests_properties(font_sdf PROPERTIES
 # 50k render-CPU budget, M2-PERF-01).
 add_test(NAME ui_tree COMMAND laige-render_tests --gtest_filter=UiTree*)
 
+# M2-UI-02: the step's Verify command is `ctest -R ui_render`. The
+# UiRenderScreenMatrix*/UiRenderDeclare*/UiRenderCull*/UiRenderSlider*/
+# UiRenderFailure*/UiRenderZeroAlloc* suites are pure data + batcher
+# bookkeeping (no GL calls) — they run in every local tree and in CI;
+# the font-backed ones read the committed test font through
+# LAIGE_TEST_FONT_PATH. The UiRenderSmoke suite (the golden image
+# fixture) needs the same usable OpenGL 3.3 environment as the
+# TextSmoke suite (it GTEST_SKIPs where absent — the documented
+# environment contract). No budget gate: the step's roadmap scope has
+# no standalone budgets.json entry (the per-frame UI cost is part of
+# the composite 50k render-CPU budget, M2-PERF-01).
+add_test(NAME ui_render COMMAND laige-render_tests
+         --gtest_filter=UiRenderScreenMatrix.*:UiRenderDeclare.*:UiRenderCull.*:UiRenderSlider.*:UiRenderFailure.*:UiRenderZeroAlloc.*:UiRenderSmoke.*)
+set_tests_properties(ui_render PROPERTIES
+  ENVIRONMENT
+  "LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
@@ -538,7 +572,7 @@ if(LAIGE_TSAN)
     iso_depth_key iso_depth_table camera iso_camera projection
     iso_picking depth_sort batcher sprite_draw sprite_frames
     render_counters tilemap tilemap_anim parallax particle_render font
-    text_items font_sdf ui_tree PROPERTIES
+    text_items font_sdf ui_tree ui_render PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
@@ -560,8 +594,9 @@ if(LAIGE_ASAN)
   # whose suites can create that context instead (gl_context's
   # GlContextSmoke, render_thread's RenderThreadOffscreen, sprite_draw's
   # SpriteDraw{State,Smoke,Pipeline}, render_counters's
-  # RenderCounters{Scene,Cap,Memory}, text_items's TextSmoke, and
-  # font_sdf's FontSdfSmoke suites create the same headless context):
+  # RenderCounters{Scene,Cap,Memory}, text_items's TextSmoke,
+  # font_sdf's FontSdfSmoke, and ui_render's UiRenderSmoke suites
+  # create the same headless context):
   # in-run ASan/UBSan error detection stays fully active (the smoke
   # still performs its GL work under the sanitizer). The font entry is
   # on the list for the same reason since M2-TEXT-03: its `Font*` filter
@@ -576,7 +611,7 @@ if(LAIGE_ASAN)
   # font_sdf), so the replacement environment carries the test-font
   # path as well (harmless on the entries that do not use it).
   set_tests_properties(laige-render_tests gl_context render_thread
-    sprite_draw render_counters text_items font font_sdf PROPERTIES
+    sprite_draw render_counters text_items font font_sdf ui_render PROPERTIES
     ENVIRONMENT
     "ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=${CMAKE_SOURCE_DIR}/asan-reports/asan;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
@@ -638,3 +673,9 @@ set_tests_properties(text_items PROPERTIES TIMEOUT 120)
 # smoke is one 1024x1024 SDF-field upload + one frame + pixel reads,
 # and the zero-alloc loop is 1 000 lookups).
 set_tests_properties(font_sdf PROPERTIES TIMEOUT 120)
+# The `ui_render` entry is the same shape as `text_items`: the golden
+# image fixture's offscreen GL smoke (a 1024x1024 white-on-alpha glyph-
+# atlas upload + a 4x4 UI-atlas upload + one frame + a full 128x128
+# frame readback against the CPU reference) plus the 1 000-frame zero-
+# allocation declare loop.
+set_tests_properties(ui_render PROPERTIES TIMEOUT 120)

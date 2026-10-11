@@ -144,7 +144,8 @@ contract), never to a re-rasterization.
 ## The model (documented units)
 
 All layout values are **SCREEN PIXELS, screen space, y DOWN** (the UI
-pass — the M2-UI-02 identity screen matrix maps them to NDC; nothing
+pass — the M2-UI-02 identity screen matrix
+([`ui_render.md`](ui_render.md)) maps them to NDC; nothing
 world-space leaks in, RENDER-006). `TextItem.scale` is an **INTEGER**
 scale factor in [1, `kTextMaxScale`] (the M2-TEXT-01 "integer scale"
 convention): every metric is multiplied by the scale — exact, no
@@ -379,5 +380,8 @@ laige::render::declareText(batcher, strings, item);  // same width
   quads render through (the white-on-alpha blend, M2-SPRITE-02).
 - [`particle_render.md`](particle_render.md) — the sibling
   render-phase declaration pass (the same batcher pattern).
+- [`ui_render.md`](ui_render.md) — the UI render pass (M2-UI-02)
+  that declares the Text widgets' items through this path and the
+  identity screen matrix the quads draw with.
 - `docs/concepts/coordinates.md` §4.12 + §5 — the text coordinate
   row (screen space, y down).

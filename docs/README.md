@@ -382,6 +382,17 @@ still to land.
    coordinate saturation), the focus system (button / slider /
    input), and the per-frame bounded pointer-event list (the FR-4.4
    UI-first routing hook through `pointerHit`).
+ - [UI render pass](api/ui_render.md) —
+   `laige::render::declareUi` (M2-UI-02, the draw half of the UI
+   work): the screen-space UI pass (the identity camera,
+   `uiScreenMatrix` — nothing world-space leaks in, RENDER-006) that
+   walks the laid-out tree in traversal order, culls the invisible
+   widgets (the offscreen rule + the later-opaque-panel occlusion
+   rule — the documented simple model), and declares one batched
+   quad per visible widget (plus the glyph quads of the text widgets
+   and the pass-generated button labels / input content through
+   `declareText`) into the pass's own `SpriteBatcher` (one texture
+   per atlas, the G-R11 monotone UI z).
 
 ## Guides
 

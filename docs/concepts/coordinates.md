@@ -494,6 +494,32 @@ The UI tree is presentation-only (ARCH-009): it consumes raw
 pointer state (the FR-4.4 hook — `UiPointerState` in the same
 screen px, y down) and never mutates simulation state.
 
+### 4.14 The UI render pass: screen-space quads on the identity camera (M2-UI-02)
+
+The UI render pass ([`ui_render.md`](../api/ui_render.md)) renders
+the M2-UI-01 tree in **SCREEN space, y DOWN** — the separate UI
+render pass of FR-2.8, with an identity camera: no world transform
+leaks in (RENDER-006). `declareUi` walks the laid-out rects in the
+tree's deterministic traversal order, culls the invisible widgets
+(the offscreen rule — zero area or entirely outside the screen rect
+on all four half-open edges — and the occlusion rule — fully
+covered by an opaque panel drawn later in the traversal, the ADR
+0006 occlusion model), and declares one centered M2-SPRITE-02 quad
+per visible widget (`pos = (rectX + rectW/2, rectY + rectH/2)`,
+`scale = (rectW, rectH)`) plus the glyph quads of the text widgets
+and the pass-generated button labels / input content (M2-TEXT-02
+`declareText`). The UI pass is its own `SpriteBatcher`; every quad
+carries the monotone per-node UI z with `depthOverride = true`
+(the G-R11 escape hatch — there is no `isoDepthKey` in this pass),
+materialId 0 + `BlendMode::Alpha`, and one texture per atlas. The
+submit stage draws it with `uiScreenMatrix(width, height)` — the
+identity screen matrix mapping screen px (y down) to NDC:
+`x_ndc = 2·x/width − 1`, `y_ndc = 1 − 2·y/height` (column-major;
+the linear part in columns 0..1, the translation in column 3; the
+top screen edge maps to NDC +1, the bottom to NDC −1). The UI pass
+is presentation-only (ARCH-009): it reads the laid-out tree and
+declares; it never mutates sim state or the tree.
+
 ## 5. Conversion rules (the module boundaries, RENDER-006)
 
 | Conversion | Direction | Owner | Status |
@@ -509,6 +535,7 @@ screen px, y down) and never mutates simulation state.
 | Particle state → sprite items | particle (pos, depth, size, faded tint) → declared sprites (one batch per emitter set, the key from the particle's depth) | `laige-render` (`declareParticles` / `particleDepthToStepHeight` — consumes `ParticleSystem<Backend>::liveParticles()`, read-only after the sim phase, M2-PART-02) | **Shipped (M2-PART-02)** |
 | Text item → glyph quads | string handle + metrics + anchor (screen px, y down) → declared glyph quads (one per ink glyph; the UI z through `depthOverride`; the mode's cell — bitmap ink or SDF padded) | `laige-render` (`measureText` / `declareText` — consumes `GlyphAtlas::glyph` / `SdfGlyphAtlas::glyph` + the string table, M2-TEXT-02/03) | **Shipped (M2-TEXT-02 + M2-TEXT-03)** |
 | UI widget spec → laid-out rect | widget spec (anchor, offsets, size; the parent's content box) → computed rect (screen px, y down; the coordinate saturation; the list stacking + scroll) | `laige-render` (`UiTree::layout` / `UiTree::handlePointer` — the retained tree + pointer hit test, M2-UI-01) | **Shipped (M2-UI-01)** |
+| Laid-out UI widgets → declared quads + screen matrix | laid-out rects (screen px, y down) + traversal order → cull + one centered quad per visible widget (the glyph quads of the text widgets) + the identity screen matrix (screen px → NDC) | `laige-render` (`declareUi` / `uiScreenMatrix` — the screen-space UI pass on the identity camera, M2-UI-02) | **Shipped (M2-UI-02)** |
 
 ### 5.1 The isometric grid picking (M2-ISO-03)
 
@@ -636,6 +663,11 @@ state → same keys → same order, every frame (RENDER-003).
   screen space y down, the nine anchors, the layout pass, the
   focus, the per-frame pointer events, the FR-4.4 routing hook)
   (M2-UI-01).
+- [`api/ui_render.md`](../api/ui_render.md) — the UI render pass
+  contract: `declareUi` + `uiScreenMatrix` (the screen-space UI
+  pass on the identity camera — the culling model, the per-widget
+  quads, the monotone UI z, the screen px → NDC identity matrix)
+  (M2-UI-02).
 - [`api/matrices.md`](../api/matrices.md) — the matrix builders and NDC
   conventions (M2-GL-03).
 - [`decisions/0005-iso-default.md`](../decisions/0005-iso-default.md) —
