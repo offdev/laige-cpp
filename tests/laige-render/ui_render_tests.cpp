@@ -89,6 +89,13 @@ using laige::render::expandGlyphAtlasRgba8;
 using laige::render::uiScreenMatrix;
 using laige::render::kTextMaxScale;
 
+// The house absolute float tolerance (the matrices_tests pattern):
+// an `a * c + b` composition may be contracted to an FMA
+// (AppleClang's default -ffp-contract=fast), which changes the
+// rounding of the last step by at most one ULP of the result's
+// scale — ULP-equality against zero has no such tolerance.
+constexpr float kEps = 1e-6f;
+
 // ---------------------------------------------------------------------------
 // The shared fixtures (the committed test font, the string table, the
 // tree / spec helpers — the text_items_tests pattern)
@@ -383,8 +390,11 @@ TEST(UiRenderScreenMatrix, UiPlaneMapping) {
   EXPECT_FLOAT_EQ(1.0f, m[1].y * 0.0f + m[3].y);
   EXPECT_FLOAT_EQ(1.0f, m[0].x * 1280.0f + m[3].x);
   EXPECT_FLOAT_EQ(-1.0f, m[1].y * 720.0f + m[3].y);
-  EXPECT_FLOAT_EQ(0.0f, m[0].x * 640.0f + m[3].x);
-  EXPECT_FLOAT_EQ(0.0f, m[1].y * 360.0f + m[3].y);
+  // The exact center mapping is 0; the composition's last step
+  // (mul+add, possibly an FMA) carries at most a 1e-8-scale
+  // residual — the absolute tolerance, not ULP equality at zero.
+  EXPECT_NEAR(0.0f, m[0].x * 640.0f + m[3].x, kEps);
+  EXPECT_NEAR(0.0f, m[1].y * 360.0f + m[3].y, kEps);
 }
 
 TEST(UiRenderScreenMatrix, OutOfDomainIsIdentity) {
