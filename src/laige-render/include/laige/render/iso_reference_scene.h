@@ -1033,7 +1033,7 @@ readIsoReferenceScene(std::span<const std::uint8_t> bytes) noexcept {
         !(l.uv.v0 < l.uv.v1) || !std::isfinite(l.scrollSpeed.x) ||
         !std::isfinite(l.scrollSpeed.y) || l.blend > 1u ||
         l.scrollMode > 1u || l.enabled > 1u ||
-        l.depthLayer < static_cast<std::int32_t>(-kIsoDepthLayerBias) ||
+        l.depthLayer < -static_cast<std::int32_t>(kIsoDepthLayerBias) ||
         l.depthLayer > kIsoDepthLayerMax) {
       return bad();
     }
