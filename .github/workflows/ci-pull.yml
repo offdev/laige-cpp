@@ -1,44 +1,39 @@
 # ============================================================================
-# Laige CI — P0 platform matrix on pull request (M0-CI-01)
+# Laige CI — full P0 platform matrix on pull request (M0-CI-01,
+# re-baselined 2026-10-11)
 #
 # Roadmap:  roadmap/M0-foundations.md, step M0-CI-01
 # PRD refs: §6 (P0 platforms, AC-6.1), §14 (cadence), §8.1 (build budget)
 #
-# Cadence: the PR lane covers only the P0 OSes that cannot be verified
-# locally — Windows and macOS. Linux is verified on the developer
-# machine with the canonical trees from
-# docs/getting-started/building.md (including the LAIGE_ASAN=ON and
-# LAIGE_TSAN=ON instrumented trees), so this workflow carries no Linux
-# jobs. Merges to master run the FULL matrix — every P0 OS/variant job,
-# both sanitizer lanes, and all tooling jobs — via ci.yml, which is
-# the "all per merge" half of the PRD §14 cadence.
+# Cadence (PRD §14, as amended 2026-10-11 — "test everything, all the
+# time"): this workflow runs on EVERY pull request, and ALL eleven jobs
+# run — unconditionally:
 #
-# Label selector (apply at most one per PR; if both are present
-# ci:macos wins, so exactly one P0 OS always runs):
+#   * the five P0 OS jobs (linux-gcc, linux-clang, windows-msvc,
+#     macos-arm64, macos-intel);
+#   * the two sanitizer lanes (linux-asan, linux-tsan; M0-CI-02);
+#   * the four platform-independent tooling jobs (include-lint,
+#     determinism-lint, api-manifest, detcheck).
 #
-#   ci:macos    → macos-arm64 + macos-intel jobs
-#   ci:windows  → windows-msvc job
-#   (no label)  → no P0 OS build; the platform-independent tooling jobs
-#                 (include-lint, determinism-lint, api-manifest,
-#                 detcheck) still run on every PR.
-#
-# NOTE: the labels must be created once in the repository settings
-# (GitHub does not create labels from workflows). A PR with no ci:*
-# label simply runs the tooling jobs. The former ci:linux label is no
-# longer a selector (Linux is verified locally); a PR carrying it gets
-# the no-label treatment.
+# The former ci:windows / ci:macos label selector is REMOVED: no job is
+# gated on a label and no test is ever skipped. Linux is no longer
+# "verified locally only" — it runs in the PR lane exactly as in the
+# merge lane (ci.yml), so a PR that breaks a Linux tree fails in the
+# PR lane before it can reach master. Local verification of the Linux
+# trees before pushing remains a developer obligation (AGENTS.md,
+# section 5: the local Linux test gate).
 #
 # Jobs, runner images, steps, and the build-budget timeouts are the
 # same as in ci.yml — including the macOS exception (the two macOS
 # jobs carry timeout-minutes: 15, the shared-runners tail latency),
 # documented in ci.yml's header (the full matrix documentation and
-# the Windows multi-config note).
-#
-# Sanitizer lanes (M0-CI-02): the linux-asan (LAIGE_ASAN=ON) and
-# linux-tsan (LAIGE_TSAN=ON) lanes no longer run on PRs (no Linux jobs
-# in the PR lane); they run on every merge via ci.yml. See the ci.yml
-# header for the lane semantics (fatal sanitizer reports, report
-# archiving, toolchain choice).
+# the Windows multi-config note). The one difference: the sanitizer
+# jobs upload no artifacts here. The pull_request GITHUB_TOKEN is
+# read-only (contents:read for same-repo PRs, read-only for fork PRs —
+# Actions cannot grant actions:write on this event), so the report
+# files are not archived; the tee'd ctest output keeps every sanitizer
+# report in the job log, which is enough to diagnose a red PR. The
+# merge lane (ci.yml) still archives them as artifacts.
 #
 # Fuzz lane (PRD §14 "every commit (bounded)"; M0-TEST-01): no separate
 # fuzz job — the `fuzz_json_parse` ctest entry (1000 deterministic runs
@@ -47,11 +42,10 @@
 # conventions: docs/testing.md.
 #
 # Include-graph lint (M0-CI-03; NFR-8.11, NFR-8.13): the `include-lint`
-# job runs on EVERY pull request, independent of the ci:* label selector
-# — it is a platform-independent repository check (Python 3 stdlib only),
-# not a P0 OS build, so it does not interact with the "one P0 OS per PR"
-# cadence. It enforces the PRD §10.1 include rules over src/** (laige-core
-# depends on nothing internal; arrows only downward in the module stack;
+# job runs on EVERY pull request — it is a platform-independent
+# repository check (Python 3 stdlib only), not a P0 OS build. It
+# enforces the PRD §10.1 include rules over src/** (laige-core depends
+# on nothing internal; arrows only downward in the module stack;
 # vendored deps only included from their deps.lock `owner`) and reports
 # the vendored-dependency count, which must stay ≤ 10 (PRD §11).
 #
@@ -73,11 +67,138 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  linux-gcc:
+    name: Linux x64 (g++)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
+        # CMakeLists.txt) needs only the X11 *headers* at configure time
+        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
+        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
+        # packages are the RUNTIME GL stack for the headless GL smoke
+        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
+        # GLAD load them by dlopen at runtime) (M2-GL-01).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (unit)
+        run: ctest --test-dir build --output-on-failure
+
+  linux-clang:
+    name: Linux x64 (clang++)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
+        # CMakeLists.txt) needs only the X11 *headers* at configure time
+        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
+        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
+        # packages are the RUNTIME GL stack for the headless GL smoke
+        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
+        # GLAD load them by dlopen at runtime) (M2-GL-01).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (unit)
+        run: ctest --test-dir build --output-on-failure
+
+  linux-asan:
+    name: Linux x64 ASan+UBSan (clang++)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # No artifact step here: the pull_request token is read-only (see
+    # the header). The tee keeps every report in the job log.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
+        # CMakeLists.txt) needs only the X11 *headers* at configure time
+        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
+        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
+        # packages are the RUNTIME GL stack for the headless GL smoke
+        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
+        # GLAD load them by dlopen at runtime) (M2-GL-01).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure (ASan+UBSan)
+        run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_ASAN=ON
+      - name: Build (ASan+UBSan)
+        run: cmake --build build-asan -j
+      - name: Test (unit, ASan+UBSan)
+        # Every sanitizer report is fatal to the test process: ASan via
+        # abort_on_error=1:halt_on_error=1 here, UBSan via
+        # -fno-sanitize-recover=all (wired by CMake). detect_leaks=1 (the
+        # Linux default) is stated explicitly.
+        env:
+          ASAN_OPTIONS: "abort_on_error=1:halt_on_error=1:detect_leaks=1"
+        run: |
+          set -o pipefail
+          ctest --test-dir build-asan --output-on-failure 2>&1 | tee asan-ctest-output.txt
+
+  linux-tsan:
+    name: Linux x64 TSan (clang++)
+    # 30 min (not 10): TSan is the slowest lane by design (~5-15x
+    # instrumentation overhead), and the suite has grown past the old
+    # margin (the documented rationale, with the evidence runs, is in
+    # the linux-tsan job of ci.yml).
+    # No artifact step here: the pull_request token is read-only (see
+    # the header). The tee keeps the race report in the job log.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
+        # CMakeLists.txt) needs only the X11 *headers* at configure time
+        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
+        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
+        # packages are the RUNTIME GL stack for the headless GL smoke
+        # (Mesa surfaceless EGL + llvmpipe software GL; the engine and
+        # GLAD load them by dlopen at runtime) (M2-GL-01).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure (TSan)
+        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_TSAN=ON
+      - name: Build (TSan)
+        run: cmake --build build-tsan -j
+      - name: Test (unit, TSan)
+        # TSAN_OPTIONS=halt_on_error=1 is applied per test by tests/
+        # (M0-BUILD-01), so the first data race report kills the test
+        # process and ctest fails. The race report is printed to stderr
+        # and captured by the tee below.
+        run: |
+          set -o pipefail
+          ctest --test-dir build-tsan --output-on-failure 2>&1 | tee tsan-ctest-output.txt
+
   windows-msvc:
     name: Windows x64 (MSVC 2022)
-    if: >-
-      contains(github.event.pull_request.labels.*.name, 'ci:windows') &&
-      !contains(github.event.pull_request.labels.*.name, 'ci:macos')
     runs-on: windows-2022
     timeout-minutes: 10
     steps:
@@ -116,7 +237,6 @@ jobs:
 
   macos-arm64:
     name: macOS arm64 (AppleClang)
-    if: contains(github.event.pull_request.labels.*.name, 'ci:macos')
     runs-on: macos-15
     # The shared macOS runners' tail latency exceeds the 10-min build
     # budget (the macOS exception, documented in ci.yml's header).
@@ -132,7 +252,6 @@ jobs:
 
   macos-intel:
     name: macOS Intel (AppleClang)
-    if: contains(github.event.pull_request.labels.*.name, 'ci:macos')
     runs-on: macos-14
     # The shared macOS runners' tail latency exceeds the 10-min build
     # budget (the macOS exception, documented in ci.yml's header).
@@ -147,12 +266,12 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   include-lint:
-    # M0-CI-03: runs on every PR (no ci:* condition). Platform-independent:
-    # the lint is Python 3 stdlib only (no setup step needed) and checks
-    # the repository layout, not a compiler-specific build. The CTest
+    # M0-CI-03: runs on every PR. Platform-independent: the lint is
+    # Python 3 stdlib only (no setup step needed) and checks the
+    # repository layout, not a compiler-specific build. The CTest
     # suite runs it against the real tree in every P0 job as well
     # (tests/tools, test `include-lint-real-tree`), so a broken include
-    # fails even a PR that selects another P0 OS.
+    # fails every job, not just this one.
     name: Include-graph lint + dependency count
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -162,16 +281,15 @@ jobs:
         run: python3 tools/laige-include-lint
 
   determinism-lint:
-    # M1-DET-01: runs on every PR (no ci:* condition). The sim-source
-    # determinism scan (the second half of the G-R8 guarantee; the
-    # first is the compile-time trait checked by the
-    # trait_compile_* CTest fixtures): forbids raw float/double and
-    # unordered containers in src/laige-sim/**, with per-line
-    # LAIGE-DETERM-EXCEPTION markers as the documented false-positive
-    # policy (docs/concepts/determinism.md). Platform-independent:
-    # Python 3 stdlib only, no setup step. The CTest suite runs it
-    # against fixture trees and the real tree in every P0 job as well
-    # (tests/tools, tests `determinism-lint-*`).
+    # M1-DET-01: runs on every PR. The sim-source determinism scan
+    # (the second half of the G-R8 guarantee; the first is the
+    # compile-time trait checked by the trait_compile_* CTest
+    # fixtures): forbids raw float/double and unordered containers in
+    # src/laige-sim/**, with per-line LAIGE-DETERM-EXCEPTION markers as
+    # the documented false-positive policy (docs/concepts/determinism.md).
+    # Platform-independent: Python 3 stdlib only, no setup step. The
+    # CTest suite runs it against fixture trees and the real tree in
+    # every P0 job as well (tests/tools, tests `determinism-lint-*`).
     name: Determinism source scan (sim module)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -181,13 +299,13 @@ jobs:
         run: python3 tools/laige-determinism-lint
 
   api-manifest:
-    # M0-TOOL-01: runs on every PR (no ci:* condition). The checked-in
-    # public API manifest (laige-api.json, PRD §9.4, NFR-13.1) must stay
-    # in sync with the public headers: this job regenerates it from the
-    # current headers with laige-api-scanner and fails on any drift, so
-    # adding a public symbol without regenerating the manifest fails CI.
-    # The CTest suite runs the same check against the real tree in every
-    # P0 job as well (tests/api, test `api-real-tree`).
+    # M0-TOOL-01: runs on every PR. The checked-in public API manifest
+    # (laige-api.json, PRD §9.4, NFR-13.1) must stay in sync with the
+    # public headers: this job regenerates it from the current headers
+    # with laige-api-scanner and fails on any drift, so adding a public
+    # symbol without regenerating the manifest fails CI. The CTest
+    # suite runs the same check against the real tree in every P0 job
+    # as well (tests/api, test `api-real-tree`).
     name: Public API manifest drift
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -215,19 +333,15 @@ jobs:
         run: ./build/bin/laige-api-scanner --root . --check laige-api.json
 
   detcheck:
-    # M1-DET-04: runs on every PR (no ci:* condition). The determinism
-    # checker (FR-11.5): the built-in synthetic scenario self-check,
-    # then the M1-SAMPLE-01 hello scenario asserted against the
-    # committed per-tick hash baselines (samples/hello/baselines/) on
-    # BOTH SimMath backends (fixed_point_16_16, float_pinned_32 — ADR
-    # 0002) with `hello --expect` (the laige-replay --expect contract:
-    # 0 match, 1 first divergence, 2 baseline read/contract error).
-    # The PR's P0 OS job's ctest repeats the same baseline assertion on
-    # its own platform (tests/sample: hello_baseline_fpx /
-    # hello_baseline_fp32); this tooling job guarantees the check runs
-    # on every PR, including ones labelled for non-Linux P0 OSes. The
-    # full two-configuration matrix (g++ vs clang++, Debug+ASan vs
-    # Release) runs on merges in the detcheck job of ci.yml.
+    # M1-DET-04: runs on every PR. The determinism checker (FR-11.5):
+    # the built-in synthetic scenario self-check, then the M1-SAMPLE-01
+    # hello scenario asserted against the committed per-tick hash
+    # baselines (samples/hello/baselines/) on BOTH SimMath backends
+    # (fixed_point_16_16, float_pinned_32 — ADR 0002) with `hello
+    # --expect` (the laige-replay --expect contract: 0 match, 1 first
+    # divergence, 2 baseline read/contract error). The full
+    # two-configuration matrix (g++ vs clang++, Debug+ASan vs Release)
+    # runs on merges in the detcheck job of ci.yml.
     name: Determinism check
     runs-on: ubuntu-24.04
     timeout-minutes: 10

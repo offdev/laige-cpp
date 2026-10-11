@@ -1327,8 +1327,11 @@ TEST(UiRenderSmoke, GoldenUiScene) {
   // The opaque solid texels over the opaque clear: src.a = 1 -> the
   // texel's color, exactly (the GL 8-bit conversion of the exact
   // blend result).
+  // (12, 12) is inside the panel but outside the button (16, 16, 20 x
+  // 14, declared later, drawn on top by the monotone-z contract): the
+  // button's green uv covers every panel pixel with x, y >= 16.
   {
-    const std::array<std::uint8_t, 4> p = readScreen(20, 20);  // the P red
+    const std::array<std::uint8_t, 4> p = readScreen(12, 12);  // the P red
     EXPECT_EQ(255u, p[0]);
     EXPECT_EQ(0u, p[1]);
     EXPECT_EQ(0u, p[2]);
