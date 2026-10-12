@@ -377,8 +377,13 @@ fields `programChanges`, `uploadBytes`, `renderTargetBytes`, the
 G-R2 `drawCallCapExceeded` flag (+ the totals' `capExceededFrames`),
 and the `textureMemoryBytes()` VRAM estimate. The composite 50k
 render-CPU budget (PRD §8.1) is measured with this stage at
-M2-PERF-01; there is no standalone budgets.json entry here (the sort
-cost is the `depth_sort_10k` budget — M2-SORT-01).
+M2-PERF-01 (the laige-bench `render-50k` suite: the submit stage's
+offscreen render sits OUTSIDE the measured batch-stage CPU window,
+and the frame's draw-call count — this stage's `frameStats.drawCalls`,
+world pass + UI pass — is the `sprites_50k_draw_calls` budget:
+`docs/benchmarks/baselines/m2-render-50k.md`); there is no standalone
+budgets.json entry here (the sort cost is the `depth_sort_10k` budget —
+M2-SORT-01).
 
 Traps:
 

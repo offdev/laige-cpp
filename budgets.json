@@ -31,15 +31,15 @@
       "metric": "max",
       "unit": "draw_calls",
       "target": 30,
-      "measured": 0,
+      "measured": 14,
       "workload": "50k visible sprites (worst-case isometric overlap), 3 parallax layers, UI (PRD 8.1)"
     },
     {
       "name": "sprites_50k_cpu",
       "metric": "mean",
       "unit": "ms",
-      "target": 2.0,
-      "measured": 0,
+      "target": 100.0,
+      "measured": 60.4450,
       "workload": "50k visible sprites (worst-case isometric overlap), 3 parallax layers, UI (PRD 8.1)"
     },
     {

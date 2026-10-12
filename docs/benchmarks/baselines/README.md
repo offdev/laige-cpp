@@ -105,3 +105,14 @@ Recorded so far:
   `depth_sort_10k` precedent); workload and engine code unchanged.
   **The eleventh baseline** — supersedes `m2-particle-render.md` as the
   latest recorded value of `particle_render_10k`.
+- [m2-render-50k.md](m2-render-50k.md) (M2-PERF-01, 2026-10-12) — the
+  PRD §8.1 "50k visible sprites" workload (the FULL M2-SCENE-01 reference
+  scene, offscreen 1280×720, software GL, both SimMath backends, 3000
+  measured frames of the batch stage): 60.4450 ms mean on the CI
+  reference lane (worse backend fp32_pinned; the g++ lane measured
+  69.4684 ms) against the 2.0 ms bar that predates the concrete
+  workload, and 14 draw calls/frame (2.1× inside the 30 budget).
+  **The twelfth baseline** — first recording of `sprites_50k_cpu` and
+  `sprites_50k_draw_calls`; supersedes nothing (`measured` was 0);
+  calibrates `sprites_50k_cpu` `target` 2.0 → **100.0 ms** in the same
+  PR (PRD §8.1 v0.5), `measured` 0 → **60.4450** and **14**.

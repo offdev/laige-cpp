@@ -10,18 +10,22 @@
 # budgetCheck) and prints the AGENTS 12 report. Gated with the test
 # suite like tools/fuzz: a library-only build does not need it.
 #
-# Suites: `synthetic` (the M0 harness stand-in — laige-core only) and
+# Suites: `synthetic` (the M0 harness stand-in — laige-core only),
 # `sim-tick` (the M1-BENCH-01 PRD 8.1 workload — drives the laige-sim
 # World/systems/GameLoop: 10k entities, 2k dynamic bodies, 60 Hz,
-# BenchMove + BenchHash systems, both SimMath backends).
+# BenchMove + BenchHash systems, both SimMath backends), and
+# `render-50k` (the M2-PERF-01 PRD 8.1 "50k visible sprites" workload —
+# the FULL M2-SCENE-01 reference scene rendered offscreen through the
+# batcher + submit stages, both SimMath backends).
 
 add_executable(laige-bench laige-bench.cpp)
 laige_apply_engine_policy(laige-bench)
-# The sim-tick suite carries deterministic sim math (the BenchMove
-# systems run on the SimMath op surface) — the ADR 0002 pinned flag
-# set applies to the TU exactly as to every sim target.
+# The sim-tick and render-50k suites carry deterministic sim math
+# (the BenchMove systems and the reference scene's fixed-point depth
+# keys run on the SimMath op surface) — the ADR 0002 pinned flag set
+# applies to the TU exactly as to every sim target.
 laige_apply_simmath_policy(laige-bench)
-target_link_libraries(laige-bench PRIVATE laige-core laige-sim)
+target_link_libraries(laige-bench PRIVATE laige-core laige-sim laige-render)
 
 # The report's "build" context field records the build type (AGENTS 12);
 # CMake stamps it so the binary does not have to guess.
@@ -76,6 +80,44 @@ if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set_tests_properties(laige_bench_sim_tick_fpx16
                        laige_bench_sim_tick_fp32
     PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json")
+endif()
+
+# The M2-PERF-01 CI gate: the FULL M2-SCENE-01 reference scene (the
+# PRD 8.1 "50k visible sprites" workload) rendered offscreen at the
+# M2-GOLD-01 reference resolution, both SimMath backends, in the
+# canonical 3000-run / 1000-warmup shape, checked against BOTH PRD
+# 8.1 budgets: the frame's draw-call count (max <= 30) and the
+# batch-stage CPU (mean <= 2.0 ms) — the suite's zero-allocation
+# assertion (M1-ALLOC-01 extended to the batcher) aborts the run on
+# the first allocating frame (exit 1, CORE-008). Platform scope as the
+# sim-tick gate: the absolute targets are calibrated on the CI
+# reference machine (methodology §5 — the P0 Linux jobs, ubuntu-
+# 24.04); the entry is Linux-only because the suite needs an
+# offscreen GL 3.3 context (the CI's Mesa surfaceless EGL + llvmpipe
+# stack, M2-GL-01) and there is no all-platform smoke: the macOS
+# runners have no usable GL (the GL smokes' documented SKIP) and the
+# workload's 4000 x 116k-quad renders would not fit the other lanes'
+# time budgets. Excluded from the sanitizer trees: instrumentation
+# inflates the absolute cost (the m1-profiler-cost precedent). The
+# 1800 s timeout bounds 4000 offscreen frames of the ~116k-item frame
+# with wide margin (shared-runner variance — the M2-GL-02 3000-frame
+# entry's 600 s shape is a small scene; this one is the §8.1 worst
+# case, 116k quads per frame on software GL).
+if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_test(NAME laige_bench_render_50k_fpx16
+           COMMAND laige-bench --suite=render-50k --math=fixed_point_16_16
+                                 --runs=3000 --warmup=1000
+                                 --budget=sprites_50k_draw_calls
+                                 --budget=sprites_50k_cpu)
+  add_test(NAME laige_bench_render_50k_fp32
+           COMMAND laige-bench --suite=render-50k --math=float_pinned_32
+                                 --runs=3000 --warmup=1000
+                                 --budget=sprites_50k_draw_calls
+                                 --budget=sprites_50k_cpu)
+  set_tests_properties(laige_bench_render_50k_fpx16
+                       laige_bench_render_50k_fp32
+    PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
+               TIMEOUT 1800)
 endif()
 
 # All-platform sim-tick smoke (no budget gate): the sim-tick workload
