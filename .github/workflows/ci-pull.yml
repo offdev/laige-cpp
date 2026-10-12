@@ -24,8 +24,9 @@
 # section 5: the local Linux test gate).
 #
 # Jobs, runner images, steps, and the build-budget timeouts are the
-# same as in ci.yml — including the macOS exception (the two macOS
-# jobs carry timeout-minutes: 15, the shared-runners tail latency)
+# same as in ci.yml — including the macOS exceptions (macOS arm64
+# carries timeout-minutes: 20, macOS Intel 15 — the shared-runners
+# tail latency)
 # and the Linux exception (the two Linux build jobs carry
 # timeout-minutes: 45, M2-PERF-01's render-50k gate), both documented
 # in ci.yml's header (the full matrix documentation and the Windows
@@ -248,7 +249,12 @@ jobs:
     runs-on: macos-15
     # The shared macOS runners' tail latency exceeds the 10-min build
     # budget (the macOS exception, documented in ci.yml's header).
-    timeout-minutes: 15
+    # 15 -> 20: this PR's run 38245828701 (2026-10-12) hit the 15-min
+    # cap on all three attempts — each attempt finished its full
+    # build + the 122/122 ctest suite at 15:00-15:10 and the cap
+    # fired seconds before the job's final cleanup (the identical
+    # macOS Intel job finished in 7:50 on the same run).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Configure
