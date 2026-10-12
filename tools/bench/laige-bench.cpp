@@ -651,7 +651,10 @@ bool render50SetupImpl(const Config& cfg, Render50State<Backend>& st) {
     {
       laige::render::SpriteRenderer::Options o{};
       o.maxInstances = kRender50UiCapacity;
-      o.maxAtlases = 1u;
+      // The scene's sparse atlas-id plan (0..8 world, 100 widget,
+      // 101 font — iso_reference_scene.h): the registry's domain is
+      // [0, maxAtlases), so the UI pass must cover id 100.
+      o.maxAtlases = laige::render::kIsoRefSceneUiFontAtlas + 1u;
       auto r = laige::render::SpriteRenderer::create(st.ctx, o);
       if (!r.ok()) render50Fail("the UI renderer create failed");
       st.uiRenderer = std::make_unique<laige::render::SpriteRenderer>(
