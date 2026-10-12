@@ -15,7 +15,8 @@
 // and the pass/fail reports are printed; a failed check exits
 // non-zero so the command is CI-gateable (PRD 8.1 policy: a budget
 // regression fails CI). `--math` selects the SimMath backend (ADR
-// 0002) the `sim-tick` suite runs on; the other suites ignore it.
+// 0002) the `sim-tick` and `render-50k` suites run on; the other
+// suites ignore it.
 //
 // Exit codes:
 //   0  ok (and every budget check passed, when --budget was given)
@@ -46,6 +47,38 @@
 //               the presentation snapshot (M1-LOOP-02) is NOT part of
 //               it — presentation is separate from the authoritative
 //               tick by ARCH-009.
+//   render-50k   M2-PERF-01's PRD 8.1 "50k visible sprites" workload:
+//               the FULL M2-SCENE-01 reference scene (50 000 sprites,
+//               65 536 terrain tiles, 3 parallax layers, 8 particle
+//               emitters, 2 UI widgets) rendered OFFSCREEN on a
+//               1280 x 720 headless FBO (the M2-GOLD-01 reference
+//               resolution), both SimMath backends (--math). One
+//               measured iteration = one frame: the sim-side pacing
+//               (one particle update per frame, OUTSIDE the measured
+//               window — the sim tick is the `sim_tick` budget's
+//               territory, ARCH-002), then the measured window =
+//               the frame's batch stage (world beginFrame +
+//               declareIsoReferenceScene + build, UI beginFrame +
+//               declareUi + build), then the submit stage renders the
+//               built frame offscreen (world pass first, UI pass on
+//               top — the engine's frame order). The window's CPU
+//               time is the `sprites_50k_cpu` sample (mean); the
+//               frame's draw-call count (both passes' frameStats
+//               drawCalls — one instanced draw per group, RENDER-001)
+//               is the `sprites_50k_draw_calls` sample (max). The
+//               allocation watch (M1-ALLOC-01 extended to the
+//               batcher) arms around every measured window: a window
+//               with a nonzero count aborts the run (the first
+//               offending site, the G-R1 per-tick assertion's shape —
+//               the batch stage MUST allocate nothing, FR-2.2/
+//               PERF-003); the driver's own GL work sits outside the
+//               window (like the logging facade's emit — the
+//               counting backend's attribution contract). On a host
+//               without an offscreen GL 3.3 context the suite runs
+//               CPU-ONLY: the window + zero-allocation still measure,
+//               the draw-call histogram stays empty (a named check
+//               against it fails NO_SAMPLES, loud per CORE-008).
+//               Its baseline: docs/benchmarks/baselines/m2-render-50k.md.
 //
 // The synthetic suite is a deterministic, allocation-free stand-in
 // workload; the sim-tick suite is deterministic too (fixed seed
@@ -66,8 +99,15 @@
 #include <utility>
 #include <vector>
 
+#include "laige/alloc_watch.h"
 #include "laige/budget_harness.h"
 #include "laige/errors.h"
+#include "laige/render/gl_context.h"
+#include "laige/render/iso_camera.h"
+#include "laige/render/iso_reference_scene.h"
+#include "laige/render/sprite_batcher.h"
+#include "laige/render/sprite_renderer.h"
+#include "laige/render/ui_render.h"
 #include "laige/result.h"
 #include "laige/sim/component.h"  // LAIGE_COMPONENT
 #include "laige/sim/determinism.h"  // LAIGE_DETERMINISM_SAFE
@@ -427,6 +467,382 @@ void simTickTeardown() {
   g_simTick.reset();  // releases schedule + world + the state
 }
 
+// --- The render-50k suite (M2-PERF-01; PRD 8.1 "50k visible sprites") -------
+
+// The workload constants (CORE-005, named — the PRD §8.1 reference
+// values and the M2-SCENE-01 scene shape):
+//   Full variant       the §8.1 workload scene (M2-SCENE-01: 50 000
+//                      sprites, 65 536 tiles, 3 parallax layers,
+//                      8 emitters, 2 UI widgets);
+//   1280 x 720         the M2-GOLD-01 reference resolution — the
+//                      offscreen FBO size;
+//   0x1F055EED         the repo-wide test-seed convention (docs/
+//                      testing.md §4; methodology §6);
+//   1 / 512            the Dimetric2To1 NDC scale (matrices.h): the
+//                      scene's 256-tile ground spans 512·k NDC, so
+//                      k = 1/512 fits the ground to the screen width
+//                      exactly (dyadic — exactly representable);
+//   64                the UI batcher's capacity (the scene's 2 widget
+//                      quads + margin — the M2-SCENE-01 ui-pass shape);
+//   16 x 16           the solid atlases' texel size (the scene carries
+//                      no image data — the GL smoke tests' solidAtlas
+//                      convention; the setup path only).
+constexpr std::int32_t kRender50Width = 1280;   // the M2-GOLD-01 reference
+constexpr std::int32_t kRender50Height = 720;   // resolution (FBO size)
+constexpr std::uint32_t kRender50UiCapacity = 64;
+constexpr std::uint32_t kRender50AtlasTexels = 16;
+constexpr float kRender50CameraScale = 1.0f / 512.0f;
+constexpr std::uint32_t kRender50Seed = 0x1F055EED;
+
+// The suite's per-run state, per SimMath backend (the world is a
+// backend template — the sim-tick state's bool-dispatch shape folded
+// into two typed states). The setup path performs the workload's
+// allocations (the world, the batchers, the renderer's instance
+// buffer, the GL resources); every frame after setup allocates
+// NOTHING in the measured window (the allocation watch makes that a
+// property, not a claim — the sim-tick G-R1 precedent).
+template <typename Backend>
+struct Render50State {
+  laige::render::IsoReferenceSceneWorld<Backend> world;
+  // The GL resources live AFTER the context in declaration order only
+  // so the REVERSED destruction order destroys them first (the
+  // renderer holds a non-owning context view — sprite_renderer.h
+  // Ownership).
+  laige::render::GlContext ctx;
+  std::unique_ptr<laige::render::SpriteBatcher> worldBatcher;
+  std::unique_ptr<laige::render::SpriteBatcher> uiBatcher;
+  std::unique_ptr<laige::render::SpriteRenderer> worldRenderer;
+  std::unique_ptr<laige::render::SpriteRenderer> uiRenderer;
+  laige::render::IsoCamera camera;
+  laige::render::Mat4 worldToNdc{};  // built once (the static camera)
+  bool glAvailable = true;  // false: CPU-only mode (no offscreen GL)
+};
+
+Render50State<laige::sim::Fpx16_16> g_render50Fpx;
+Render50State<laige::sim::Fp32Pinned> g_render50Fp32;
+bool g_render50FpxActive = false;
+
+// The suite's second quantities (the file header): the batch-stage
+// CPU window (ms) and the frame's draw-call count (world + UI pass).
+// Both are capacity-runs rolling windows recorded on EVERY iteration
+// (warmup included) — the window holds exactly the measured region's
+// last `runs` samples (the Histogram's drop-oldest contract). Created
+// in setup (Histogram has no default constructor — the fixed capacity
+// IS the configuration).
+struct Render50Histograms {
+  std::unique_ptr<laige::Histogram> cpu;
+  std::unique_ptr<laige::Histogram> drawCalls;
+};
+Render50Histograms g_render50Hists;
+
+// The Suite table's histogramFor hook (below): the suite-owned
+// histogram for a budget name this suite records.
+const laige::Histogram* render50HistogramFor(std::string_view name) {
+  if (name == "sprites_50k_cpu") return g_render50Hists.cpu.get();
+  if (name == "sprites_50k_draw_calls")
+    return g_render50Hists.drawCalls.get();
+  return nullptr;
+}
+
+// Loud benchmark failure (the simTickFail precedent): the workload's
+// contract broke (a failed declare/build/submit, a batch-stage
+// allocation). Exit 1 — distinct from the budget-check 2.
+[[noreturn]] void render50Fail(const std::string& what) {
+  std::fprintf(stderr, "laige-bench: render-50k failed: %s\n",
+               what.c_str());
+  std::fflush(stderr);
+  std::exit(1);
+}
+
+// One solid 16x16 RGBA8 atlas (deterministic per-id color — the
+// content is irrelevant to the budget: the frame's cost is a function
+// of the quad count, not the texels).
+std::vector<std::uint8_t> render50SolidAtlas(std::uint32_t id) {
+  std::vector<std::uint8_t> d(kRender50AtlasTexels * kRender50AtlasTexels *
+                              4u);
+  const std::uint8_t r = static_cast<std::uint8_t>(10 + 37 * id);
+  const std::uint8_t g = static_cast<std::uint8_t>(20 + 53 * id);
+  const std::uint8_t b = static_cast<std::uint8_t>(30 + 91 * id);
+  for (std::size_t i = 0; i < d.size(); i += 4) {
+    d[i + 0] = r;
+    d[i + 1] = g;
+    d[i + 2] = b;
+    d[i + 3] = 255;
+  }
+  return d;
+}
+
+template <typename Backend>
+bool render50SetupImpl(const Config& cfg, Render50State<Backend>& st) {
+  // The §8.1 workload scene (M2-SCENE-01, the repo-wide seed).
+  const laige::render::IsoReferenceScene scene =
+      laige::render::buildIsoReferenceScene(kRender50Seed,
+                                            laige::render::IsoRefSceneVariant::Full);
+  auto worldResult = laige::render::loadIsoReferenceScene<Backend>(scene);
+  if (!worldResult.ok()) {
+    render50Fail(std::string("loadIsoReferenceScene failed: ") +
+                 laige::errorName(worldResult.error()));
+  }
+  st.world = std::move(worldResult).takeValue();
+  if (!st.world.valid()) {
+    render50Fail("the loaded world is stopped");
+  }
+  // The UI tree lays out ONCE (the scene's 2 widgets are static —
+  // declareUi requires the layout; the scene test's setup shape).
+  if (!st.world.ui().layout().ok()) {
+    render50Fail("the UI tree layout failed");
+  }
+
+  // The world batcher: the scene's worst-case frame count (50k sprites
+  // + 65k tiles + 4 quads per parallax layer) PLUS the particle pool's
+  // live cap (the header's frame-budget contract).
+  const std::uint32_t worldCapacity =
+      st.world.worstCaseFrameCount() + st.world.particles().maxParticles();
+  {
+    laige::render::SpriteBatcher::Options o{};
+    o.maxSprites = worldCapacity;
+    auto r = laige::render::SpriteBatcher::create(o);
+    if (!r.ok()) render50Fail("the world batcher create failed");
+    st.worldBatcher =
+        std::make_unique<laige::render::SpriteBatcher>(std::move(r).takeValue());
+  }
+  {
+    laige::render::SpriteBatcher::Options o{};
+    o.maxSprites = kRender50UiCapacity;
+    auto r = laige::render::SpriteBatcher::create(o);
+    if (!r.ok()) render50Fail("the UI batcher create failed");
+    st.uiBatcher =
+        std::make_unique<laige::render::SpriteBatcher>(std::move(r).takeValue());
+  }
+
+  // The offscreen GL 3.3 context (the CI headless mechanism — Mesa
+  // surfaceless EGL, M2-GL-01). A host without it runs CPU-ONLY
+  // (loud, the suite header's contract): the batch-stage window and
+  // the zero-allocation still measure; the draw-call histogram stays
+  // empty.
+  auto cr = laige::render::GlContext::createHeadless(
+      kRender50Width, kRender50Height);
+  if (cr.ok()) {
+    st.ctx = std::move(cr).takeValue();
+    // The submit stages: one per pass. The world pass carries the
+    // scene's 9 atlases (0..8, the atlas-id plan); the UI pass its
+    // widget atlas (100). maxDrawCalls stays the documented 64 (2x
+    // the scene's worst-case frame draw calls — no G-R2 warn fires).
+    {
+      laige::render::SpriteRenderer::Options o{};
+      o.maxInstances = worldCapacity;
+      o.maxAtlases = laige::render::kIsoRefSceneParticleAtlas + 1u;
+      auto r = laige::render::SpriteRenderer::create(st.ctx, o);
+      if (!r.ok()) render50Fail("the world renderer create failed");
+      st.worldRenderer = std::make_unique<laige::render::SpriteRenderer>(
+          std::move(r).takeValue());
+      for (std::uint32_t id = laige::render::kIsoRefSceneBgAtlas;
+           id <= laige::render::kIsoRefSceneParticleAtlas; ++id) {
+        const std::vector<std::uint8_t> atlas = render50SolidAtlas(id);
+        if (!st.worldRenderer
+                 ->bindAtlas(id, kRender50AtlasTexels, kRender50AtlasTexels,
+                             atlas)
+                 .ok()) {
+          render50Fail("bindAtlas failed for the world atlas " +
+                       std::to_string(id));
+        }
+      }
+    }
+    {
+      laige::render::SpriteRenderer::Options o{};
+      o.maxInstances = kRender50UiCapacity;
+      o.maxAtlases = 1u;
+      auto r = laige::render::SpriteRenderer::create(st.ctx, o);
+      if (!r.ok()) render50Fail("the UI renderer create failed");
+      st.uiRenderer = std::make_unique<laige::render::SpriteRenderer>(
+          std::move(r).takeValue());
+      const std::vector<std::uint8_t> atlas =
+          render50SolidAtlas(laige::render::kIsoRefSceneUiWidgetAtlas);
+      if (!st.uiRenderer
+               ->bindAtlas(laige::render::kIsoRefSceneUiWidgetAtlas,
+                           kRender50AtlasTexels, kRender50AtlasTexels,
+                           atlas)
+               .ok()) {
+        render50Fail("bindAtlas failed for the UI widget atlas");
+      }
+    }
+  } else {
+    st.glAvailable = false;
+    std::fprintf(stderr,
+                 "laige-bench: render-50k: no offscreen GL 3.3 context (%s) "
+                 "— running CPU-only (the draw-call budget is NOT measured)\n",
+                 laige::errorText(cr.error()));
+    std::fflush(stderr);
+  }
+
+  // The static camera: the Dimetric2To1 preset (ADR 0005 default)
+  // centered on the ground's 256 x 256 grid center; the matrix is
+  // built ONCE (the camera never moves — "once per frame change",
+  // iso_camera.h). The parallax declare's camera position is the
+  // camera's ground position (the two agree: the screen center).
+  laige::render::IsoCameraOptions camOpts{};
+  camOpts.camera.position = glm::vec3{128.0f, 128.0f, 0.0f};
+  camOpts.camera.target = glm::vec3{128.0f, 128.0f, -1.0f};
+  camOpts.preset = laige::render::IsoPreset{
+      laige::render::IsoPresetKind::Dimetric2To1, kRender50CameraScale, {}};
+  auto cam = laige::render::IsoCamera::create(camOpts);
+  if (!cam.ok()) {
+    render50Fail(std::string("IsoCamera::create failed: ") +
+                 laige::errorName(cam.error()));
+  }
+  st.camera = std::move(cam).takeValue();
+  st.worldToNdc = st.camera.matrix();
+
+  // The suite's histograms (capacity = runs: every measured sample is
+  // kept — the no-truncation contract).
+  g_render50Hists.cpu =
+      std::make_unique<laige::Histogram>(laige::Histogram::Options{cfg.runs});
+  g_render50Hists.drawCalls =
+      std::make_unique<laige::Histogram>(laige::Histogram::Options{cfg.runs});
+  return true;
+}
+
+bool render50Setup(const Config& cfg) {
+  if (cfg.mathFpx16) {
+    g_render50FpxActive = true;
+    return render50SetupImpl<laige::sim::Fpx16_16>(cfg, g_render50Fpx);
+  }
+  g_render50FpxActive = false;
+  return render50SetupImpl<laige::sim::Fp32Pinned>(cfg, g_render50Fp32);
+}
+
+// One measured iteration = one offscreen frame (the suite header):
+// the sim-side pacing (OUTSIDE the window), the measured batch-stage
+// window, the zero-allocation read, then the submit stage's offscreen
+// render (OUTSIDE the window — its cost is the frame protocol's
+// separate phase, RENDER-005's CPU/GPU split; the M2-PROF-01
+// profiler measures it, not this budget).
+template <typename Backend>
+void render50IterationImpl(Render50State<Backend>& st) {
+  // The sim-side pacing: one particle update per frame (ARCH-002:
+  // the sim advances in whole ticks; at the workload's 60 Hz frame
+  // cadence that is one tick per frame). OUTSIDE the measured window
+  // (the sim tick is the `sim_tick` budget's territory).
+  st.world.particles().update();
+
+  const laige::render::Vec2 cameraPos{128.0f, 128.0f};  // static camera
+
+  // The measured window: the frame's batch stage (both passes).
+  // The allocation watch arms around it (M1-ALLOC-01 extended to the
+  // batcher — the G-R1 per-tick assertion's shape): a window with a
+  // nonzero count is a contract violation, not a measurement.
+  laige::allocWatchArm();
+  laige::TimeIt timer;
+  st.worldBatcher->beginFrame();
+  const laige::Status d = laige::render::declareIsoReferenceScene<Backend>(
+      st.world, *st.worldBatcher, cameraPos);
+  if (!d.ok()) {
+    render50Fail(std::string("declareIsoReferenceScene failed: ") +
+                 laige::errorName(d.error()));
+  }
+  const laige::Status wb = st.worldBatcher->build();
+  if (!wb.ok()) {
+    render50Fail(std::string("the world batcher build failed: ") +
+                 laige::errorName(wb.error()));
+  }
+  st.uiBatcher->beginFrame();
+  laige::render::UiDeclareOptions uiOpts{};  // no default font (the scene's
+                                             // label-less world pass)
+  const laige::Status u = laige::render::declareUi(
+      *st.uiBatcher, st.world.strings(), st.world.ui(), uiOpts);
+  if (!u.ok()) {
+    render50Fail(std::string("declareUi failed: ") +
+                 laige::errorName(u.error()));
+  }
+  const laige::Status ub = st.uiBatcher->build();
+  if (!ub.ok()) {
+    render50Fail(std::string("the UI batcher build failed: ") +
+                 laige::errorName(ub.error()));
+  }
+  const double windowMs = timer.elapsedMs();
+  const laige::AllocWatchReading reading = laige::allocWatchRead();
+  if (laige::allocWatchLive() && reading.allocs != 0u) {
+    render50Fail("the batch stage allocated " +
+                 std::to_string(reading.allocs) +
+                 " heap block(s) this frame (first site " +
+                 (reading.firstSite != nullptr ? "captured" : "unknown") +
+                 ") — FR-2.2 zero-allocation contract");
+  }
+  g_render50Hists.cpu->record(windowMs);
+
+  // The submit stage: the offscreen render of the built frame (the
+  // frame order: world pass, then the UI pass on top). The draw-call
+  // count is the engine's own bookkeeping (RENDER-001 — one instanced
+  // draw per (atlas, material, blend) group per pass).
+  if (st.glAvailable) {
+    const laige::Status ws =
+        st.worldRenderer->submit(*st.worldBatcher, st.worldToNdc);
+    if (!ws.ok()) {
+      render50Fail(std::string("the world submit failed: ") +
+                   laige::errorName(ws.error()));
+    }
+    const laige::Status us = st.uiRenderer->submit(
+        *st.uiBatcher,
+        laige::render::uiScreenMatrix(kRender50Width, kRender50Height));
+    if (!us.ok()) {
+      render50Fail(std::string("the UI submit failed: ") +
+                   laige::errorName(us.error()));
+    }
+    const std::uint32_t draws =
+        st.worldRenderer->frameStats().drawCalls +
+        st.uiRenderer->frameStats().drawCalls;
+    g_render50Hists.drawCalls->record(static_cast<double>(draws));
+  }
+}
+
+void render50Iteration() {
+  if (g_render50FpxActive) {
+    render50IterationImpl<laige::sim::Fpx16_16>(g_render50Fpx);
+  } else {
+    render50IterationImpl<laige::sim::Fp32Pinned>(g_render50Fp32);
+  }
+}
+
+template <typename Backend>
+void render50TeardownImpl(const Render50State<Backend>& st, const char* name) {
+  const laige::HistogramStats cpu = g_render50Hists.cpu->stats();
+  std::uint32_t drawsMax = 0;
+  if (st.glAvailable) {
+    drawsMax =
+        static_cast<std::uint32_t>(g_render50Hists.drawCalls->stats().max);
+  }
+  // The machine-greppable identity line (the sim-tick fingerprint
+  // precedent): the workload shape + the run's measured extremes.
+  std::printf(
+      "render-50k: backend=%s variant=full sprites=%llu tiles=%llu "
+      "parallax=%llu emitters=%llu ui_widgets=%llu resolution=%ux%u "
+      "mode=%s draw_calls=%u frames=%llu cpu_min_ms=%.6f cpu_max_ms=%.6f\n",
+      name,
+      static_cast<unsigned long long>(st.world.scene().spriteCount),
+      static_cast<unsigned long long>(st.world.scene().tileCount),
+      static_cast<unsigned long long>(st.world.scene().parallaxCount),
+      static_cast<unsigned long long>(st.world.scene().emitterCount),
+      static_cast<unsigned long long>(st.world.scene().uiWidgetCount),
+      kRender50Width, kRender50Height,
+      st.glAvailable ? "gl" : "cpu",
+      drawsMax,
+      static_cast<unsigned long long>(cpu.n),
+      cpu.min, cpu.max);
+  std::fflush(stdout);
+  // Ordered teardown (CONC-006): the renderers (they hold context
+  // views) before the batchers and the context; the world (no GL)
+  // last. The state's member declaration order guarantees the
+  // reverse-destruction order above on scope exit.
+}
+
+void render50Teardown() {
+  if (g_render50FpxActive) {
+    render50TeardownImpl(g_render50Fpx, "fixed_point_16_16");
+  } else {
+    render50TeardownImpl(g_render50Fp32, "float_pinned_32");
+  }
+}
+
 // --- The suite table ---------------------------------------------------------
 
 struct Suite {
@@ -435,6 +851,14 @@ struct Suite {
   bool (*setup)(const Config&);  // nullptr: no setup (stateless suite)
   void (*iteration)();
   void (*teardown)();  // nullptr: no teardown
+  // The suite-owned histogram for a budget name the suite records
+  // (the render-50k suite measures two quantities per frame — the
+  // batch-stage CPU window and the frame's draw-call count — that the
+  // one generic timer cannot carry): a `--budget=<name>` check against
+  // one of these uses the returned histogram instead of the generic
+  // iteration-timer histogram. nullptr = no suite histograms.
+  const laige::Histogram* (*histogramFor)(std::string_view budgetName) =
+      nullptr;
 };
 
 const Suite kSuites[] = {
@@ -448,6 +872,15 @@ const Suite kSuites[] = {
      "(state hash) — the M1-BENCH-01 workload, both SimMath backends "
      "(--math)",
      simTickSetup, simTickIteration, simTickTeardown},
+    {"render-50k",
+     "PRD 8.1 50k visible sprites: the FULL M2-SCENE-01 reference "
+     "scene (50k sprites, 65k tiles, 3 parallax layers, particles, "
+     "UI) rendered offscreen at 1280x720 — the batch-stage CPU "
+     "(sprites_50k_cpu) + the frame's draw calls "
+     "(sprites_50k_draw_calls) + the batcher zero-allocation "
+     "assertion; both SimMath backends (--math)",
+     render50Setup, render50Iteration, render50Teardown,
+     render50HistogramFor},
 };
 
 bool parseUint(std::string_view text, std::uint64_t& out) {
@@ -686,6 +1119,15 @@ int main(int argc, char** argv) {
         return 1;
       }
 
+      // The histogram the check evaluates: the suite's own for a
+      // budget name it records (the render-50k suite's CPU-window and
+      // draw-call quantities), the generic timer histogram otherwise.
+      const laige::Histogram* checked = &histogram;
+      if (suite->histogramFor != nullptr) {
+        const laige::Histogram* own = suite->histogramFor(name);
+        if (own != nullptr) checked = own;
+      }
+
       BudgetReportContext ctx;
       ctx.workload = entry->workload.c_str();
       ctx.build = build.c_str();
@@ -693,7 +1135,7 @@ int main(int argc, char** argv) {
       ctx.warmup = static_cast<std::uint32_t>(cfg.warmup);
 
       const laige::BudgetCheckResult check =
-          laige::budgetCheck(*entry, histogram, ctx);
+          laige::budgetCheck(*entry, *checked, ctx);
       output += "\n";
       output += check.report;
       if (!check.passed) exitCode = 2;
