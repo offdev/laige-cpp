@@ -85,7 +85,13 @@
 # so a job (and therefore the whole matrix, which runs the jobs in
 # parallel) longer than the budget fails instead of dragging on. The
 # include-lint job is a lint job, not a build, and carries its own
-# timeout-minutes: 5.
+# timeout-minutes: 5. Two documented exceptions carry a wider cap: the
+# two macOS build jobs (15, below) and the two Linux build jobs (45 —
+# M2-PERF-01's render-50k gate renders 4000 offscreen frames of the
+# ~116k-item reference scene in software GL on this machine's
+# llvmpipe stack; estimated ~15-25 min on the reference lane from the
+# local canonical-tree CPU window (~50 ms/frame at -O0) and the lane's
+# recorded 1.9-2.3x CPU factor, plus the submit stage).
 #
 # macOS exception: the two macOS build jobs carry timeout-minutes: 15
 # instead. The shared GitHub macOS runners' tail latency (runner
@@ -153,7 +159,14 @@ jobs:
   linux-gcc:
     name: Linux x64 (g++)
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # 45 instead of the 10-min build budget: M2-PERF-01's render-50k
+    # gate renders 4000 offscreen frames of the ~116k-item reference
+    # scene in software GL (this job's Test step) — estimated ~15-25
+    # min on the reference lane from the local canonical-tree CPU
+    # window (~50 ms/frame at -O0) and the lane's recorded 1.9-2.3x
+    # CPU factor (m2-particle-render-budget-rebaseline.md), plus the
+    # llvmpipe submit stage. See the header's Linux exception.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Install GLFW X11 headers (laige-render)
@@ -180,7 +193,10 @@ jobs:
   linux-clang:
     name: Linux x64 (clang++)
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # 45 instead of the 10-min build budget: M2-PERF-01's render-50k
+    # gate (this job's Test step) — see the linux-gcc note and the
+    # header's Linux exception.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Install GLFW X11 headers (laige-render)
