@@ -236,9 +236,13 @@ roadmap's Verify clause in executable form.
   integer ops; the UV rects are the world's 4 precomputed values). The
   declare is one component of the §8.1 "50k sprites ... <= 2 ms CPU"
   composite budget — M2-PERF-01 measures the whole frame (tile quads
-  included), not this step alone. The zero-allocation property is
-  asserted by `IsoReferenceSceneZeroAlloc` (1 000 frames, both
-  backends — the sanitizer trees' instrumentation is the check there).
+  included), not this step alone (the laige-bench `render-50k` suite:
+  `docs/benchmarks/baselines/m2-render-50k.md`). The zero-allocation
+  property is asserted by `IsoReferenceSceneZeroAlloc` (1 000 frames,
+  both backends — the sanitizer trees' instrumentation is the check
+  there) and again, per frame, inside the render-50k gate's measured
+  window (M1-ALLOC-01 extended to the batcher — a window with a
+  nonzero count aborts the run).
 
 ## Misuse warnings
 

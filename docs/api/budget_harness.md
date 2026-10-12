@@ -46,18 +46,28 @@ The end-to-end form is the tool:
                        [--report=<path>] [--list]
 ```
 
-- `--suite` — required; `synthetic` (the M0 harness stand-in) or
+- `--suite` — required; `synthetic` (the M0 harness stand-in),
   `sim-tick` (the M1-BENCH-01 PRD §8.1 workload: 10k entities, 2k
   dynamic bodies, 60 Hz, movement + per-tick state hash — its baseline:
-  `docs/benchmarks/baselines/m1-sim-tick.md`). `--list` prints the
+  `docs/benchmarks/baselines/m1-sim-tick.md`), or `render-50k`
+  (the M2-PERF-01 PRD §8.1 "50k visible sprites" workload: the FULL
+  M2-SCENE-01 reference scene rendered offscreen at 1280x720, both
+  SimMath backends — its baseline:
+  `docs/benchmarks/baselines/m2-render-50k.md`). `--list` prints the
   suite table.
-- `--budget` — **repeatable**: one run checks every named budget against
-  the same histogram (each entry's `metric` picks its statistic),
-  printing one report per entry. A duplicate name is a usage error.
-  The M1 gate form: `--budget=sim_tick_avg --budget=sim_tick_p99`.
-- `--math` — the SimMath backend (ADR 0002) the `sim-tick` suite runs
-  on; `fixed_point_16_16` (the default) or `float_pinned_32`. Other
-  suites ignore it.
+- `--budget` — **repeatable**: one run checks every named budget (each
+  entry's `metric` picks its statistic), printing one report per
+  entry. A duplicate name is a usage error. Each named budget is
+  checked against the histogram its quantity was recorded into: the
+  generic iteration-timer histogram, except for a name a suite
+  records itself — the render-50k suite records the batch-stage CPU
+  window and the frame's draw-call count into two of its own
+  (`sprites_50k_cpu` and `sprites_50k_draw_calls`). The M1 gate form:
+  `--budget=sim_tick_avg --budget=sim_tick_p99`; the M2 gate form:
+  `--budget=sprites_50k_draw_calls --budget=sprites_50k_cpu`.
+- `--math` — the SimMath backend (ADR 0002) the `sim-tick` and
+  `render-50k` suites run on; `fixed_point_16_16` (the default) or
+  `float_pinned_32`. Other suites ignore it.
 - `--budgets` — the budgets file (default: `$LAIGE_BUDGETS_PATH`, then
   `budgets.json` in the working directory — the ctest gate entries set
   the env var to the repo root).
@@ -65,7 +75,9 @@ The end-to-end form is the tool:
 
 Exit code 0 on pass, 2 on a failed budget check (any one of the named
 budgets failing fails the run — PRD 8.1 policy: a budget regression
-fails CI), 1 on usage/load errors.
+fails CI), 1 on usage/load errors or a broken workload contract
+(the render-50k suite's zero-allocation assertion, a failed
+declare/build/submit — the loud `simTickFail` shape).
 
 ## `laige::Histogram`
 
@@ -232,12 +244,18 @@ is smaller than the run and then claiming "all samples"; using
 ## Determinism
 
 The harness measures wall-clock durations: it is *not* deterministic
-simulation state and plays no part in replay/lockstep (ARCH-010). Both
-suites are deterministic by construction, which is what makes their
-baselines reproducible: `synthetic` (fixed LCG constants — Marsaglia
-2003 — no RNG, no allocation; `docs/benchmarks/baselines/m0-synthetic.md`,
-M0-EXIT-01) and `sim-tick` (fixed seed `0x1F055EED`, deterministic
-index-derived initial state, no randomness in the measured path — the
-run's `final_hash` line is a bit-identical fingerprint across runs,
-build types, and compilers per the ADR 0002 scope;
-`docs/benchmarks/baselines/m1-sim-tick.md`, M1-BENCH-01).
+simulation state and plays no part in replay/lockstep (ARCH-010). All
+three suites are deterministic by construction, which is what makes
+their baselines reproducible: `synthetic` (fixed LCG constants —
+Marsaglia 2003 — no RNG, no allocation;
+`docs/benchmarks/baselines/m0-synthetic.md`, M0-EXIT-01), `sim-tick`
+(fixed seed `0x1F055EED`, deterministic index-derived initial state,
+no randomness in the measured path — the run's `final_hash` line is a
+bit-identical fingerprint across runs, build types, and compilers per
+the ADR 0002 scope; `docs/benchmarks/baselines/m1-sim-tick.md`,
+M1-BENCH-01), and `render-50k` (the FULL M2-SCENE-01 reference scene at
+fixed seed `0x1F055EED`, static camera, one particle update per frame —
+the scene's group structure is bit-identical per M2-SCENE-01, so the
+run's `draw_calls` line is a bit-identical fingerprint across runs,
+build types, and compilers;
+`docs/benchmarks/baselines/m2-render-50k.md`, M2-PERF-01).

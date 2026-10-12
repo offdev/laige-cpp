@@ -190,9 +190,11 @@ depth overrides counted + warned).
 - **Budget:** the step has no standalone `budgets.json` entry — the
   sort cost is the M2-SORT-01 `depth_sort_10k` budget (10k keys sorted
   mean ≤ 1.0 ms, 4.4× inside), and the composite 50k render-CPU budget
-  (2 ms, PRD §8.1 `sprites_50k_cpu`) is measured when the submit stage
-  lands (M2-PERF-01). The grouping adds O(n log G) — G ≪ n in every
-  realistic scene (the 50k-stress budget caps draw calls at 30).
+  (PRD §8.1 `sprites_50k_cpu`) is measured by the laige-bench
+  `render-50k` suite (M2-PERF-01:
+  `docs/benchmarks/baselines/m2-render-50k.md`). The grouping adds
+  O(n log G) — G ≪ n in every realistic scene (the 50k-stress budget
+  caps draw calls at 30).
 - **Call site:** once per frame per sprite pass, in the render phase
   (the frame pipeline's cull/batch stage) — never per sprite, never in
   the simulation tick (ARCH-002).
