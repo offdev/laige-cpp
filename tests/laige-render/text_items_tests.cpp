@@ -335,6 +335,25 @@ TEST(TextStringTable, MoveSemantics) {
   EXPECT_EQ(4u, static_cast<std::uint32_t>(b.text(ref).size()));
 }
 
+// The move ASSIGNMENT (the M2-SCENE-01 scene loader's pattern —
+// `world.strings_ = std::move(result).takeValue()`): the storage
+// moves into the target, the target keeps the strings, and the
+// source is stopped.
+TEST(TextStringTable, MoveAssignment) {
+  auto r = StringTable::create(StringTable::Options{4, 16});
+  ASSERT_TRUE(r.ok());
+  StringTable src = std::move(r).takeValue();
+  StringRef ref = internText(src, "move");
+  StringTable dst;
+  ASSERT_FALSE(dst.valid());
+  dst = std::move(src);
+  EXPECT_FALSE(src.valid());        // moved-from: stopped
+  EXPECT_TRUE(dst.valid());
+  ASSERT_TRUE(dst.isValid(ref));
+  EXPECT_EQ(4u, static_cast<std::uint32_t>(dst.text(ref).size()));
+  EXPECT_EQ(1u, dst.count());
+}
+
 // ---------------------------------------------------------------------------
 // measureText — the width goldens (the M2-TEXT-01 measured metrics at
 // 16 px: space adv 4, M adv 12, a adv 8, W adv 14, . adv 4)

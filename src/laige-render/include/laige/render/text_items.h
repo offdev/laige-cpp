@@ -411,7 +411,20 @@ class StringTable {
   }
   StringTable& operator=(StringTable&& o) noexcept {
     if (this != &o) {
-      *this = StringTable(std::move(o));
+      // The member moves, applied in place (the move-constructor's
+      // body — routing through a temporary would recurse into this
+      // operator again). The moved-from source is stopped (the house
+      // pattern).
+      maxStrings_ = o.maxStrings_;
+      maxCodePoints_ = o.maxCodePoints_;
+      count_ = o.count_;
+      stored_ = o.stored_;
+      headers_ = std::move(o.headers_);
+      pool_ = std::move(o.pool_);
+      o.maxStrings_ = 0;
+      o.maxCodePoints_ = 0;
+      o.count_ = 0;
+      o.stored_ = 0;
     }
     return *this;
   }

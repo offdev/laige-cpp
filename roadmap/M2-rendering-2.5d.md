@@ -424,7 +424,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
 
 ## Reference scene & performance acceptance
 
-- [ ] **M2-SCENE-01 · Reference isometric scene generator**
+- [x] **M2-SCENE-01 · Reference isometric scene generator**
   - **Refs:** PRD §4 (reference scene for all visual/perf tests), §8.1
   - **Depends:** M2-TILE-01, M2-SPRITE-01, M2-PART-01, M2-UI-01
   - **Scope:**
@@ -433,6 +433,36 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     - Also emits a small 1k-sprite variant for fast unit tests.
   - **Verify:** tool runs in < 5 s; two invocations with the same seed produce byte-identical output (tested); scene loads and batches without error.
   - **Size:** ~250 lines + tests
+  - **Shipped:** M2-SCENE-01 (`laige/render/iso_reference_scene.h`,
+    header-only, no GL calls): `buildIsoReferenceScene(seed,
+    variant)` is the deterministic worst-case scene builder (the
+    50k-sprite §8.1 Full variant + the 1k-sprite Small variant —
+    256x256 / 32x32 stepped-terrain grids of uniform-height
+    plateaus, sprites standing on their PRNG-chosen tiles at exact
+    2^-16 positions, 3 preset-factor parallax layers, 8 continuous
+    emitters, a 2-widget UI on the 1280x720 reference screen);
+    same seed, same bytes, every build and P0 platform (ARCH-010 —
+    Prng substreams + the exact dyadic position scale, no
+    FMA-susceptible composition). The scene serializes to a
+    versioned little-endian binary (the reader treats the bytes as
+    untrusted input — full domain validation + exact length,
+    MalformedInput on any violation, ARCH-007 / SCALE-004; the
+    fuzz gate `fuzz_scene_iso_parse` covers the surface,
+    TEST-005). `loadIsoReferenceScene<Backend>` builds the
+    engine-side world (TileMap + ParallaxLayers + ParticleSystem +
+    UiTree + StringTable + the 4 precomputed frame UVs);
+    `declareIsoReferenceScene` is the one-call whole-world pass
+    (O(frame items), zero allocation — the batcher's frame budget
+    is the §8.1 workload at reference size: the scene's 14-group
+    draw-call property under the 30-draw-call budget is asserted by
+    `IsoReferenceSceneLoadAndBatch`). `laige-scene-iso`
+    (tools/scene-iso) is the headless generator CLI (atomic temp +
+    rename write, round-trip self-check, machine-greppable summary);
+    the `scene_iso_cli` ctest entry runs the roadmap's Verify
+    clause in executable form (two same-seed invocations per
+    variant, byte-identical). No standalone budgets.json entry (the
+    generation budget is the tool's; the per-frame declare cost is
+    part of the composite 50k render-CPU budget, M2-PERF-01).
 
 - [ ] **M2-PERF-01 · 50k-sprite budget test (PRD §8.1)**
   - **Refs:** PRD §8.1 (≤ 30 draw calls; ≤ 2 ms CPU; zero per-frame alloc in batcher), §15 M2 exit

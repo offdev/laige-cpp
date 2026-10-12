@@ -217,7 +217,23 @@
 # UI scene rendered offscreen through the M2-SPRITE-02 submit stage,
 # the whole frame against a CPU reference rasterizer within the
 # documented +/- 1 byte tolerance, the exact probe pixels) — pure
-# data + batcher bookkeeping except the GL smoke.
+# data + batcher bookkeeping except the GL smoke; and the
+# isometric reference scene (M2-SCENE-01) — the deterministic
+# worst-case scene builder + versioned binary format + the engine-side
+# world (scene_iso_tests.cpp's IsoReferenceScene* suites: the
+# ARCH-010 determinism contract (same seed, same bytes; different
+# seeds differ), the shape constants of both variants, the sprite /
+# terrain invariants (a sprite stands on its tile's height), the
+# format's round trip + the untrusted-input validation (bad version,
+# truncation, trailing bytes, corrupted counts/heights, empty input),
+# the load + one declare frame on both SimMath backends (the PRD §8.1
+# workload at reference size: 50k sprites + 65k tiles + 3 parallax
+# layers + particles, the per-batch instance counts, the in-group
+# depth-key monotonicity, the 14-group draw-call property under the
+# 30-draw-call budget), the 2-widget UI pass (the quads, the one
+# group, the two depth overrides), and the 1 000-frame zero-
+# allocation declare loop) — pure data + batcher bookkeeping: no GL
+# environment needed.
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -248,8 +264,11 @@
 # particle_render`), the `font` entry is the M2-TEXT-01 Verify command
 # (`ctest -R font`), the `ui_tree` entry is the M2-UI-01 Verify
 # command (`ctest -R ui_tree`), and the `ui_render` entry is the
-# M2-UI-02 Verify command (`ctest -R ui_render`), each selecting
-# exactly its suites from the shared executable. (The unanchored `ctest -R tilemap` regex also
+# M2-UI-02 Verify command (`ctest -R ui_render`), and the `scene_iso`
+# entry is the M2-SCENE-01 Verify command (`ctest -R scene_iso`), each
+# selecting exactly its suites from the shared executable (the CLI's
+# same-seed byte-identity gate is the separate `scene_iso_cli` entry
+# in tools/scene-iso). (The unanchored `ctest -R tilemap` regex also
 # selects the `tilemap_anim` entry — the M2-TILE-02 suites run under
 # the M2-TILE-01 command too; that is intended. Likewise the
 # unanchored `ctest -R particle` regex selects the M2-PART-01
@@ -276,7 +295,7 @@ add_executable(laige-render_tests
   sprite_frames_tests.cpp render_counters_tests.cpp tilemap_tests.cpp
   tilemap_anim_tests.cpp parallax_tests.cpp particle_render_tests.cpp
   font_tests.cpp text_items_tests.cpp font_sdf_tests.cpp ui_tree_tests.cpp
-  ui_render_tests.cpp)
+  ui_render_tests.cpp scene_iso_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
@@ -531,6 +550,20 @@ set_tests_properties(ui_render PROPERTIES
   ENVIRONMENT
   "LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 
+# M2-SCENE-01: the step's Verify command is `ctest -R scene_iso`. Pure
+# data + batcher bookkeeping (no GL calls) — runs in every local tree
+# and in CI. The 50k-sprite frame (the PRD §8.1 workload at the CPU
+# stage, both SimMath backends) plus the 1 000-frame zero-allocation
+# loop is the entry's heaviest work; 120s is generous headroom for a
+# slow CI runner. No budget gate: the step's roadmap scope has no
+# standalone budgets.json entry (the scene's generation budget is the
+# tool's, the per-frame declare cost is part of the composite 50k
+# render-CPU budget, measured with M2-PERF-01). The CLI's
+# determinism gate lives with the tool (tools/scene-iso — the
+# scene_iso_cli entry).
+add_test(NAME scene_iso COMMAND laige-render_tests
+          --gtest_filter=IsoReferenceScene*)
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
@@ -572,7 +605,7 @@ if(LAIGE_TSAN)
     iso_depth_key iso_depth_table camera iso_camera projection
     iso_picking depth_sort batcher sprite_draw sprite_frames
     render_counters tilemap tilemap_anim parallax particle_render font
-    text_items font_sdf ui_tree ui_render PROPERTIES
+    text_items font_sdf ui_tree ui_render scene_iso PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
@@ -679,3 +712,8 @@ set_tests_properties(font_sdf PROPERTIES TIMEOUT 120)
 # frame readback against the CPU reference) plus the 1 000-frame zero-
 # allocation declare loop.
 set_tests_properties(ui_render PROPERTIES TIMEOUT 120)
+# The `scene_iso` entry declares the 50k-sprite §8.1 frame on both
+# SimMath backends (65k tile quads + 50k sprites + parallax +
+# particles per declare) and runs the 1 000-frame zero-allocation loop
+# (small variant) — 120s, like the same-shaped entries.
+set_tests_properties(scene_iso PROPERTIES TIMEOUT 120)

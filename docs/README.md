@@ -393,6 +393,19 @@ still to land.
    and the pass-generated button labels / input content through
    `declareText`) into the pass's own `SpriteBatcher` (one texture
    per atlas, the G-R11 monotone UI z).
+ - [Isometric reference scene](api/iso_reference_scene.md) —
+   `laige::render::buildIsoReferenceScene` /
+   `IsoReferenceSceneWorld` (M2-SCENE-01, the PRD §4 reference
+   scene for all visual and performance acceptance tests): the
+   deterministic seed-driven worst-case isometric scene builder
+   (50k overlapping sprites on stepped-terrain plateaus, 3
+   parallax layers, particle emitters, a UI panel — the 1k-sprite
+   Small variant for fast unit tests), the versioned binary scene
+   format (the untrusted-input reader, the fuzz surface), the
+   engine-side world (load + the one-call whole-world declare,
+   zero allocation), the pinned 14-group draw-call plan, and the
+   headless `laige-scene-iso` generator CLI (the same-seed
+   byte-identity gate).
 
 ## Guides
 

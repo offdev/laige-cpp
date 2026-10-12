@@ -5,10 +5,11 @@
 // Roadmap step M0-CORE-07 landed the *minimal* runner this Verify
 // gate requires: `laige-fuzz json_parse --runs=1000` clean under ASan
 // (NFR-8.7: parsers are fuzzed in CI, bounded every commit — PRD
-// §14). The `json_parse` and `replay_parse` targets are registered
-// below (M1-DET-02 added the latter: the replay log parser's
-// malformed-input surface, SCALE-005 / ARCH-007); later steps add
-// their targets to kTargets.
+// §14). The `json_parse`, `replay_parse`, and `scene_iso_parse`
+// targets are registered below (M1-DET-02 added the replay log
+// parser's malformed-input surface, SCALE-005 / ARCH-007; M2-SCENE-01
+// added the reference-scene file reader's, the same surface class);
+// later steps add their targets to kTargets.
 //
 // Design (deterministic by construction):
 //   - Every input is generated from laige::Prng (M0-CORE-06): a fixed
@@ -36,11 +37,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <span>
 #include <string_view>
 #include <vector>
 
 #include "laige/json.h"
 #include "laige/prng.h"
+#include "laige/render/iso_reference_scene.h"  // readIsoReferenceScene (M2-SCENE-01)
 #include "laige/sim/replay.h"  // parseReplay (M1-DET-02: the replay parser)
 
 namespace {
@@ -107,6 +110,21 @@ std::string buildValidReplayLog() {
   return std::string(log.begin(), log.end());
 }
 
+// Valid v1 reference scenes (M2-SCENE-01) — corpus bases for the
+// mutate/truncate modes of the scene_iso_parse target (NFR-8.7: the
+// parser gets real-shape input, not only random bytes). The small
+// variant (1k sprites) keeps the corpus light; the full variant (50k
+// sprites, ~0.94 MB) exercises mutations deep inside the 50k-sprite
+// record array. Both are deterministic (same seed, the builder's
+// ARCH-010 contract) — identical bytes on every platform.
+std::string buildValidSceneCorpus(laige::render::IsoRefSceneVariant variant) {
+  const laige::render::IsoReferenceScene scene =
+      laige::render::buildIsoReferenceScene(424242u, variant);
+  const std::vector<std::uint8_t> bytes =
+      laige::render::serializeIsoReferenceScene(scene);
+  return std::string(bytes.begin(), bytes.end());
+}
+
 // Valid-document corpus: the base for mutate/truncate inputs. Kept ASCII
 // (explicit bytes for the one non-ASCII document) so the corpus bytes are
 // identical on every platform (narrow \x escapes are not portable).
@@ -139,6 +157,12 @@ const std::vector<std::string> kCorpus = {
     // mutate/truncate base (it is also fed to json_parse, where it
     // is simply another invalid document).
     buildValidReplayLog(),
+    // The valid v1 reference scenes (small + full) — the
+    // scene_iso_parse target's mutate/truncate bases (they are also
+    // fed to json_parse / replay_parse, where they are simply
+    // invalid documents).
+    buildValidSceneCorpus(laige::render::IsoRefSceneVariant::Small),
+    buildValidSceneCorpus(laige::render::IsoRefSceneVariant::Full),
 };
 
 // ---------------------------------------------------------------------------
@@ -165,9 +189,21 @@ void fuzzReplayParse(const std::uint8_t* data, std::size_t size) {
   (void)result;
 }
 
+// M2-SCENE-01: the reference-scene file reader (SCALE-005 — the
+// versioned binary format's untrusted-input surface). Any
+// MalformedInput outcome is acceptable; only a crash (or sanitizer
+// report) fails the run.
+void fuzzSceneIsoParse(const std::uint8_t* data, std::size_t size) {
+  const laige::Result<laige::render::IsoReferenceScene, laige::ErrorCode> result =
+      laige::render::readIsoReferenceScene(
+          std::span<const std::uint8_t>(data, size));
+  (void)result;
+}
+
 const FuzzTarget kTargets[] = {
     {"json_parse", &fuzzJsonParse},
     {"replay_parse", &fuzzReplayParse},
+    {"scene_iso_parse", &fuzzSceneIsoParse},
 };
 
 void printUsage() {
