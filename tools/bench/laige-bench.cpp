@@ -631,13 +631,13 @@ bool render50SetupImpl(const Config& cfg, Render50State<Backend>& st) {
     {
       laige::render::SpriteRenderer::Options o{};
       o.maxInstances = worldCapacity;
-      o.maxAtlases = laige::render::kIsoRefSceneParticleAtlas + 1u;
+      o.maxAtlases = laige::render::kIsoRefSceneFgAtlas + 1u;
       auto r = laige::render::SpriteRenderer::create(st.ctx, o);
       if (!r.ok()) render50Fail("the world renderer create failed");
       st.worldRenderer = std::make_unique<laige::render::SpriteRenderer>(
           std::move(r).takeValue());
       for (std::uint32_t id = laige::render::kIsoRefSceneBgAtlas;
-           id <= laige::render::kIsoRefSceneParticleAtlas; ++id) {
+           id <= laige::render::kIsoRefSceneFgAtlas; ++id) {
         const std::vector<std::uint8_t> atlas = render50SolidAtlas(id);
         if (!st.worldRenderer
                  ->bindAtlas(id, kRender50AtlasTexels, kRender50AtlasTexels,
