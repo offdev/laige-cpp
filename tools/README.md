@@ -15,7 +15,8 @@ Engine tools and CI scripts, each landing with its roadmap step:
   opt-in, debug builds only, atomic publish, 128 MiB default cap);
   `--prof-out` writes the run's profile report (M1-PROF-01, FR-11.1
   file export: the version-1 JSON schema — counters, tick/frame time
-  windows, world fields, per-system timings — at run end, EVERY
+  windows, world fields, render timing (M2-PROF-01), per-system
+  timings — at run end, EVERY
   build; a write failure does not fail the run — it exits `2` with
   the run status `ok`). Full contract in
   [docs/api/engine.md](../docs/api/engine.md),

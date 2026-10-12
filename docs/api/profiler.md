@@ -56,6 +56,7 @@ opts.profiler = &prof;   // per-completed-tick timing, success only
 | sim alloc count (target: 0 in sim) | `World::archetypeStats().totalReservations` (M1-ECS-03 pool accounting — the pool-backed sim storage's reserved column blocks) | pulled at snapshot |
 | systems | `World::systemCount()` | pulled at snapshot |
 | draw calls / texture binds / net bytes | `Profiler::addDrawCalls` / `addTextureBinds` / `addNetBytes` (the M2/M3 feeds) | **0 in headless M1** — the fields exist per FR-11.1; the render (M2) and network (M3) subsystems feed them |
+| render timing (M2-PROF-01): batch/sort/submit ms, GPU us + completed frame count, stall us + frame count, texture memory bytes | `Profiler::addRenderBatchMs` / `addRenderSortMs` / `addRenderSubmitMs` / `addRenderGpu` / `addRenderStall` / `setRenderTextureMemory` (the render-thread feeds) | **0 in headless M1** — the engine's render thread feeds them per frame (sprite_renderer.md's Render timing section); `gpu_us` renders "n/a" until the first completed GPU measurement |
 
 The `Profiler` owns **only** what it measures at the frame/tick
 boundary (the two windows, the counters). Everything else is pulled
@@ -126,6 +127,7 @@ laige-profile counters: ticks=100 frames=101 draw_calls=0 texture_binds=0 net_by
 laige-profile tick_ms: n=100 min=0.000191 mean=0.0013269 p50=0.001042 p95=0.002725 p99=0.002966 max=0.003197
 laige-profile frame_ms: n=101 min=0.00017 mean=0.00221881 p50=0.001854 p95=0.004429 p99=0.00482 max=0.00496
 laige-profile world: entities_alive=0 entities_total=0 entity_capacity=10000 sim_allocs=0 systems=1
+laige-profile render: batch_ms=0 sort_ms=0 submit_ms=0 gpu_us=n/a gpu_frames=0 stall_us=0 stall_frames=0 texture_memory_bytes=0
 laige-profile system id=1 name=EngTickCounter budget_ms=1 runs=100 last_ms=0.0004 warns=0 errors=0 window: n=100 min=... 
 ```
 
@@ -159,6 +161,9 @@ precondition); number values are the core JSON canonical form
   "world":  { "entities_alive": 0, "entities_total": 0,
               "entity_capacity": 10000, "sim_allocs": 0,
               "systems": 1 },
+  "render": { "batch_ms": 0.0, "sort_ms": 0.0, "submit_ms": 0.0,
+              "gpu_us": null, "gpu_frames": 0, "stall_us": 0,
+              "stall_frames": 0, "texture_memory_bytes": 0 },
   "systems": [ { "id": 1, "name": "EngTickCounter",
                  "budget_ms": 1, "runs": 100, "last_ms": 0.0004,
                  "warns": 0, "errors": 0,
@@ -169,9 +174,19 @@ precondition); number values are the core JSON canonical form
 ```
 
 `window_ms` (and the top-level windows) are `null` when the window is
-empty. The CLI one-line summary (always printed by `laige-run`,
-engine.md) is `formatProfileSummaryLine(stats)` — the same fields
-compressed into one greppable line.
+empty; `render.gpu_us` is likewise `null` when no GPU measurement has
+completed (`gpu_frames` 0 — the headless/offscreen fallback, never a
+fake number). The CLI one-line summary (always printed by
+`laige-run`, engine.md) is `formatProfileSummaryLine(stats)` — the
+same fields compressed into one greppable line:
+
+```
+laige-run profile: ticks=100 frames=101 tick_ms: n=100 min=... frame_ms: n=101 min=... entities_alive=0 entities_total=0 entity_capacity=10000 sim_allocs=0 draw_calls=0 texture_binds=0 net_bytes=0 render_batch_ms=0 render_sort_ms=0 render_submit_ms=0 render_gpu_us=n/a render_stall_frames=0 render_texture_memory_bytes=0
+```
+
+(the summary's GPU field renders `n/a` on the same rule —
+`render_gpu_us` is the one summary field that is not always a
+number).
 
 ## The engine's per-run report (the `--prof-out` surface)
 
@@ -218,8 +233,8 @@ compressed into one greppable line.
   two `steady_clock` reads per frame (the engine run loop) + one
   O(1) ring write. **No allocation and no logging** (PERF-003,
   LOG-003; the `profiler-zeroalloc` test asserts the record path
-  allocates nothing: 1000 tick + 1000 frame records + 3 adders + one
-  snapshot, `allocs=0`).
+  allocates nothing: 1000 tick + 1000 frame records + 3 M2/M3
+  adders + 6 M2-PROF-01 render feeds + one snapshot, `allocs=0`).
 - **Disabled** (`setEnabled(false)`, or `Options::profiler ==
   nullptr`): one branch per tick and per frame, nothing else
   (DBG-004: disabled instrumentation has negligible cost).
@@ -279,7 +294,9 @@ compressed into one greppable line.
   `ProfilerEngine`, `ProfilerReport`, `ProfilerZeroAlloc`,
   `ProfilerCost`): the counter model's exact percentiles (1..100 →
   p50=50, p95=95, p99=99), window rollover, the zero-capacity drop,
-  the disabled no-op + preserved state, the moved-from stop, the
+  the M2-PROF-01 render-timing feeds (the exact accumulation, the
+  "n/a" GPU contract, the texture-memory gauge), the disabled no-op
+  + preserved state, the moved-from stop, the
   cold world-pulled snapshot, the per-completed-tick timing
   (failed ticks unrecorded), the engine's per-run cache, the report
   (written on every run path, version-1 JSON parseable, the M1-SYS-03

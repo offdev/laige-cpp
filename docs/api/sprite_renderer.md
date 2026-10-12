@@ -62,12 +62,22 @@ struct SpriteDrawStats {   // the per-frame counters of the last successful subm
   std::uint64_t uploadBytes;       // the frame's instance upload, in bytes
   std::uint64_t renderTargetBytes; // the render-target size drawn, in bytes
   bool drawCallCapExceeded;        // G-R2: draw calls exceeded the cap
+  double submitMs;                 // M2-PROF-01: this submit's CPU wall time, ms
+  std::uint64_t uploadWallUs;      // the glBufferSubData CPU wall time, us
+  bool uploadStalled;              // uploadWallUs > stallThresholdUs
+  std::uint64_t gpuTimeUs;         // previous pass's GPU time, us (0 if !valid)
+  bool gpuTimeValid;               // false = "n/a" (M2-PROF-01)
 };
 
 struct SpriteDrawTotals {    // since-construction (successful submits only)
   std::uint64_t frames, drawCalls, textureBinds, blendChanges,
       programChanges, instances, primitives, uploadBytes,
       renderTargetBytes, capExceededFrames;
+  double submitMs;                 // M2-PROF-01: the submits' CPU wall-time sum, ms
+  std::uint64_t uploadStallUs;     // the stalled uploads' wait sum, us
+  std::uint64_t uploadStallFrames; // the stalled submits' frame count
+  std::uint64_t gpuTimeUs;         // the completed GPU measurements' sum, us
+  std::uint64_t gpuTimeFrames;     // the completed measurement count (0 = n/a)
 };
 
 class SpriteRenderer {
@@ -77,10 +87,13 @@ class SpriteRenderer {
     std::uint32_t maxAtlases{0};     // atlas-id domain [0, maxAtlases)
     std::uint32_t maxDrawCalls{64};  // per-pass draw-call cap (G-R2)
     bool primitiveQuery{false};      // opt-in PRIMITIVES_GENERATED query
+    bool gpuTiming{false};           // opt-in per-pass GPU time (M2-PROF-01)
+    std::uint32_t stallThresholdUs{2000};  // stall threshold (M2-PROF-01)
   };
   static constexpr std::uint32_t kSpriteRendererMaxInstances = 0xFFFFFFFFu;
   static constexpr std::uint32_t kSpriteRendererMaxAtlases = 4096u;
   static constexpr std::uint32_t kSpriteRendererDefaultDrawCalls = 64u;
+  static constexpr std::uint32_t kSpriteRendererDefaultStallUs = 2000u;
 
   SpriteRenderer() noexcept;                 // stopped state
   [[nodiscard]] static Result<SpriteRenderer, ErrorCode>
@@ -204,7 +217,11 @@ class SpriteRenderer {
   changes), `uploadBytes` (the frame's instance upload, n × 52 B),
   `renderTargetBytes` (the render-target size drawn, w × h × 4),
   `drawCallCapExceeded` (the G-R2 flag), and the totals'
-  `capExceededFrames` (successful over-cap submits).
+  `capExceededFrames` (successful over-cap submits). The
+  M2-PROF-01 timing fields: `submitMs` (the submit's CPU wall time),
+  `uploadWallUs` / `uploadStalled` (the stall detection), and
+  `gpuTimeUs` / `gpuTimeValid` (the opt-in GPU pass time, one frame
+  late) — the Render timing section below.
 - **`textureMemoryBytes()`** — the texture-memory VRAM estimate: the
   sum of `w * h * 4` over the BOUND atlases (set-up/asset path —
   updated at each `bindAtlas`, replaced on re-bind, 0 in the stopped
@@ -220,6 +237,22 @@ class SpriteRenderer {
   beyond the realistic frame of 2^31 instances (2 per instance); the
   glad-generated `glQueryCounter` has a broken 2-argument signature
   in the vendored 2.0.8 loader, hence the 32-bit read.
+- **`Options::gpuTiming`** (off by default): the opt-in per-pass GPU
+  time (M2-PROF-01, RENDER-005 — the Render timing section below).
+  ON: ONE `GL_TIME_ELAPSED` query object created at `create` and
+  reused every frame (no per-frame GL allocation), a
+  `glBeginQuery`/`glEndQuery` pair around the pass, and one
+  availability read per frame — NO CPU/GPU synchronization (unlike
+  `primitiveQuery`'s `glFinish`), so it is safe for the shipping
+  frame loop as well as diagnostics.
+- **`Options::stallThresholdUs`** (M2-PROF-01): the stall threshold —
+  the `glBufferSubData` upload's CPU wall time above which the
+  submit is flagged `uploadStalled` (the CPU waited on the GPU's
+  implicit sync — the Render timing section below). Documented
+  default `kSpriteRendererDefaultStallUs` = 2000 us (~12% of the
+  default 60 Hz frame period); domain `[1, 0xFFFFFFFF]` (0 is
+  rejected at `create` — first failure wins, the `options_invalid`
+  warn, the `option=stallThresholdUs` field).
 
 ## One draw per group (RENDER-001/003)
 
@@ -292,6 +325,84 @@ every field EXACTLY (frame 1 + frame 2 + the totals), the cap warns at
 the configured count with the pinned fields (`RenderCountersCap`),
 and the VRAM gauge tracks binds + re-bind replacements exactly
 (`RenderCountersMemory`).
+
+## Render timing (M2-PROF-01, RENDER-005)
+
+CPU and GPU are measured independently (RENDER-005): the CPU phase
+times come from the render-thread `steady_clock` timers (two to four
+reads per submit — no allocation, no GL work, negligible by the
+PERF-004 standard), and the GPU time comes from a GL `TIME_ELAPSED`
+query object that wraps the pass's GL work without any CPU/GPU
+synchronization. All timing values are wall-clock diagnostics
+(ARCH-009): they never enter sim state, hashes, or replays.
+
+| Field | Meaning |
+| --- | --- |
+| `submitMs` | this submit's CPU wall time, ms (the whole `submit` call — includes the opt-in `primitiveQuery`'s `glFinish` when that diagnostic is on) |
+| `uploadWallUs` | the `glBufferSubData` upload's CPU wall time, us |
+| `uploadStalled` | `uploadWallUs > stallThresholdUs` — the stall detection below |
+| `gpuTimeUs` / `gpuTimeValid` | the PREVIOUS pass's GPU time, us / whether it is a real measurement (`gpuTimeValid` false = "n/a") |
+| `totals.submitMs` | the submits' CPU wall-time sum, ms |
+| `totals.uploadStallUs` / `totals.uploadStallFrames` | the stalled uploads' wait sum, us / frame count (successful submits only) |
+| `totals.gpuTimeUs` / `totals.gpuTimeFrames` | the completed GPU measurements' sum, us / count (`gpuTimeFrames` 0 = the reports render the GPU field as "n/a") |
+
+**The GPU time is one frame late.** The `GL_TIME_ELAPSED`
+measurement of frame N's pass completes when the GPU finishes frame
+N's work — which the engine reads at the START of frame N+1's submit
+(the value lands in frame N+1's `frameStats()`). In steady state:
+frame N's `gpuTimeUs` is frame N−1's pass. The first frame always
+reads "n/a" (nothing pending yet), and a GPU that is more than one
+frame behind leaves the intervening frames at "n/a" too — an honest
+"GPU busy" reading, **never a fake number** (the headless/offscreen
+fallback of the roadmap: environments that cannot complete timing
+queries simply report `gpuTimeValid` false). A FAILED submit poisons
+its own in-flight measurement (the value is discarded when it
+completes); a previous frame's still-pending measurement is never
+poisoned (it belongs to a successful submit). The single query object
+is created at `create` (one `glGenQueries`) and reused across frames —
+no per-frame GL allocation; when `gpuTiming` is off there is zero GL
+work and zero cost (PERF-002/004).
+
+**The stall detection: the CPU waiting on the GPU's implicit sync.**
+The frame's only implicit CPU/GPU sync point is the one
+`glBufferSubData` into the REUSED instance buffer: the driver may
+block the upload until the GPU finishes reading the previous frame's
+data. The upload call's wall time is measured (`uploadWallUs`, two
+`steady_clock` reads); above `Options::stallThresholdUs` the frame is
+flagged `uploadStalled` and one rate-limited Warn
+`sprite_renderer/submit_stall` fires (fields `stall_us`,
+`upload_bytes`; LOG-004). The frame is still drawn — observation,
+never an execution gate (the G-R2 precedent). The documented default
+`kSpriteRendererDefaultStallUs` = 2000 us is ~12% of the default 60
+Hz frame period (16.67 ms): a wait longer than that is a visible
+hitch, and a normal 50k-frame upload (2.6 MB) queues in well under
+it on the P0 drivers.
+
+**The profiler feed.** The render thread feeds the always-on
+profiler (`Profiler`, M1-PROF-01) per frame from these values
+(primitive-typed feeds — `laige-sim` cannot depend on `laige-render`
+types, ARCH-001): `addRenderBatchMs(batcher.frameTiming().batchMs)`,
+`addRenderSortMs(batcher.frameTiming().sortMs)`,
+`addRenderSubmitMs(frameStats().submitMs)`,
+`addRenderGpu(frameStats().gpuTimeUs)` when `gpuTimeValid`,
+`addRenderStall(frameStats().uploadWallUs)` when `uploadStalled`, and
+`setRenderTextureMemory(textureMemoryBytes())` (the VRAM estimate
+gauge, M2-SPRITE-04). The engine's render-thread wiring lands with
+the engine integration step (the M1-PROF-01 `addDrawCalls` feed
+precedent — the headless M1 run feeds no render values).
+
+`ctest -R render_timing` (`RenderTimingCpu` / `RenderTimingGpu` /
+`RenderTimingStall` / `RenderTimingSlowShader`) pins the CPU phase
+times and EXACT totals accumulation, the GPU timing's off-by-default
+"n/a" and one-frame-late semantics under `glFinish`-paced frames, the
+stall detection (a 4096-sprite frame under a 1 us threshold stalls —
+one Warn per stalled frame with the pinned fields; a small frame
+under the default threshold does not), and the roadmap's
+integration check (a deliberately slow shader — a 16384-iteration
+dependent sin loop — makes the GPU-side pass time EXCEED the
+CPU-side submit time on a hardware-GL runner; the test SKIPS on a
+software renderer, where the CPU is the GPU and the driver is
+synchronous).
 
 ## The shader and the pass's GL state
 
@@ -375,7 +486,9 @@ profiler feed): `textureBinds`, `blendChanges`, `drawCalls`,
 `instances`, `primitives` (query on only), plus the M2-SPRITE-04
 fields `programChanges`, `uploadBytes`, `renderTargetBytes`, the
 G-R2 `drawCallCapExceeded` flag (+ the totals' `capExceededFrames`),
-and the `textureMemoryBytes()` VRAM estimate. The composite 50k
+the `textureMemoryBytes()` VRAM estimate, and the M2-PROF-01 timing
+fields (`submitMs`, `uploadWallUs` / `uploadStalled`, the opt-in
+`gpuTimeUs` / `gpuTimeValid`). The composite 50k
 render-CPU budget (PRD §8.1) is measured with this stage at
 M2-PERF-01 (the laige-bench `render-50k` suite: the submit stage's
 offscreen render sits OUTSIDE the measured batch-stage CPU window,
@@ -399,6 +512,12 @@ Traps:
 - **`primitiveQuery` syncs**: the query read takes a `glFinish` —
   CPU/GPU serialization (RENDER-005). Diagnostic mode only; never
   enable it in the shipping frame loop.
+- **`gpuTiming` does not**: the `TIME_ELAPSED` query wraps the pass
+  without any synchronization (RENDER-005 — CPU and GPU measured
+  independently); the cost is two GL query calls + one availability
+  read per frame, no allocation. The first frame and any frame the
+  GPU is more than one frame behind read "n/a" (`gpuTimeValid`
+  false), never a fake number.
 - **A failed submit draws nothing and counts nothing** — but it also
   does not leave stale sprite-pass state (the next successful submit
   re-establishes everything).

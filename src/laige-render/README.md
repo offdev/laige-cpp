@@ -764,4 +764,48 @@ rasterizer within the documented ± 1 byte tolerance + the exact
 probe pixels; it `GTEST_SKIP`s where no usable OpenGL 3.3
 environment).
 
-The remaining M2 steps (M2-SCENE-01, M2-PERF-01) land in later steps.
+M2-PROF-01 landed the CPU/GPU render timing (RENDER-005 — CPU and
+GPU measured independently): `SpriteBatcher` gained the per-frame
+CPU phase times (`SpriteBatchTiming` via `frameTiming()` —
+`batchMs` the frame window, `beginFrame()`/create up to `build()`
+start — and `sortMs`, `build()` itself — plus the since-construction
+`timingTotals()`); `SpriteRenderer::Options` gained `gpuTiming`
+(opt-in per-pass GPU time via ONE reused `GL_TIME_ELAPSED` query
+object — no per-frame GL allocation, no CPU/GPU synchronization) and
+`stallThresholdUs` (documented default
+`kSpriteRendererDefaultStallUs` = 2000 us, domain `[1, 0xFFFFFFFF]`);
+`SpriteDrawStats` gained `submitMs`, `uploadWallUs`, `uploadStalled`,
+and `gpuTimeUs` / `gpuTimeValid` (the GPU time is one frame late;
+`gpuTimeValid` false = "n/a" — never a fake number, the
+headless/offscreen fallback of the roadmap), and `SpriteDrawTotals`
+gained the `submitMs`, `uploadStallUs` / `uploadStallFrames`, and
+`gpuTimeUs` / `gpuTimeFrames` sums. A frame whose instance upload's
+CPU wall time exceeds the threshold fires one rate-limited Warn
+`sprite_renderer/submit_stall` (fields `stall_us`, `upload_bytes`) —
+the CPU waiting on the GPU's implicit sync, observation never an
+execution gate. The M1-PROF-01 `Profiler` gained the render feeds
+(primitive-typed — `laige-sim` cannot depend on `laige-render`
+types, ARCH-001): `addRenderBatchMs` / `addRenderSortMs` /
+`addRenderSubmitMs` / `addRenderGpu` / `addRenderStall` /
+`setRenderTextureMemory`, feeding the `laige-profile render:` text
+line, the JSON report's `"render"` object, and the summary line's
+render fields. The engine's render-thread wiring lands with the
+engine integration step (the M1-PROF-01 `addDrawCalls` feed
+precedent — the headless run feeds no render values). API contract
+in [docs/api/sprite_renderer.md](../docs/api/sprite_renderer.md)
+(the "Render timing" section),
+[docs/api/sprite_batcher.md](../docs/api/sprite_batcher.md), and
+[docs/api/profiler.md](../docs/api/profiler.md); tests under
+[tests/laige-render](../tests/laige-render) (CTest entry
+`render_timing` — `RenderTimingCreate` needs no GL, the
+CPU/GPU/stall suites need a usable OpenGL 3.3 environment and
+self-`GTEST_SKIP` on an environment failure, and
+`RenderTimingSlowShader` additionally SKIPS on a software renderer —
+the roadmap's GPU > CPU observation is defined for the hardware-GL
+desktop runner). No standalone `budgets.json` entry: the timing is
+O(1) bookkeeping (two to four `steady_clock` reads per frame, no
+allocation) and the composite 50k render-CPU budget is measured with
+M2-PERF-01.
+
+The remaining M2 steps (M2-GOLD-01, M2-AC-01, M2-SAMPLE-01,
+M2-EXIT-01) land in later steps.

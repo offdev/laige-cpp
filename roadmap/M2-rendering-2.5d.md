@@ -502,7 +502,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
 
 ## Render profiling & acceptance
 
-- [ ] **M2-PROF-01 · CPU/GPU render timing (independent)**
+- [x] **M2-PROF-01 · CPU/GPU render timing (independent)**
   - **Refs:** RENDER-005 (CPU/GPU measured independently), FR-11.1
   - **Depends:** M2-SPRITE-04, M2-GL-02
   - **Scope:**
@@ -512,6 +512,53 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     - Unit/integration test: with a deliberately slow shader (fixture), GPU time > CPU time is observed on the desktop CI runner.
   - **Verify:** `ctest -R render_timing` green; fields present in profiler snapshot on all P0 OSes (GPU fields may read "n/a" headless — documented).
   - **Size:** ~250 lines + tests
+  - **Shipped:** M2-PROF-01: the CPU phase timers on the batcher
+    (`SpriteBatchTiming` `frameTiming()` / `timingTotals()` — the
+    batch phase = the frame window `beginFrame()`/create up to
+    `build()` start, the sort phase = `build()` itself) + the submit
+    phase (`SpriteDrawStats::submitMs` / the totals' sum); the opt-in
+    per-pass GPU time on the renderer (`Options::gpuTiming` — ONE
+    reused `GL_TIME_ELAPSED` query object created at `create`, a
+    `glBeginQuery`/`glEndQuery` pair around the pass, one availability
+    read per frame — no per-frame GL allocation, NO CPU/GPU
+    synchronization; the value is one frame late and reads "n/a"
+    (`gpuTimeValid` false) on the first frame, on any frame the GPU
+    is more than one frame behind, and on every environment without
+    working timing queries — the headless/offscreen fallback, never a
+    fake number; a failed submit poisons only its own in-flight
+    measurement); the stall detection (`Options::stallThresholdUs`,
+    documented default `kSpriteRendererDefaultStallUs` = 2000 us,
+    domain `[1, 0xFFFFFFFF]` — the `glBufferSubData` upload's CPU wall
+    time, the pass's only implicit CPU↔GPU sync point on the reused
+    instance buffer, above the threshold → `uploadStalled` + one
+    rate-limited Warn `sprite_renderer/submit_stall` (fields
+    `stall_us`, `upload_bytes`); observation, never an execution
+    gate); the VRAM estimate feeds the profiler through the
+    existing `textureMemoryBytes()` gauge; the M1-PROF-01 profiler
+    gained the primitive-typed render feeds (`addRenderBatchMs` /
+    `addRenderSortMs` / `addRenderSubmitMs` / `addRenderGpu` /
+    `addRenderStall` / `setRenderTextureMemory` — ARCH-001) feeding
+    the `laige-profile render:` text line, the JSON report's
+    `"render"` object (`gpu_us` is `null` until the first completed
+    measurement), and the summary line's render fields. The
+    engine's render-thread wiring lands with the engine integration
+    step (the `addDrawCalls` feed precedent). `ctest -R render_timing`
+    (`RenderTimingCreate` GL-free; `RenderTimingCpu` the CPU phase
+    times + the EXACT totals accumulation + the empty frame;
+    `RenderTimingGpu` the off-by-default "n/a" + the one-frame-late
+    semantics under `glFinish`-paced frames; `RenderTimingStall` the
+    4096-sprite stall under a 1 us threshold + the no-stall small
+    frame; `RenderTimingSlowShader` the deliberately slow shader — a
+    16384-iteration dependent sin loop — with the GPU-side pass time
+    EXCEEDING the CPU-side submit time on a hardware-GL runner,
+    SKIPPED on a software renderer where the CPU is the GPU and the
+    driver is synchronous). `laige-api.json` regenerated (1815 → 1851
+    symbols). No `budgets.json` entry (the timing is O(1)
+    bookkeeping — two to four `steady_clock` reads per frame, no
+    allocation; the composite 50k render-CPU budget is measured with
+    M2-PERF-01). Size note: beyond the ~250-line guidance (the
+    documented contract spans the renderer + batcher + profiler +
+    five docs, per CORE-006/DOC-004).
 
 - [ ] **M2-GOLD-01 · Golden image test infrastructure**
   - **Refs:** TEST-008 (golden tests, explicit tolerances)

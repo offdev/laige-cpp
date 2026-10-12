@@ -44,6 +44,16 @@
 //     (always 0 in headless M1 — the fields exist per FR-11.1; the
 //     render and network subsystems arrive in M2/M3 and feed them
 //     through addDrawCalls / addTextureBinds / addNetBytes)
+//   - render CPU-phase times (batch / sort / submit, ms) and the
+//     render timing totals (M2-PROF-01): fed by the render thread's
+//     submit stage from the SpriteBatcher's frame timing and the
+//     SpriteRenderer's frame stats through addRenderBatchMs /
+//     addRenderSortMs / addRenderSubmitMs, the completed GPU
+//     measurements (addRenderGpu — the GL TIME_ELAPSED pass time,
+//     one frame late) and the stalled uploads (addRenderStall — the
+//     implicit upload-sync wait), and the VRAM estimate gauge
+//     (setRenderTextureMemory — the renderer's textureMemoryBytes).
+//     All wall-clock diagnostics (ARCH-009)
 //
 // The remaining FR-11.1 counters are pulled COLD from their owners —
 // no duplicated state, one source of truth each:
@@ -136,6 +146,22 @@ struct ProfilerStats {
   std::uint64_t textureBinds{};
   // Network bytes (0 in headless M1 — the M3 network feed).
   std::uint64_t netBytes{};
+  // M2-PROF-01 render timing (the render thread's submit-stage feed —
+  // wall-clock diagnostics, ARCH-009; 0 in headless until the render
+  // subsystem feeds them). The GPU fields: renderGpuUs/renderGpuFrames
+  // are the COMPLETED GPU measurements' sum/count (renderGpuFrames 0 =
+  // the reports render the GPU time as "n/a" — the headless/offscreen
+  // fallback, never a fake number).
+  double renderBatchMs{};      // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured batch time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  double renderSortMs{};       // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured sort time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  double renderSubmitMs{};     // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured submit time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  std::uint64_t renderGpuUs{};
+  std::uint64_t renderGpuFrames{};
+  std::uint64_t renderStallUs{};
+  std::uint64_t renderStallFrames{};
+  // The VRAM estimate (the renderer's bound-atlas w*h*4 sum — a gauge,
+  // the last setRenderTextureMemory call wins).
+  std::uint64_t renderTextureMemoryBytes{};
   // The tick-time window stats (ms; NaN when n == 0).
   HistogramStats tickTimeMs{};
   // The frame-time window stats (ms; NaN when n == 0).
@@ -215,6 +241,22 @@ class Profiler {
   void addTextureBinds(std::uint64_t count) noexcept;
   void addNetBytes(std::uint64_t count) noexcept;
 
+  // The M2-PROF-01 render-timing feeds (RENDER-005: CPU and GPU
+  // measured independently — the render thread feeds the CPU phase
+  // times from the batcher's frame timing + the submit's wall time,
+  // and the GPU time from the completed GL TIME_ELAPSED measurement;
+  // the stall feeds carry the implicit upload-sync wait; the VRAM
+  // estimate is a gauge, the last value wins). Primitive-typed on
+  // purpose (laige-sim cannot depend on laige-render types —
+  // ARCH-001). A no-op when disabled or stopped.
+  // @budget O(1); no allocation.
+  void addRenderBatchMs(double ms) noexcept;  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured batch time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  void addRenderSortMs(double ms) noexcept;   // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured sort time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  void addRenderSubmitMs(double ms) noexcept;  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured submit time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  void addRenderGpu(std::uint64_t us) noexcept;
+  void addRenderStall(std::uint64_t us) noexcept;
+  void setRenderTextureMemory(std::uint64_t bytes) noexcept;
+
   // The tick-time stats over the stored window (the M0-CORE-08
   // stats() — cold path). NaN when the window is empty (check n).
   // @budget O(n log n) cold path; no allocation.
@@ -264,6 +306,19 @@ class Profiler {
   std::uint64_t drawCalls_{};
   std::uint64_t textureBinds_{};
   std::uint64_t netBytes_{};
+  // The M2-PROF-01 render-timing counters (the feed methods' storage —
+  // wall-clock diagnostics, ARCH-009). The GPU pair is the completed
+  // measurements' sum + count (frames 0 = "n/a" in the reports); the
+  // stall pair is the cumulative wait + stalled-frame count; the
+  // texture memory is a gauge (the last set wins).
+  double renderBatchMs_{};  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured batch time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  double renderSortMs_{};   // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured sort time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  double renderSubmitMs_{};  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured submit time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  std::uint64_t renderGpuUs_{};
+  std::uint64_t renderGpuFrames_{};
+  std::uint64_t renderStallUs_{};
+  std::uint64_t renderStallFrames_{};
+  std::uint64_t renderTextureMemoryBytes_{};
   bool enabled_{};
   // Cleared on move-out: a stopped profiler records nothing.
   bool active_{true};

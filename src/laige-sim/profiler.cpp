@@ -113,6 +113,14 @@ Profiler::Profiler(Profiler&& other) noexcept
       drawCalls_(other.drawCalls_),
       textureBinds_(other.textureBinds_),
       netBytes_(other.netBytes_),
+      renderBatchMs_(other.renderBatchMs_),
+      renderSortMs_(other.renderSortMs_),
+      renderSubmitMs_(other.renderSubmitMs_),
+      renderGpuUs_(other.renderGpuUs_),
+      renderGpuFrames_(other.renderGpuFrames_),
+      renderStallUs_(other.renderStallUs_),
+      renderStallFrames_(other.renderStallFrames_),
+      renderTextureMemoryBytes_(other.renderTextureMemoryBytes_),
       enabled_(other.enabled_),
       active_(other.active_) {
   other.active_ = false;  // the source becomes a stopped profiler
@@ -125,6 +133,14 @@ Profiler& Profiler::operator=(Profiler&& other) noexcept {
     drawCalls_ = other.drawCalls_;
     textureBinds_ = other.textureBinds_;
     netBytes_ = other.netBytes_;
+    renderBatchMs_ = other.renderBatchMs_;
+    renderSortMs_ = other.renderSortMs_;
+    renderSubmitMs_ = other.renderSubmitMs_;
+    renderGpuUs_ = other.renderGpuUs_;
+    renderGpuFrames_ = other.renderGpuFrames_;
+    renderStallUs_ = other.renderStallUs_;
+    renderStallFrames_ = other.renderStallFrames_;
+    renderTextureMemoryBytes_ = other.renderTextureMemoryBytes_;
     enabled_ = other.enabled_;
     active_ = other.active_;
     other.active_ = false;  // the source becomes a stopped profiler
@@ -157,6 +173,38 @@ void Profiler::addNetBytes(std::uint64_t count) noexcept {
   netBytes_ += count;
 }
 
+void Profiler::addRenderBatchMs(double ms) noexcept {  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured batch time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  if (!active_ || !enabled_) return;
+  renderBatchMs_ += ms;
+}
+
+void Profiler::addRenderSortMs(double ms) noexcept {  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured sort time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  if (!active_ || !enabled_) return;
+  renderSortMs_ += ms;
+}
+
+void Profiler::addRenderSubmitMs(double ms) noexcept {  // LAIGE-DETERM-EXCEPTION: G-R8 wall-clock diagnostic: measured submit time never enters sim state, hashes, or replays (M2-PROF-01, ARCH-009)
+  if (!active_ || !enabled_) return;
+  renderSubmitMs_ += ms;
+}
+
+void Profiler::addRenderGpu(std::uint64_t us) noexcept {
+  if (!active_ || !enabled_) return;
+  renderGpuUs_ += us;
+  renderGpuFrames_ += 1;
+}
+
+void Profiler::addRenderStall(std::uint64_t us) noexcept {
+  if (!active_ || !enabled_) return;
+  renderStallUs_ += us;
+  renderStallFrames_ += 1;
+}
+
+void Profiler::setRenderTextureMemory(std::uint64_t bytes) noexcept {
+  if (!active_ || !enabled_) return;
+  renderTextureMemoryBytes_ = bytes;  // a gauge: the last value wins
+}
+
 HistogramStats Profiler::tickTime() const noexcept {
   return tickWindow_.stats();
 }
@@ -178,6 +226,14 @@ ProfilerStats Profiler::snapshot() const noexcept {
   s.drawCalls = drawCalls_;
   s.textureBinds = textureBinds_;
   s.netBytes = netBytes_;
+  s.renderBatchMs = renderBatchMs_;
+  s.renderSortMs = renderSortMs_;
+  s.renderSubmitMs = renderSubmitMs_;
+  s.renderGpuUs = renderGpuUs_;
+  s.renderGpuFrames = renderGpuFrames_;
+  s.renderStallUs = renderStallUs_;
+  s.renderStallFrames = renderStallFrames_;
+  s.renderTextureMemoryBytes = renderTextureMemoryBytes_;
   s.tickTimeMs = tickWindow_.stats();
   s.frameTimeMs = frameWindow_.stats();
   return s;
@@ -221,6 +277,24 @@ std::string formatProfileSummaryLine(const ProfilerStats& stats) {
   appendCount(r, "draw_calls=", stats.drawCalls);
   appendCount(r, "texture_binds=", stats.textureBinds);
   appendCount(r, "net_bytes=", stats.netBytes);
+  // The M2-PROF-01 render-timing fields (RENDER-005). The GPU time
+  // renders "n/a" when no GPU measurement has completed (the
+  // headless/offscreen fallback — never a fake number).
+  r += "render_batch_ms=";
+  formatDouble(r, stats.renderBatchMs);
+  r += " render_sort_ms=";
+  formatDouble(r, stats.renderSortMs);
+  r += " render_submit_ms=";
+  formatDouble(r, stats.renderSubmitMs);
+  r += " render_gpu_us=";
+  if (stats.renderGpuFrames == 0) {
+    r += "n/a";
+  } else {
+    r += std::to_string(stats.renderGpuUs);
+  }
+  r += " render_stall_frames=";
+  r += std::to_string(stats.renderStallFrames);
+  appendCount(r, "render_texture_memory_bytes=", stats.renderTextureMemoryBytes);
   r.pop_back();  // the trailing space after the last field
   return r;
 }
@@ -249,6 +323,31 @@ std::string formatProfileText(const Profiler& profiler, const World& world) {
   appendCount(r, "sim_allocs=", stats.simAllocs);
   appendCount(r, "systems=", stats.systems);
   r.pop_back();
+  r += "\n";
+  // The M2-PROF-01 render-timing section (RENDER-005: CPU and GPU
+  // measured independently). The GPU time renders "n/a" when no GPU
+  // measurement has completed (the headless/offscreen fallback).
+  r += "laige-profile render: ";
+  r += "batch_ms=";
+  formatDouble(r, stats.renderBatchMs);
+  r += " sort_ms=";
+  formatDouble(r, stats.renderSortMs);
+  r += " submit_ms=";
+  formatDouble(r, stats.renderSubmitMs);
+  r += " gpu_us=";
+  if (stats.renderGpuFrames == 0) {
+    r += "n/a";
+  } else {
+    r += std::to_string(stats.renderGpuUs);
+  }
+  r += " gpu_frames=";
+  r += std::to_string(stats.renderGpuFrames);
+  r += " stall_us=";
+  r += std::to_string(stats.renderStallUs);
+  r += " stall_frames=";
+  r += std::to_string(stats.renderStallFrames);
+  r += " texture_memory_bytes=";
+  r += std::to_string(stats.renderTextureMemoryBytes);
   r += "\n";
   // One line per registered system (M1-SYS-03 feed): the declared
   // budget, the run scalars, and the rolling window's stats.
@@ -319,6 +418,34 @@ std::string formatProfileJson(const Profiler& profiler, const World& world) {
                      JsonValue::fromNumber(static_cast<double>(stats.simAllocs)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 counter to JSON number (M1-PROF-01, ARCH-009)
   worldObj.setMember("systems", JsonValue::fromNumber(stats.systems));
   root.setMember("world", std::move(worldObj));
+
+  // The M2-PROF-01 render-timing object (RENDER-005). gpu_us is JSON
+  // null when no GPU measurement has completed (the headless/offscreen
+  // fallback — never a fake number).
+  JsonValue renderObj = JsonValue::makeObject();
+  renderObj.setMember("batch_ms", JsonValue::fromNumber(stats.renderBatchMs));
+  renderObj.setMember("sort_ms", JsonValue::fromNumber(stats.renderSortMs));
+  renderObj.setMember("submit_ms", JsonValue::fromNumber(stats.renderSubmitMs));
+  if (stats.renderGpuFrames == 0) {
+    renderObj.setMember("gpu_us", JsonValue());  // Null = "n/a"
+  } else {
+    renderObj.setMember("gpu_us",
+                        JsonValue::fromNumber(
+                            static_cast<double>(stats.renderGpuUs)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 GPU time to JSON number (M2-PROF-01, ARCH-009)
+  }
+  renderObj.setMember("gpu_frames",
+                      JsonValue::fromNumber(
+                          static_cast<double>(stats.renderGpuFrames)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 counter to JSON number (M2-PROF-01, ARCH-009)
+  renderObj.setMember("stall_us",
+                      JsonValue::fromNumber(
+                          static_cast<double>(stats.renderStallUs)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 stall wait to JSON number (M2-PROF-01, ARCH-009)
+  renderObj.setMember("stall_frames",
+                      JsonValue::fromNumber(
+                          static_cast<double>(stats.renderStallFrames)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 counter to JSON number (M2-PROF-01, ARCH-009)
+  renderObj.setMember("texture_memory_bytes",
+                      JsonValue::fromNumber(
+                          static_cast<double>(stats.renderTextureMemoryBytes)));  // LAIGE-DETERM-EXCEPTION: G-R8 report field: u64 VRAM estimate to JSON number (M2-PROF-01, ARCH-009)
+  root.setMember("render", std::move(renderObj));
 
   JsonValue systems = JsonValue::makeArray();
   for (std::uint32_t i = 1; i <= stats.systems; ++i) {

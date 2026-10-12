@@ -347,6 +347,58 @@ TEST(ProfilerCounters, RenderAndNetworkAddersAccumulate) {
   EXPECT_EQ(s.netBytes, 10u);
 }
 
+// The M2-PROF-01 render-timing feeds (RENDER-005): the CPU phase
+// times accumulate, the GPU/stall feeds count their completed
+// measurements, and the VRAM estimate is a gauge (the last value
+// wins).
+TEST(ProfilerCounters, RenderTimingAddersAccumulate) {
+  Profiler p(Profiler::Options{});
+  p.addRenderBatchMs(1.5);
+  p.addRenderBatchMs(1.5);
+  p.addRenderSortMs(2.5);
+  p.addRenderSubmitMs(0.7);
+  p.addRenderGpu(123);
+  p.addRenderGpu(456);
+  p.addRenderStall(2500);
+  p.setRenderTextureMemory(512);
+  p.setRenderTextureMemory(1024);  // the gauge: the last value wins
+  const ProfilerStats s = p.snapshot();
+  EXPECT_DOUBLE_EQ(s.renderBatchMs, 3.0);
+  EXPECT_DOUBLE_EQ(s.renderSortMs, 2.5);
+  EXPECT_DOUBLE_EQ(s.renderSubmitMs, 0.7);
+  EXPECT_EQ(s.renderGpuUs, 579u);
+  EXPECT_EQ(s.renderGpuFrames, 2u);
+  EXPECT_EQ(s.renderStallUs, 2500u);
+  EXPECT_EQ(s.renderStallFrames, 1u);
+  EXPECT_EQ(s.renderTextureMemoryBytes, 1024u);
+  // The reports render the GPU time from the completed measurements.
+  const std::string summary = formatProfileSummaryLine(s);
+  EXPECT_NE(summary.find("render_batch_ms=3"), std::string::npos);
+  EXPECT_NE(summary.find("render_sort_ms=2.5"), std::string::npos);
+  EXPECT_NE(summary.find("render_submit_ms=0.7"), std::string::npos);
+  EXPECT_NE(summary.find("render_gpu_us=579"), std::string::npos);
+  EXPECT_NE(summary.find("render_stall_frames=1"), std::string::npos);
+  EXPECT_NE(summary.find("render_texture_memory_bytes=1024"),
+            std::string::npos);
+}
+
+// The M2-PROF-01 "n/a" contract: with no completed GPU measurements
+// (the headless/offscreen fallback — never a fake number), the
+// summary line carries the GPU field as n/a, and the stall fields
+// stay zero.
+TEST(ProfilerCounters, RenderTimingGpuNAWhenNoMeasurements) {
+  Profiler p(Profiler::Options{});
+  p.addRenderBatchMs(1.5);
+  const ProfilerStats s = p.snapshot();
+  EXPECT_EQ(s.renderGpuUs, 0u);
+  EXPECT_EQ(s.renderGpuFrames, 0u);
+  EXPECT_EQ(s.renderStallUs, 0u);
+  EXPECT_EQ(s.renderStallFrames, 0u);
+  const std::string summary = formatProfileSummaryLine(s);
+  EXPECT_NE(summary.find("render_gpu_us=n/a"), std::string::npos);
+  EXPECT_EQ(summary.find("render_gpu_us=0"), std::string::npos);
+}
+
 TEST(ProfilerCounters, DisabledIsANoOpAndPreservesRecordedState) {
   Profiler p(Profiler::Options{});
   p.recordTick(1.0);
@@ -355,10 +407,18 @@ TEST(ProfilerCounters, DisabledIsANoOpAndPreservesRecordedState) {
   p.recordTick(3.0);
   p.recordFrame(4.0);
   p.addDrawCalls(9);
+  p.addRenderBatchMs(1.0);
+  p.addRenderGpu(123);
+  p.addRenderStall(2500);
+  p.setRenderTextureMemory(1024);
   const ProfilerStats s = p.snapshot();
   EXPECT_EQ(s.ticks, 1u);  // the disabled records are dropped
   EXPECT_EQ(s.frames, 1u);
   EXPECT_EQ(s.drawCalls, 0u);
+  EXPECT_DOUBLE_EQ(s.renderBatchMs, 0.0);  // the disabled feeds dropped
+  EXPECT_EQ(s.renderGpuFrames, 0u);
+  EXPECT_EQ(s.renderStallFrames, 0u);
+  EXPECT_EQ(s.renderTextureMemoryBytes, 0u);
   EXPECT_DOUBLE_EQ(s.tickTimeMs.min, 1.0);  // recorded state preserved
   p.setEnabled(true);
   p.recordTick(5.0);
@@ -577,6 +637,22 @@ TEST(ProfilerEngine, ReportIsWrittenAtRunEnd) {
   const laige::JsonValue* worldObj = root.findMember("world");
   ASSERT_NE(worldObj, nullptr);
   EXPECT_EQ(worldObj->findMember("systems")->asNumber(), 1.0);
+  // The M2-PROF-01 render object (RENDER-005): present on every
+  // report; a headless run has no render feed, so the GPU time is
+  // JSON null (the "n/a" reading — never a fake number).
+  const laige::JsonValue* renderObj = root.findMember("render");
+  ASSERT_NE(renderObj, nullptr);
+  ASSERT_TRUE(renderObj->isObject());
+  EXPECT_EQ(renderObj->findMember("batch_ms")->asNumber(), 0.0);
+  EXPECT_EQ(renderObj->findMember("sort_ms")->asNumber(), 0.0);
+  EXPECT_EQ(renderObj->findMember("submit_ms")->asNumber(), 0.0);
+  const laige::JsonValue* gpuUs = renderObj->findMember("gpu_us");
+  ASSERT_NE(gpuUs, nullptr);
+  EXPECT_TRUE(gpuUs->isNull());
+  EXPECT_EQ(renderObj->findMember("gpu_frames")->asNumber(), 0.0);
+  EXPECT_EQ(renderObj->findMember("stall_us")->asNumber(), 0.0);
+  EXPECT_EQ(renderObj->findMember("stall_frames")->asNumber(), 0.0);
+  EXPECT_EQ(renderObj->findMember("texture_memory_bytes")->asNumber(), 0.0);
   const laige::JsonValue* systems = root.findMember("systems");
   ASSERT_NE(systems, nullptr);
   ASSERT_TRUE(systems->isArray());
@@ -698,6 +774,13 @@ TEST(ProfilerReport, TextReportIsGreppable) {
   EXPECT_NE(text.find("laige-profile tick_ms: n=3"), std::string::npos);
   EXPECT_NE(text.find("laige-profile frame_ms: n=0"), std::string::npos);
   EXPECT_NE(text.find("laige-profile world:"), std::string::npos);
+  // The M2-PROF-01 render-timing section: no render subsystem feeds a
+  // headless run, so the GPU time is the "n/a" reading (never a fake
+  // number).
+  EXPECT_NE(text.find("laige-profile render: batch_ms=0"),
+            std::string::npos);
+  EXPECT_NE(text.find("gpu_us=n/a"), std::string::npos);
+  EXPECT_NE(text.find("texture_memory_bytes=0"), std::string::npos);
   EXPECT_NE(text.find("laige-profile system id=1 name=GLNoopA"),
             std::string::npos);
   EXPECT_NE(text.find("window: n=3"), std::string::npos);
@@ -741,6 +824,12 @@ TEST(ProfilerZeroAlloc, RecordPathAllocatesNothing) {
   p.addDrawCalls(1);
   p.addTextureBinds(1);
   p.addNetBytes(1);
+  p.addRenderBatchMs(1.0);
+  p.addRenderSortMs(1.0);
+  p.addRenderSubmitMs(1.0);
+  p.addRenderGpu(1);
+  p.addRenderStall(1);
+  p.setRenderTextureMemory(1);
   // The snapshot's stats() pass sorts into the pre-reserved scratch
   // buffer — no heap. (The format surface is a cold path and DOES
   // allocate — it is not part of the record path.)
