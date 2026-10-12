@@ -410,7 +410,10 @@ TEST(RenderTimingCpu, SmallScenePhaseTimes) {
   SpriteRenderer renderer;
   SpriteBatcher batcher;
   Mat4 matrix{};
-  const SpriteRenderer::Options ro{};  // defaults: gpuTiming off
+  SpriteRenderer::Options ro{};  // the documented domain defaults
+  ro.maxInstances = 16;
+  ro.maxAtlases = 2;
+  // gpuTiming off (the default)
   makeScene(ctx, renderer, batcher, matrix, ro, /*maxSprites=*/16);
 
   const std::vector<SpriteItem> items = sceneItems();
@@ -491,7 +494,9 @@ TEST(RenderTimingGpu, OffByDefaultIsNA) {
   SpriteRenderer renderer;
   SpriteBatcher batcher;
   Mat4 matrix{};
-  const SpriteRenderer::Options ro{};  // gpuTiming off (the default)
+  SpriteRenderer::Options ro{};  // gpuTiming off (the default)
+  ro.maxInstances = 16;
+  ro.maxAtlases = 2;
   makeScene(ctx, renderer, batcher, matrix, ro, /*maxSprites=*/16);
 
   const std::vector<SpriteItem> items = sceneItems();
@@ -518,6 +523,8 @@ TEST(RenderTimingGpu, OneFrameLateMeasurements) {
   SpriteBatcher batcher;
   Mat4 matrix{};
   SpriteRenderer::Options ro{};
+  ro.maxInstances = 16;
+  ro.maxAtlases = 2;
   ro.gpuTiming = true;
   makeScene(ctx, renderer, batcher, matrix, ro, /*maxSprites=*/16);
 
@@ -581,6 +588,7 @@ TEST(RenderTimingStall, LargeFrameUploadStalls) {
   Mat4 matrix{};
   SpriteRenderer::Options ro{};
   ro.maxInstances = 8192;
+  ro.maxAtlases = 2;
   ro.stallThresholdUs = 1;  // an artificial 1 us threshold
   makeScene(ctx, renderer, batcher, matrix, ro, /*maxSprites=*/8192);
 
@@ -630,7 +638,9 @@ TEST(RenderTimingStall, SmallFrameDoesNotStall) {
   SpriteRenderer renderer;
   SpriteBatcher batcher;
   Mat4 matrix{};
-  const SpriteRenderer::Options ro{};  // the default 2000 us threshold
+  SpriteRenderer::Options ro{};  // the default 2000 us threshold
+  ro.maxInstances = 16;
+  ro.maxAtlases = 2;
   makeScene(ctx, renderer, batcher, matrix, ro, /*maxSprites=*/16);
 
   // The 10-sprite frame: a 520 B upload — the wall time is far below
