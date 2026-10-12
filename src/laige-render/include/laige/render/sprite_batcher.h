@@ -220,6 +220,7 @@
 #pragma once
 
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -350,6 +351,34 @@ struct SpriteBatch {
   // batcher's at(slot) / get(slot)). Invalidated by the next
   // beginFrame()/build() — read within the frame.
   std::span<const std::uint32_t> instances{};
+};
+
+// ---------------------------------------------------------------------------
+// The batch stage's CPU-phase timing (M2-PROF-01, RENDER-005)
+// ---------------------------------------------------------------------------
+
+// The per-frame CPU-phase times of the batch stage (one successful
+// build's measurement; the render-thread timers — the batcher is the
+// cull/batch stage's owner, M2-GL-02). Wall-clock diagnostics
+// (ARCH-009): they never enter sim state, hashes, or replays.
+struct SpriteBatchTiming {
+  // The BATCH phase (ms): the frame's window, beginFrame() (or
+  // create, the first frame) up to build() start — the declaration
+  // work (the scene's declares, the parallax/tile declares).
+  double batchMs{0};
+  // The SORT phase (ms): build() itself (the M2-SORT-01 sort + the
+  // group pass + the instance scatter).
+  double sortMs{0};
+};
+
+// The since-construction CPU-phase totals (the profiler's cumulative
+// feed, PRD §10.4 / FR-11.1; the profiler reads it on the owner
+// thread, DBG-005).
+struct SpriteBatchTimingTotals {
+  // Successful builds recorded (== the frameTiming samples).
+  std::uint64_t frames{0};
+  double batchMs{0};
+  double sortMs{0};
 };
 
 namespace detail {
@@ -488,6 +517,22 @@ class SpriteBatcher {
   [[nodiscard]] std::uint64_t droppedTotal() const noexcept {
     return droppedTotal_;
   }
+  // The batch stage's CPU-phase timing of the last successful build
+  // (M2-PROF-01, RENDER-005 — the header's timing section). Zero in
+  // the default (stopped) state; a failed build keeps the last
+  // successful build's value.
+  // @budget O(1).
+  [[nodiscard]] SpriteBatchTiming frameTiming() const noexcept {
+    return frameTiming_;
+  }
+  // The since-construction CPU-phase totals (the M2-PROF-01 profiler
+  // feed). Zero in the default (stopped) state — a stopped batcher's
+  // empty-frame build records no timing (the stopped-state zero
+  // contract).
+  // @budget O(1).
+  [[nodiscard]] SpriteBatchTimingTotals timingTotals() const noexcept {
+    return timingTotals_;
+  }
   // The frame budget (the create() argument; 0 in the stopped state).
   // @budget O(1).
   [[nodiscard]] std::uint32_t capacity() const noexcept { return capacity_; }
@@ -526,7 +571,8 @@ class SpriteBatcher {
         instanceOrder_(std::make_unique<std::uint32_t[]>(capacity)),
         groups_(std::make_unique<detail::GroupDesc[]>(capacity)),
         groupCursor_(std::make_unique<std::uint32_t[]>(capacity)),
-        batches_(std::make_unique<SpriteBatch[]>(capacity)) {}
+        batches_(std::make_unique<SpriteBatch[]>(capacity)),
+        batchStartNs_(nowNs()) {}
 
   // The pool slot of the i-th declaration (0 = the oldest, in the ring
   // window order — the declaration/insertion order, FR-1.2). Only
@@ -534,6 +580,29 @@ class SpriteBatcher {
   std::uint32_t slotAt(std::uint32_t i) const noexcept {
     return static_cast<std::uint32_t>(
         (static_cast<std::uint64_t>(head_) + i) % capacity_);
+  }
+
+  // M2-PROF-01: the render-thread phase clock (steady_clock ns since
+  // epoch — the same clock the GameLoop profiler's TimeIt reads; a
+  // steady_clock read is one load, no allocation, no lock).
+  static std::int64_t nowNs() noexcept {
+    return std::chrono::steady_clock::now().time_since_epoch().count();
+  }
+
+  // M2-PROF-01: record one successful build's CPU-phase timing:
+  // batch = the frame's window (the beginFrame/create mark to build
+  // start, the declaration work), sort = build() itself. Stopped
+  // batchers (capacity_ == 0) record nothing — the stopped-state zero
+  // contract. Called once per successful build (the empty-frame and
+  // the full-frame paths alike).
+  void recordBuildTiming(std::int64_t sortStartNs) noexcept {
+    if (capacity_ == 0) return;
+    const std::int64_t sortEndNs = nowNs();
+    frameTiming_ = SpriteBatchTiming{(sortStartNs - batchStartNs_) / 1e6,
+                                     (sortEndNs - sortStartNs) / 1e6};
+    ++timingTotals_.frames;
+    timingTotals_.batchMs += frameTiming_.batchMs;
+    timingTotals_.sortMs += frameTiming_.sortMs;
   }
 
   // The lexicographic group-key comparison (the deterministic group
@@ -638,6 +707,15 @@ class SpriteBatcher {
   std::unique_ptr<std::uint32_t[]> groupCursor_;
   // The published batch descriptors (the batches() span aliases this).
   std::unique_ptr<SpriteBatch[]> batches_;
+  // M2-PROF-01: the render-thread phase timers (steady_clock ns since
+  // epoch — the GameLoop profiler's TimeIt is the same clock; two
+  // reads per frame, no allocation). batchStartNs_ marks the frame
+  // window's open (create for the first frame, beginFrame after);
+  // frameTiming_ / timingTotals_ are the last successful build's and
+  // the cumulative values (wall-clock diagnostics, ARCH-009).
+  std::int64_t batchStartNs_{0};
+  SpriteBatchTiming frameTiming_{};
+  SpriteBatchTimingTotals timingTotals_{};
 };
 
 // ---------------------------------------------------------------------------
@@ -673,6 +751,9 @@ inline void SpriteBatcher::beginFrame() noexcept {
   overrideCount_ = 0;
   frameOpen_ = true;
   frameBuilt_ = false;
+  // M2-PROF-01: mark the frame window's open (the batch phase's
+  // start — one steady_clock read, no allocation).
+  batchStartNs_ = nowNs();
 }
 
 inline Result<std::uint32_t> SpriteBatcher::add(SpriteItem item) noexcept {
@@ -728,12 +809,17 @@ inline Status SpriteBatcher::build() noexcept {
     // call beginFrame() first (the frame protocol is explicit).
     return Status(ErrorCode::InvalidArgument);
   }
+  // M2-PROF-01 (RENDER-005): the sort phase starts here (one
+  // steady_clock read; the batch phase is the window's open → now,
+  // recorded at the successful return).
+  const std::int64_t sortStartNs = nowNs();
   const std::uint32_t n = count_;
   batchCount_ = 0;
   groupCount_ = 0;
   if (n == 0) {
     frameOpen_ = false;
     frameBuilt_ = true;
+    recordBuildTiming(sortStartNs);
     return Status{};
   }
   // 1. The frame's keys in declaration (ring window) order — the
@@ -793,6 +879,7 @@ inline Status SpriteBatcher::build() noexcept {
                    laige::log::field("count", overrideCount_),
                    laige::log::field("override_total", overrideTotal_));
   }
+  recordBuildTiming(sortStartNs);
   return Status{};
 }
 

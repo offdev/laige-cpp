@@ -144,10 +144,17 @@
 // textureMemoryBytes() (the VRAM estimate: the bound atlases'
 // w*h*4 sum, updated at bindAtlas), and the G-R2 per-pass draw-call
 // cap (Options::maxDrawCalls — exceeding it WARNS + flags the frame,
-// it never drops the frame). The composite 50k render-CPU budget
-// (PRD §8.1, M2-PERF-01) is measured with this stage; no standalone
-// budgets.json entry here (the sort cost is the depth_sort_10k
-// budget — M2-SORT-01).
+// it never drops the frame). The M2-PROF-01 (RENDER-005) timing
+// fields: submitMs (the submit's CPU wall time), uploadWallUs /
+// uploadStalled (the implicit upload-sync stall detection — the CPU
+// waiting on the GPU's read of the REUSED instance buffer, measured
+// as the upload call's wall time, warned when above
+// Options::stallThresholdUs), gpuTimeUs / gpuTimeValid (the opt-in
+// GL TIME_ELAPSED pass time — one frame late, "n/a" when unavailable,
+// never a fake number), and the since-construction timing totals.
+// The composite 50k render-CPU budget (PRD §8.1, M2-PERF-01) is
+// measured with this stage; no standalone budgets.json entry here
+// (the sort cost is the depth_sort_10k budget — M2-SORT-01).
 //
 // Misuse warnings:
 //   - create the renderer with maxDrawCalls >= the batcher's group
@@ -170,7 +177,17 @@
 //   - the context must be valid; submit makes it current on the
 //     calling thread (idempotent — the M2-GL-02 onStart hook does it
 //     once, submit re-affirms it), a cross-thread live takeover
-//     fails GlUnavailable (the P0 EGL stack contract).
+//     fails GlUnavailable (the P0 EGL stack contract);
+//   - gpuTiming: the gpuTimeUs field reports the GPU time of the
+//     PREVIOUS pass (the measurement completes when the GPU finishes
+//     — one frame late in steady state); the first frame always
+//     reports n/a (gpuTimeValid false), and a GPU more than one
+//     frame behind leaves the intervening frames at n/a — an honest
+//     "GPU busy" reading, never a fake number;
+//   - stallThresholdUs: a threshold below a large frame's normal
+//     upload time fires the submit_stall warn EVERY frame (the frame
+//     is still drawn — the stall is observation, never an execution
+//     gate).
 
 #pragma once
 
@@ -202,6 +219,21 @@ namespace laige::render {
 // use), and `drawCallCapExceeded` (the G-R2 frame-graph flag: the
 // frame's draw calls exceeded Options::maxDrawCalls — the frame was
 // still drawn, the cap is observation, never an execution gate).
+// The M2-PROF-01 (RENDER-005) timing fields of the struct below:
+// `submitMs` is the submit call's CPU wall time (the render-thread
+// timer — the submit stage runs on the render thread, M2-GL-02);
+// `uploadWallUs` is the CPU wall time INSIDE the one glBufferSubData
+// upload (the frame's only implicit CPU/GPU sync point — the instance
+// buffer is reused every frame, so the driver may block until the GPU
+// finishes reading the previous frame's data); `uploadStalled` flags
+// uploads above Options::stallThresholdUs (the stall detection — one
+// rate-limited warn per stalled frame); `gpuTimeUs`/`gpuTimeValid`
+// are the opt-in GPU-side pass time (GL TIME_ELAPSED — the measurement
+// of the PREVIOUS frame's pass: the query completes when the GPU
+// finishes, so the value lags one frame in steady state;
+// `gpuTimeValid` false = "n/a": the option is off, the first frame, or
+// the GPU was still behind when the read was attempted — never a fake
+// number, the headless/offscreen fallback of the roadmap).
 struct SpriteDrawStats {
   std::uint32_t drawCalls{0};        // instanced draw calls (== group count)
   std::uint32_t textureBinds{0};     // texture binds in the sprite pass
@@ -212,12 +244,24 @@ struct SpriteDrawStats {
   std::uint64_t uploadBytes{0};      // the frame's instance upload, in bytes
   std::uint64_t renderTargetBytes{0};  // the render-target size drawn, in bytes
   bool drawCallCapExceeded{false};   // G-R2: draw calls exceeded the cap
+  // M2-PROF-01 timing (RENDER-005): CPU/GPU measured independently.
+  double submitMs{0};                // this submit's CPU wall time, ms
+  std::uint64_t uploadWallUs{0};     // the glBufferSubData CPU wall time, us
+  bool uploadStalled{false};         // uploadWallUs > stallThresholdUs
+  std::uint64_t gpuTimeUs{0};        // previous pass's GPU time, us (0 if !valid)
+  bool gpuTimeValid{false};          // false = "n/a" (the header note above)
 };
 
 // The since-construction totals (the frames counter counts successful
 // submits only). The M2-SPRITE-04 profiler reads these on the owner
 // thread (DBG-005). `capExceededFrames` counts the successful submits
-// whose draw calls exceeded the cap (the G-R2 frame-graph total).
+// whose draw calls exceeded the cap (the G-R2 frame-graph total). The
+// M2-PROF-01 timing totals: `submitMs` (the CPU wall-time sum),
+// `uploadStallUs`/`uploadStallFrames` (the stall detection's
+// cumulative wait + frame count — successful submits only), and
+// `gpuTimeUs`/`gpuTimeFrames` (the completed GPU measurements' sum +
+// count; `gpuTimeFrames` 0 = the profiler reports the GPU field as
+// "n/a").
 struct SpriteDrawTotals {
   std::uint64_t frames{0};
   std::uint64_t drawCalls{0};
@@ -229,6 +273,12 @@ struct SpriteDrawTotals {
   std::uint64_t uploadBytes{0};
   std::uint64_t renderTargetBytes{0};
   std::uint64_t capExceededFrames{0};
+  // M2-PROF-01 timing totals (RENDER-005).
+  double submitMs{0};                // the submits' CPU wall-time sum, ms
+  std::uint64_t uploadStallUs{0};    // the stalled uploads' wait sum, us
+  std::uint64_t uploadStallFrames{0};  // the stalled submits' frame count
+  std::uint64_t gpuTimeUs{0};        // the completed GPU measurements' sum, us
+  std::uint64_t gpuTimeFrames{0};    // the completed measurement count
 };
 
 // The submit stage of the frame pipeline (M2-SPRITE-02): one instanced
@@ -247,6 +297,13 @@ class SpriteRenderer {
   // calls — the 50k-sprite exit scene passes with 2x headroom, and a
   // scene that blows the cap by more than 2x is visible at a glance.
   static constexpr std::uint32_t kSpriteRendererDefaultDrawCalls = 64u;
+  // The documented default stall threshold (M2-PROF-01, RENDER-005):
+  // 2 ms, ~12% of the default 60 Hz frame period (16.67 ms). A
+  // CPU-side wait on the implicit upload sync (the glBufferSubData
+  // into the REUSED instance buffer — the frame's only CPU/GPU sync
+  // point) longer than that is a visible hitch; a normal 50k-frame
+  // upload (2.6 MB) queues in well under it on the P0 drivers.
+  static constexpr std::uint32_t kSpriteRendererDefaultStallUs = 2000u;
 
   // The submit stage's configuration (API-006): all fields are
   // validated at create (the first failure wins, one Warn).
@@ -284,6 +341,28 @@ class SpriteRenderer {
     // CPU/GPU sync, a DIAGNOSTIC mode for the offscreen test/CI path
     // and the profiler, never the shipping frame loop (RENDER-005).
     bool primitiveQuery{false};
+    // The opt-in per-pass GPU time (M2-PROF-01, RENDER-005): one
+    // GL TIME_ELAPSED query object wraps every submit's GL work
+    // (created at create, reused across frames — no per-frame GL
+    // allocation). The result is read on the NEXT submit (the
+    // measurement completes when the GPU finishes — one frame late
+    // in steady state; see the SpriteDrawStats note). OFF by default:
+    // zero GL work, zero cost. ON: one glBeginQuery/glEndQuery pair
+    // + one availability read per frame — NO CPU/GPU synchronization
+    // (unlike primitiveQuery's glFinish), so it is safe for the
+    // shipping frame loop as well as diagnostics. GL 3.3 core always
+    // supports timing queries; where the environment cannot (the
+    // headless/offscreen fallback, the roadmap), the frames simply
+    // report gpuTimeValid false ("n/a") — never a fake number.
+    bool gpuTiming{false};
+    // The stall threshold (M2-PROF-01, RENDER-005): the glBufferSubData
+    // upload's CPU wall time ABOVE which the submit is flagged as
+    // stalled (the CPU waited on the GPU's implicit sync) — one
+    // rate-limited Warn (`sprite_renderer/submit_stall`) per stalled
+    // frame, the cumulative counts in the totals. Domain
+    // [1, 0xFFFFFFFF]; the documented default is
+    // kSpriteRendererDefaultStallUs (2000 us).
+    std::uint32_t stallThresholdUs{kSpriteRendererDefaultStallUs};
   };
 
   // The stopped state (the failed create / moved-from): valid() is

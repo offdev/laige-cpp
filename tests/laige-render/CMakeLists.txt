@@ -233,7 +233,29 @@
 # 30-draw-call budget), the 2-widget UI pass (the quads, the one
 # group, the two depth overrides), and the 1 000-frame zero-
 # allocation declare loop) — pure data + batcher bookkeeping: no GL
-# environment needed.
+# environment needed; and the CPU/GPU render timing (M2-PROF-01,
+# RENDER-005) — the per-pass CPU phase times from the render-thread
+# timers (the batcher's batch/sort phases + the submit's CPU wall
+# time), the opt-in per-pass GPU time via the GL TIME_ELAPSED query
+# object (one frame late, "n/a" when unavailable — never a fake
+# number), the implicit upload-sync stall detection (the CPU waiting
+# on the GPU's read of the reused instance buffer, one rate-limited
+# Warn per stalled frame), and the profiler feed (render_timing_tests.cpp's
+# RenderTiming* suites: the stallThresholdUs create validation
+# (first failure wins, one Warn) + the stopped state reads zero (no
+# GL), the small scene's CPU phase times with the EXACT since-
+# construction totals + the empty frame recording nothing + the
+# profiler feed of the render values, the GPU timing's off-by-default
+# n/a + the one-frame-late semantics under glFinish-paced frames, the
+# stall detection (a 4096-sprite frame under a 1 us threshold stalls
+# — one Warn per stalled frame with the pinned fields; a small frame
+# under the default threshold does not), and the roadmap's
+# integration check (a deliberately slow shader — a 16384-iteration
+# dependent sin loop — makes the GPU-side pass time exceed the
+# CPU-side submit time on a hardware-GL runner, SKIPPED on software
+# renderers where the CPU is the GPU and the driver is synchronous))
+# — the GL suites need a usable OpenGL 3.3 environment (the documented
+# environment contract: GTEST_SKIPs where absent).
 #
 # One executable per module (tests/README.md): laige-render_tests links
 # the module under test plus gtest_main. The unfiltered entry runs the
@@ -264,11 +286,13 @@
 # particle_render`), the `font` entry is the M2-TEXT-01 Verify command
 # (`ctest -R font`), the `ui_tree` entry is the M2-UI-01 Verify
 # command (`ctest -R ui_tree`), and the `ui_render` entry is the
-# M2-UI-02 Verify command (`ctest -R ui_render`), and the `scene_iso`
-# entry is the M2-SCENE-01 Verify command (`ctest -R scene_iso`), each
-# selecting exactly its suites from the shared executable (the CLI's
-# same-seed byte-identity gate is the separate `scene_iso_cli` entry
-# in tools/scene-iso). (The unanchored `ctest -R tilemap` regex also
+# M2-UI-02 Verify command (`ctest -R ui_render`), the `scene_iso`
+# entry is the M2-SCENE-01 Verify command (`ctest -R scene_iso`), and
+# the `render_timing` entry is the M2-PROF-01 Verify command
+# (`ctest -R render_timing`), each selecting exactly its suites from
+# the shared executable (the CLI's same-seed byte-identity gate is
+# the separate `scene_iso_cli` entry in tools/scene-iso). (The
+# unanchored `ctest -R tilemap` regex also
 # selects the `tilemap_anim` entry — the M2-TILE-02 suites run under
 # the M2-TILE-01 command too; that is intended. Likewise the
 # unanchored `ctest -R particle` regex selects the M2-PART-01
@@ -276,16 +300,19 @@
 # steps' suites running under one command is intended.)
 #
 # Environment note: the GlContextSmoke, RenderThreadOffscreen,
-# SpriteDraw{State,Smoke,Pipeline}, and RenderCounters{Scene,Cap,
-# Memory} suites require a usable OpenGL 3.3 environment — always
-# present on the P0 CI runners (Mesa/ANGLE/Apple/Windows software or
-# hardware drivers), where they must pass. On a local machine without
-# a GL driver the suites GTEST_SKIP with the clean Status reason — the
-# documented environment contract (docs/api/gl_context.md), not an
-# engine failure. The GlContextGate/GlContextArgs/FrameClock/
-# RenderThreadHandoff/SpriteDrawCreate/RenderCountersCreate/TileMap*/
-# TileMapAnim*/Parallax*/Font* suites always run (they make no GL
-# calls).
+# SpriteDraw{State,Smoke,Pipeline}, RenderCounters{Scene,Cap,Memory},
+# and RenderTiming{Cpu,Gpu,Stall,SlowShader} suites require a usable
+# OpenGL 3.3 environment — always present on the P0 CI runners
+# (Mesa/ANGLE/Apple/Windows software or hardware drivers), where they
+# must pass (RenderTimingSlowShader additionally SKIPS on a software
+# renderer — its GPU>CPU observation is defined for the hardware-GL
+# desktop runner). On a local machine without a GL driver the suites
+# GTEST_SKIP with the clean Status reason — the documented
+# environment contract (docs/api/gl_context.md), not an engine
+# failure. The GlContextGate/GlContextArgs/FrameClock/
+# RenderThreadHandoff/SpriteDrawCreate/RenderCountersCreate/
+# RenderTimingCreate/TileMap*/TileMapAnim*/Parallax*/Font* suites
+# always run (they make no GL calls).
 
 add_executable(laige-render_tests
   gl_context_tests.cpp render_thread_tests.cpp matrices_tests.cpp
@@ -295,13 +322,19 @@ add_executable(laige-render_tests
   sprite_frames_tests.cpp render_counters_tests.cpp tilemap_tests.cpp
   tilemap_anim_tests.cpp parallax_tests.cpp particle_render_tests.cpp
   font_tests.cpp text_items_tests.cpp font_sdf_tests.cpp ui_tree_tests.cpp
-  ui_render_tests.cpp scene_iso_tests.cpp)
+  ui_render_tests.cpp scene_iso_tests.cpp render_timing_tests.cpp)
 laige_apply_engine_policy(laige-render_tests)
 target_link_libraries(laige-render_tests PRIVATE gtest_main laige-render)
 # The randomized suites draw through the test-only seed helper
 # (docs/testing.md §4; tests/support/laige_test_seed.h).
 target_include_directories(laige-render_tests PRIVATE
   ${CMAKE_SOURCE_DIR}/tests/support)
+# M2-PROF-01: the slow-shader fixture drives raw GL (the GL_TIME_ELAPSED
+# query object around a deliberately slow fragment shader) — the
+# vendored GLAD loader's headers (laige-render's PRIVATE include,
+# the module boundary keeps the public headers vendor-free).
+target_include_directories(laige-render_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/deps/glad/include)
 
 add_test(NAME laige-render_tests COMMAND laige-render_tests)
 # The unfiltered entry also runs the M2-ISO-02 budget suite (in the
@@ -564,6 +597,17 @@ set_tests_properties(ui_render PROPERTIES
 add_test(NAME scene_iso COMMAND laige-render_tests
           --gtest_filter=IsoReferenceScene*)
 
+# M2-PROF-01: the step's Verify command is `ctest -R render_timing`.
+# RenderTimingCreate runs without any GL environment;
+# RenderTiming{Cpu,Gpu,Stall,SlowShader} need the same usable OpenGL
+# 3.3 environment as the RenderCounters{Scene,Cap,Memory} suites
+# (GTEST_SKIPs where absent — the documented environment contract).
+# The 4096-sprite stall frame and the slow-shader fixture are the
+# entry's heaviest work. No budget gate: the step's roadmap scope has
+# no standalone budgets.json entry.
+add_test(NAME render_timing COMMAND laige-render_tests
+         --gtest_filter=RenderTiming*)
+
 if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_DEPTH_BUDGET=1)
   target_compile_definitions(laige-render_tests PRIVATE LAIGE_ISO_PICK_BUDGET=1)
@@ -598,6 +642,10 @@ if(LAIGE_TSAN)
   # the M2-SPRITE-04 counters are plain owner-thread state (no shared
   # state of the step's own) — the GL suites run single-threaded, so
   # the entry gates the engine's GL teardown ordering under TSan.
+  # The `render_timing` entry is a fourth: its timing fields are plain
+  # owner-thread state (no shared state of the step's own) — the GL
+  # suites run single-threaded, so the entry gates the engine's GL
+  # teardown ordering under TSan.
   # The test-level
   # ENVIRONMENT replaces the job-level one, so the budgets path is
   # restated here.
@@ -605,7 +653,8 @@ if(LAIGE_TSAN)
     iso_depth_key iso_depth_table camera iso_camera projection
     iso_picking depth_sort batcher sprite_draw sprite_frames
     render_counters tilemap tilemap_anim parallax particle_render font
-    text_items font_sdf ui_tree ui_render scene_iso PROPERTIES
+    text_items font_sdf ui_tree ui_render scene_iso render_timing
+    PROPERTIES
     ENVIRONMENT
     "TSAN_OPTIONS=halt_on_error=1;LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
@@ -628,8 +677,9 @@ if(LAIGE_ASAN)
   # GlContextSmoke, render_thread's RenderThreadOffscreen, sprite_draw's
   # SpriteDraw{State,Smoke,Pipeline}, render_counters's
   # RenderCounters{Scene,Cap,Memory}, text_items's TextSmoke,
-  # font_sdf's FontSdfSmoke, and ui_render's UiRenderSmoke suites
-  # create the same headless context):
+  # font_sdf's FontSdfSmoke, ui_render's UiRenderSmoke, and the
+  # M2-PROF-01 render_timing entry's GL suites create the same
+  # headless context):
   # in-run ASan/UBSan error detection stays fully active (the smoke
   # still performs its GL work under the sanitizer). The font entry is
   # on the list for the same reason since M2-TEXT-03: its `Font*` filter
@@ -644,7 +694,8 @@ if(LAIGE_ASAN)
   # font_sdf), so the replacement environment carries the test-font
   # path as well (harmless on the entries that do not use it).
   set_tests_properties(laige-render_tests gl_context render_thread
-    sprite_draw render_counters text_items font font_sdf ui_render PROPERTIES
+    sprite_draw render_counters text_items font font_sdf ui_render
+    render_timing PROPERTIES
     ENVIRONMENT
     "ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=${CMAKE_SOURCE_DIR}/asan-reports/asan;LAIGE_TEST_FONT_PATH=${CMAKE_SOURCE_DIR}/tests/laige-render/assets/vera.ttf")
 endif()
@@ -717,3 +768,9 @@ set_tests_properties(ui_render PROPERTIES TIMEOUT 120)
 # particles per declare) and runs the 1 000-frame zero-allocation loop
 # (small variant) — 120s, like the same-shaped entries.
 set_tests_properties(scene_iso PROPERTIES TIMEOUT 120)
+# The `render_timing` entry renders a few 10-sprite frames, two
+# 4096-sprite stall frames, and one slow-shader fixture (the
+# 16384-iteration dependent sin loop over a 128x128 FBO) — generous
+# headroom for a slow headless runner, like the `render_counters`
+# entry.
+set_tests_properties(render_timing PROPERTIES TIMEOUT 120)

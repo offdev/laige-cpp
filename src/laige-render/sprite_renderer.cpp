@@ -20,6 +20,7 @@
 #include <glad/gl.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -124,6 +125,13 @@ const void* bufferOffset(std::size_t bytes) {
   return reinterpret_cast<const void*>(static_cast<std::uintptr_t>(bytes));
 }
 
+// M2-PROF-01 (RENDER-005): the render-thread phase clock (steady_clock
+// ns since epoch — the batcher's SpriteBatchTiming timers use the same
+// clock; two to four reads per submit, no allocation, no lock).
+std::int64_t nowNs() {
+  return std::chrono::steady_clock::now().time_since_epoch().count();
+}
+
 // The driver's info log, bounded + control-character-sanitized for
 // logging (LOG-005): at most 256 printable characters.
 std::string sanitizeInfoLog(const std::string& log) {
@@ -199,6 +207,23 @@ struct SpriteRenderer::Impl {
   // section: diagnostic mode, zero cost when off).
   bool primitiveQuery{false};
 
+  // M2-PROF-01 (RENDER-005): the per-pass GPU timing + the stall
+  // detection. gpuTiming is the opt-in switch (zero GL work when off);
+  // gpuQuery is the ONE reusable GL TIME_ELAPSED query object (created
+  // at create, reused every frame — no per-frame GL allocation);
+  // gpuPending marks a measurement that ended and awaits GPU
+  // completion; gpuMeasuring marks one begun (this frame) not yet
+  // ended; gpuPoisoned marks a pending measurement whose submit FAILED
+  // (its value is discarded when it completes). submitStartNs is this
+  // submit's CPU wall-time start (steady_clock ns).
+  bool gpuTiming{false};
+  std::uint32_t stallThresholdUs{0};
+  std::uint32_t gpuQuery{0};
+  bool gpuPending{false};
+  bool gpuMeasuring{false};
+  bool gpuPoisoned{false};
+  std::int64_t submitStartNs{0};
+
   // Per-frame state (reset at the start of every submit; a failed
   // submit leaves them ZERO). The last-TEXTURE (not last-atlas-id)
   // tracking: a re-bind on the SAME atlas id (the bindAtlas "last
@@ -243,6 +268,10 @@ struct SpriteRenderer::Impl {
     if (program != 0) {
       glDeleteProgram(program);
       program = 0;
+    }
+    if (gpuQuery != 0) {
+      glDeleteQueries(1, &gpuQuery);
+      gpuQuery = 0;
     }
   }
 
@@ -324,6 +353,12 @@ laige::Result<SpriteRenderer, laige::ErrorCode> SpriteRenderer::create(
              options.maxDrawCalls > kSpriteRendererMaxInstances) {
     badOption = "maxDrawCalls";
     badValue = options.maxDrawCalls;
+  } else if (options.stallThresholdUs < 1) {
+    // M2-PROF-01: the stall threshold's domain is [1, 0xFFFFFFFF]
+    // (the u32 width is the upper bound; the value 0 has no meaning —
+    // every upload would be flagged).
+    badOption = "stallThresholdUs";
+    badValue = options.stallThresholdUs;
   }
   if (badOption != nullptr) {
     LAIGE_LOG_WARN("sprite_renderer", "options_invalid",
@@ -351,6 +386,8 @@ laige::Result<SpriteRenderer, laige::ErrorCode> SpriteRenderer::create(
   impl->maxAtlases = options.maxAtlases;
   impl->maxDrawCalls = options.maxDrawCalls;
   impl->primitiveQuery = options.primitiveQuery;
+  impl->gpuTiming = options.gpuTiming;
+  impl->stallThresholdUs = options.stallThresholdUs;
   impl->maxTextureSize = ctx.capabilities().maxTextureSize;
   impl->atlases = std::make_unique<Impl::Atlas[]>(options.maxAtlases);
   impl->staging =
@@ -524,6 +561,23 @@ laige::Result<SpriteRenderer, laige::ErrorCode> SpriteRenderer::create(
     return fail("vao_setup", vaoError, nullptr);
   }
 
+  // 4e. The opt-in per-pass GPU timing query (M2-PROF-01,
+  // RENDER-005): ONE reusable GL TIME_ELAPSED query object — created
+  // once here, reused every frame (no per-frame GL allocation),
+  // zero GL work when the option is off (PERF-002/004).
+  if (options.gpuTiming) {
+    GLuint gpuQuery = 0;
+    glGenQueries(1, &gpuQuery);
+    if (gpuQuery == 0) {
+      glDeleteBuffers(1, &quadVbo);
+      glDeleteBuffers(1, &instanceVbo);
+      glDeleteVertexArrays(1, &vao);
+      glDeleteProgram(program);
+      return fail("gpu_query", glGetError(), nullptr);
+    }
+    impl->gpuQuery = gpuQuery;
+  }
+
   impl->quadVbo = quadVbo;
   impl->instanceVbo = instanceVbo;
   impl->vao = vao;
@@ -673,6 +727,22 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
   // A failed submit (any stage below) leaves the frame counters ZERO
   // and the since-construction totals UNCHANGED.
   i.frame = SpriteDrawStats{};
+  // M2-PROF-01 (RENDER-005): the submit phase's CPU timer starts (one
+  // steady_clock read, no allocation; the end is read at the totals
+  // commit below).
+  i.submitStartNs = nowNs();
+  // M2-PROF-01: a failed submit poisons the in-flight GPU measurement
+  // (this frame's, if begun — its value is discarded when it
+  // completes). A previous frame's still-pending measurement is NOT
+  // poisoned (it belongs to a successful submit).
+  const auto poisonGpuMeasurement = [&i]() {
+    if (i.gpuMeasuring) {
+      glEndQuery(GL_TIME_ELAPSED);
+      i.gpuMeasuring = false;
+      i.gpuPending = true;
+      i.gpuPoisoned = true;
+    }
+  };
   // 2. The context current on this thread (idempotent makeCurrent —
   //    the M2-GL-02 onStart hook did it once; a cross-thread live
   //    takeover fails GlUnavailable, the P0 EGL contract).
@@ -733,6 +803,45 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
     return laige::Status{};
   }
 
+  // M2-PROF-01 (RENDER-005): the opt-in GPU-side pass time. The
+  // measurement of THIS frame wraps the pass's GL work below (begun
+  // here, ended after the draws); the value of the PREVIOUS frame's
+  // measurement is read when it completes — one frame late in steady
+  // state, and "n/a" (gpuTimeValid false) while the GPU is still
+  // behind. No CPU/GPU synchronization (unlike the primitiveQuery's
+  // glFinish — RENDER-005), so it is safe for the shipping frame
+  // loop as well as diagnostics.
+  if (i.gpuTiming) {
+    if (i.gpuPending) {
+      // The previous frame's measurement: read it if the GPU has
+      // finished (the value is consumed either way — the object is
+      // reused); a poisoned value (a failed submit) is discarded.
+      GLint available = 0;
+      glGetQueryObjectiv(i.gpuQuery, GL_QUERY_RESULT_AVAILABLE, &available);
+      if (available != 0) {
+        if (!i.gpuPoisoned) {
+          std::uint32_t us = 0;
+          glGetQueryObjectuiv(i.gpuQuery, GL_QUERY_RESULT, &us);
+          i.frame.gpuTimeUs = us;
+          i.frame.gpuTimeValid = true;
+        }
+        i.gpuPending = false;
+        i.gpuPoisoned = false;
+      }
+      // Still pending: the GPU is behind — this frame measures nothing
+      // (gpuTimeValid stays false, the honest "n/a" reading).
+    }
+    if (!i.gpuPending) {
+      // Begin this frame's measurement. The object is valid and not
+      // pending (both checked above / at create), so glBeginQuery
+      // cannot fail; a begin failure would surface at the next GL
+      // error check below (the frame fails honestly, as any GL error
+      // does).
+      glBeginQuery(GL_TIME_ELAPSED, i.gpuQuery);
+      i.gpuMeasuring = true;
+    }
+  }
+
   // 6. The sprite-pass state (the header's GL state model): the
   //    render-target frame buffer (the offscreen FBO on headless —
   //    the surfaceless default frame buffer is not a valid draw
@@ -790,16 +899,36 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
   //    uploadBytes).
   i.frame.uploadBytes =
       static_cast<std::uint64_t>(n) * static_cast<std::uint64_t>(kInstanceBytes);
+  // M2-PROF-01 (RENDER-005): the upload's CPU wall time — the frame's
+  // only implicit CPU/GPU sync point (the instance buffer is REUSED
+  // every frame, so the driver may block until the GPU finishes
+  // reading the previous frame's data; two steady_clock reads).
+  const std::int64_t uploadStartNs = nowNs();
   glBindBuffer(GL_ARRAY_BUFFER, i.instanceVbo);
   glBufferSubData(GL_ARRAY_BUFFER, 0,
                   static_cast<GLsizeiptr>(static_cast<std::size_t>(n) *
                                           kInstanceBytes),
                   i.staging.get());
+  i.frame.uploadWallUs =
+      static_cast<std::uint64_t>((nowNs() - uploadStartNs) / 1000);
+  // The stall detection: the CPU waited on the GPU longer than the
+  // threshold. The frame is still drawn (observation, never an
+  // execution gate — the G-R2 precedent); one rate-limited Warn per
+  // stalled frame (LOG-004).
+  if (i.frame.uploadWallUs > i.stallThresholdUs) {
+    i.frame.uploadStalled = true;
+    LAIGE_LOG_WARN("sprite_renderer", "submit_stall",
+                   "The instance upload waited on the GPU (implicit "
+                   "sync); the frame is still drawn",
+                   laige::log::field("stall_us", i.frame.uploadWallUs),
+                   laige::log::field("upload_bytes", i.frame.uploadBytes));
+  }
   const GLenum uploadError = glGetError();
   if (uploadError != GL_NO_ERROR) {
     glUseProgram(0);
     glBindVertexArray(0);
     i.frame = SpriteDrawStats{};  // a failed submit counts nothing
+    poisonGpuMeasurement();
     LAIGE_LOG_ERROR("sprite_renderer", "submit_failed",
                     "The instance upload failed; the frame is not drawn",
                     laige::log::field("gl_error",
@@ -818,6 +947,7 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
       glUseProgram(0);
       glBindVertexArray(0);
       i.frame = SpriteDrawStats{};  // a failed submit counts nothing
+      poisonGpuMeasurement();
       LAIGE_LOG_ERROR("sprite_renderer", "submit_failed",
                       "The primitive query object could not be created; "
                       "the frame is not drawn",
@@ -890,11 +1020,23 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
     glUseProgram(0);
     glBindVertexArray(0);
     i.frame = SpriteDrawStats{};
+    poisonGpuMeasurement();
     LAIGE_LOG_ERROR("sprite_renderer", "submit_failed",
                     "A group draw failed; the frame is not counted",
                     laige::log::field("gl_error",
                                       static_cast<std::uint32_t>(drawError)));
     return laige::Status(laige::ErrorCode::GlUnavailable);
+  }
+
+  // M2-PROF-01 (RENDER-005): end THIS frame's GPU measurement now that
+  // the draws succeeded (the interval covers the pass's GL work). The
+  // value is read on the NEXT submit — one frame late in steady state
+  // (the GPU finishes its own work asynchronously; no synchronization
+  // here, RENDER-005).
+  if (i.gpuMeasuring) {
+    glEndQuery(GL_TIME_ELAPSED);
+    i.gpuMeasuring = false;
+    i.gpuPending = true;
   }
 
   // The opt-in primitive read: the diagnostic sync makes the query
@@ -928,6 +1070,21 @@ laige::Status SpriteRenderer::submit(SpriteBatcher& batcher,
   i.totals.renderTargetBytes += i.frame.renderTargetBytes;
   if (i.frame.drawCallCapExceeded) {
     i.totals.capExceededFrames += 1;
+  }
+  // M2-PROF-01 (RENDER-005): the CPU/GPU timing totals — the submit
+  // phase's CPU wall time (the whole submit() call, including the
+  // opt-in primitiveQuery's glFinish when that diagnostic is on), the
+  // stall detection's cumulative wait, and the completed GPU
+  // measurements (the frame field carries the PREVIOUS pass's value).
+  i.frame.submitMs = (nowNs() - i.submitStartNs) / 1e6;
+  i.totals.submitMs += i.frame.submitMs;
+  if (i.frame.uploadStalled) {
+    i.totals.uploadStallFrames += 1;
+    i.totals.uploadStallUs += i.frame.uploadWallUs;
+  }
+  if (i.frame.gpuTimeValid) {
+    i.totals.gpuTimeUs += i.frame.gpuTimeUs;
+    i.totals.gpuTimeFrames += 1;
   }
   return laige::Status{};
 }

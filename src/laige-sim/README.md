@@ -199,3 +199,23 @@ The render half (particles as batched sprites) lands in M2-PART-02.
 The editor overlay surface (M2), the detcheck matrix (M1-DET-04),
 and the remaining M1 steps land next; physics, input, and animation
 in M3.
+M2-PROF-01 landed the profiler's render-timing feeds (the M2 render
+step's half — RENDER-005, CPU and GPU measured independently):
+`ProfilerStats` gained the render counters (the since-construction
+`renderBatchMs` / `renderSortMs` / `renderSubmitMs` sums, the
+completed GPU measurements' `renderGpuUs` / `renderGpuFrames`, the
+stall waits' `renderStallUs` / `renderStallFrames`, and the
+`renderTextureMemoryBytes` gauge), and `Profiler` gained the
+primitive-typed feeds (`addRenderBatchMs` / `addRenderSortMs` /
+`addRenderSubmitMs` / `addRenderGpu` / `addRenderStall` /
+`setRenderTextureMemory` — `laige-sim` cannot depend on
+`laige-render` types, ARCH-001, so the render thread feeds the
+primitive values). The reports gained the render section: the
+`laige-profile render:` text line, the JSON report's `"render"`
+object (`gpu_us` is `null` until the first completed GPU
+measurement), and the summary line's render fields (`render_gpu_us`
+renders `n/a` in the same case). All timing values are wall-clock
+diagnostics (ARCH-009). API contract in
+[docs/api/profiler.md](../docs/api/profiler.md); tests under
+[tests/laige-sim](../tests/laige-sim) (the counter-model tests in the
+`profiler` CTest entry).

@@ -48,6 +48,11 @@ struct SpriteBatch {             // one output group (the submit stage's read)
   std::span<const std::uint32_t> instances{};  // pool slots, back-to-front
 };
 
+struct SpriteBatchTiming {       // this frame's CPU phase times (M2-PROF-01)
+  double batchMs{};              // beginFrame() (or create, frame 1) -> build() start
+  double sortMs{};               // build() itself (the sort + group + scatter), ms
+};
+
 class SpriteBatcher {
  public:
   struct Options { std::uint32_t maxSprites{}; };  // the frame budget
@@ -63,6 +68,8 @@ class SpriteBatcher {
   [[nodiscard]] std::uint32_t overrideCount() const noexcept;  // this frame (G-R11)
   [[nodiscard]] std::uint64_t overrideTotal() const noexcept;  // cumulative (G-R11)
   [[nodiscard]] std::uint64_t droppedTotal() const noexcept;   // cumulative overflow
+  [[nodiscard]] SpriteBatchTiming frameTiming() const noexcept;  // M2-PROF-01
+  [[nodiscard]] SpriteBatchTimingTotals timingTotals() const noexcept;  // since build
   [[nodiscard]] std::uint32_t capacity() const noexcept;
   [[nodiscard]] PoolStats itemPoolStats() const noexcept;
   [[nodiscard]] const SpriteItem* get(std::uint32_t slot) noexcept;  // null-safe
@@ -117,6 +124,16 @@ The frame protocol (the frame pipeline's cull/batch stage, M2-GL-02):
   `beginFrame`) and `overrideTotal()` (cumulative) — the profiler's
   feeds (PRD §10.4); `droppedTotal()` (cumulative overflow);
   `itemPoolStats()` (the pool's accounting snapshot).
+- **CPU phase timing (M2-PROF-01, RENDER-005)**: `frameTiming()` (this
+  frame: `batchMs` = the frame's window, `beginFrame()`/create up to
+  `build()` start — the declaration work; `sortMs` = `build()`
+  itself) and `timingTotals()` (since construction, successful builds
+  only) — the profiler's `addRenderBatchMs` / `addRenderSortMs`
+  feeds (sprite_renderer.md's Render timing section). Two
+  `steady_clock` reads per frame (plus one at create for frame 1's
+  window), no allocation, wall-clock diagnostics only (ARCH-009 —
+  never sim/replay state). The stopped state (capacity 0) records
+  nothing: both structs read zero.
 
 ## Grouping and order (RENDER-001/003)
 
