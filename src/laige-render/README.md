@@ -313,6 +313,23 @@ software GL on the CI offscreen path; the suites self-
 entry: the composite 50k render-CPU budget is measured with this stage
 (M2-PERF-01).
 
+M2-GOLD-01 landed the golden image test infrastructure (TEST-008):
+`GlContext::readPixels` (the rectangle readback beside `readPixel`:
+one `glReadPixels`, the same precondition contract — stopped / not
+current / out-of-bounds / null buffer return `InvalidArgument`) and
+the `laige-golden` tool (tools/golden), which renders the committed
+golden scene fixtures (the M2-SPRITE-02 sprite scene and the
+M2-UI-02 UI scene — the GL-free builders in tests/golden) offscreen
+at the canonical 1280x720 frame with a fixed camera, captures the
+whole frame, and compares it against the committed reference PNGs
+with the explicit tolerance (max channel diff 2 + 0.001% pixel
+budget). CTest entries: `golden` (the offscreen compare; exit 77 =
+no usable GL environment, skipped via SKIP_RETURN_CODE) and
+`golden_compare` (the GL-free comparison core + fixture shape
+invariants). Contract in
+[docs/testing.md](../docs/testing.md) (section 6) and
+[tools/golden/references/README.md](../tools/golden/references/README.md).
+
 M2-SPRITE-03 landed the atlas UV frame animation hook — the
 data-driven half of FR-2.1's "atlas UV animation (sheet frames)": the
 atlas sheet frame LAYOUT (`SpriteFrameLayout`: frame size, row/col,

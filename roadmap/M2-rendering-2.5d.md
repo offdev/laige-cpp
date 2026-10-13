@@ -560,7 +560,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     documented contract spans the renderer + batcher + profiler +
     five docs, per CORE-006/DOC-004).
 
-- [ ] **M2-GOLD-01 · Golden image test infrastructure**
+- [x] **M2-GOLD-01 · Golden image test infrastructure**
   - **Refs:** TEST-008 (golden tests, explicit tolerances)
   - **Depends:** M2-SPRITE-02
   - **Scope:**
@@ -569,6 +569,40 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     - Wire the first two fixtures: sprite scene (M2-SPRITE-02) and UI scene (M2-UI-02).
   - **Verify:** `ctest -R golden` green on CI (deterministic offscreen render — if a driver breaks determinism, the CI job pins the failing environment and the step is reopened; no silent tolerance inflation).
   - **Size:** ~250 lines + tests
+  - **Shipped:** M2-GOLD-01: the offscreen golden-frame capture lands as
+    `GlContext::readPixels` (the rectangle readback beside
+    `readPixel`: one `glReadPixels`, the same precondition contract —
+    stopped / not-current / out-of-bounds / null buffer return
+    `InvalidArgument`), and the `laige-golden` tool (tools/golden)
+    renders the first two committed fixtures at the canonical
+    1280×720 frame with fixed cameras and no PRNG (the M2-SPRITE-02
+    1000-sprite scene + the M2-UI-02 UI scene — GL-free builders in
+    tests/golden whose scene-shape invariants are pinned by the
+    `GoldenFixtures*` suite, ctest entry `golden_compare`) and
+    compares the captured frame against the committed reference PNGs
+    with the explicit tolerance (max channel diff 2 inclusive + a
+    0.001% pixel budget — floor of the product, 9 of 921 600 pixels
+    on the canonical frame — passed as flags by the `golden` ctest
+    entry, never hidden). `--update` re-renders the references
+    atomically (temp file + rename) and is the human-approved
+    regeneration path — never run under ctest; the CI form is the
+    `workflow_dispatch`-only `.github/workflows/golden-update.yml`
+    (the PR lane cannot upload artifacts — the pull_request token is
+    read-only — so the run prints each reference to its log as
+    single-line base64 between `GOLDEN_REFERENCE_BEGIN` /
+    `GOLDEN_REFERENCE_END` markers for the committing human to decode
+    and review). `ctest -R golden` selects both entries (the
+    unanchored regex, the documented tilemap/tilemap_anim
+    precedent). Environment contract: no usable OpenGL 3.3
+    environment (the macOS runners) → exit 77 → ctest skip
+    (SKIP_RETURN_CODE); the Linux trees (Mesa surfaceless EGL +
+    llvmpipe) and Windows run the real comparison. `stb_image` /
+    `stb_image_write` join the existing pinned stb dependency (the
+    laige-stb target compiles the three implementations; deps.lock
+    re-hashed; PRD §11's stb row already covers both headers, so the
+    vendored count stays 5). `laige-api.json` regenerated LAST
+    (1851 → 1852 symbols). No `budgets.json` entry (the count stays
+    17).
 
 - [ ] **M2-AC-01 · AC-4.x acceptance suite**
   - **Refs:** PRD §4 AC-4.1 … AC-4.4

@@ -56,14 +56,19 @@ add_library(laige-glad STATIC ${CMAKE_SOURCE_DIR}/deps/glad/src/gl.c)
 target_include_directories(laige-glad PRIVATE
   ${CMAKE_SOURCE_DIR}/deps/glad/include)
 
-# stb_truetype (M2-TEXT-01, ADR 0009): the single-header font rasterizer,
-# pinned in deps/stb (deps.lock). The implementation compiles ONCE in
-# this target under the plain compiler policy (pinned vendor code,
-# DEP-005 — the laige-glad precedent); the engine boundary is
-# font.cpp, which includes the vendor header's declarations and links
-# this target (PRIVATE — the public header names no stb type, CPP-010,
-# DEP-004).
-add_library(laige-stb STATIC stb_truetype_impl.cpp)
+# stb (M2-TEXT-01, ADR 0009; M2-GOLD-01): the single-header font
+# rasterizer + PNG codec, pinned in deps/stb (deps.lock — one
+# dependency entry; the PRD §11 stb row covers all three headers).
+# Each implementation compiles ONCE in this target under the plain
+# compiler policy (pinned vendor code, DEP-005 — the laige-glad
+# precedent); the engine boundary is font.cpp (the truetype
+# declarations) and the laige-golden test tool (the PNG declarations),
+# which include the vendor headers and link this target (PRIVATE — no
+# engine header names an stb type, CPP-010, DEP-004).
+add_library(laige-stb STATIC
+  stb_truetype_impl.cpp
+  stb_image_impl.cpp
+  stb_image_write_impl.cpp)
 target_include_directories(laige-stb PRIVATE
   ${CMAKE_SOURCE_DIR}/deps/stb)
 

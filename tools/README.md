@@ -61,3 +61,24 @@ Engine tools and CI scripts, each landing with its roadmap step:
   the CI `detcheck` job runs it on every PR and merge and skips the
   real-scenario comparison (M1-SAMPLE-01) until M1-DET-04 activates it.
 - `laige-bench` — budget/benchmark harness (M0-CORE-08)
+- `laige-scene-iso` — the M2-SCENE-01 reference-scene tool (in
+  `tools/scene-iso`): writes/reads the v1 LE reference-scene file and
+  runs the CLI determinism gate (ctest entry `scene_iso_cli`)
+- `laige-golden` — the golden image test tool (M2-GOLD-01, in
+  `tools/golden`): renders the committed golden scene fixtures
+  (the M2-SPRITE-02 sprite scene + the M2-UI-02 UI scene)
+  offscreen at the canonical 1280x720 frame (fixed camera, no
+  PRNG), captures the frame (one `GlContext::readPixels`), and
+  compares it against the committed reference PNG
+  (`tools/golden/references`) with the documented tolerance
+  (max channel diff 2 + 0.001% pixel budget — passed as explicit
+  flags by the ctest entry `golden`, TEST-008). `--update`
+  re-renders and rewrites the references (atomic; the
+  human-approved regeneration path, never run under ctest — the
+  CI form is the `workflow_dispatch`-only
+  `.github/workflows/golden-update.yml`). Exit codes: `0` ok · `1`
+  compare failed · `2` usage/config/render error · `77` no usable
+  OpenGL 3.3 environment (the ctest entry skips via
+  SKIP_RETURN_CODE). Full contract:
+  [docs/testing.md](../docs/testing.md) (section 6) and
+  [tools/golden/references/README.md](golden/references/README.md).

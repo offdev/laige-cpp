@@ -72,6 +72,10 @@ add_subdirectory(laige-sim)
 # render; CTest entry `gl_context`).
 add_subdirectory(laige-render)
 
+# laige-golden tests (M2-GOLD-01): the GL-free half of the golden image
+# test infrastructure (tests/golden; CTest entry `golden_compare`).
+add_subdirectory(golden)
+
 # Test-infrastructure checks (M0-TEST-01): the seed-handling convention
 # for randomized tests (tests/support/laige_test_seed.h) is exercised by
 # tests/testing (suite `SeededRandom`, CTest entry `test_infra`).

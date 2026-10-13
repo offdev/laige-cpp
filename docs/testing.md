@@ -177,7 +177,78 @@ These entries, together with the `prng` suite (M0-CORE-06) and the
 compare state hashes or replay outcomes wherever determinism is
 promised) at the scope ARCH-010 requires.
 
-## 6. Running this step's checks
+## 6. Golden image tests (M2-GOLD-01)
+
+Rendering changes are covered where stable by the golden image test
+infrastructure (TEST-008, explicit tolerances): the `laige-golden`
+tool (tools/golden) renders the committed golden scene fixtures
+offscreen and compares the captured frame against a committed
+reference PNG.
+
+The fixtures (tests/golden/golden_fixtures.h, GL-free builders):
+
+- `sprite_iso_1000` — the M2-SPRITE-02 scene: the 2:1 dimetric
+  lattice of the 1024 world cells at preset scale k = 0.125, the
+  three probe cells, the three (atlas, material, blend) groups, the
+  clear color (0, 0, 255, 255).
+- `ui_smoke` — the M2-UI-02 golden UI scene: the five fixed widgets
+  (panel, button, text, image, slider) at fixed screen-px positions,
+  the 4x4 UI atlas + the committed test font's 1024x1024 glyph
+  atlas, the identity screen camera, the clear color (0, 0, 0, 255).
+
+Both render at the canonical golden frame (1280x720, top-origin /
+y-down) with a fixed camera and no PRNG; the frame protocol is the
+M2-SPRITE-02 offscreen one (clear, submit, one
+`GlContext::readPixels` capture of the whole frame, rows flipped to
+the screen convention). The scene shape invariants (item/quad
+counts, groups, camera matrices, clear colors) are pinned by the
+GL-free `GoldenFixtures*` suite, ctest entry `golden_compare`.
+
+Tolerance contract (explicit, never hidden — the ctest entry passes
+the same numbers as flags):
+
+- A PIXEL fails when any of the four channels differs by more than
+  `maxChannelDiff` (inclusive, on the 0..255 scale). Default: 2.
+- A FRAME fails when its failing-pixel count exceeds the budget
+  `floor(totalPixels * pixelBudgetPct / 100)`. Default: 0.001%,
+  which is 9 of the 921,600 pixels of the canonical frame.
+- A failing run enumerates the failing pixels (bounded samples;
+  machine-greppable `golden-diff` lines) in the ctest output.
+
+ctest entries (`ctest -R golden` selects both — the unanchored
+regex, the documented tilemap/tilemap_anim precedent):
+
+- `golden` (tools/golden) — the offscreen compare. The documented
+  environment contract: a runner without a usable OpenGL 3.3
+  environment (the macOS runners) exits 77, which ctest treats as a
+  skip (SKIP_RETURN_CODE); every runner with GL — the Linux trees
+  (Mesa surfaceless EGL + llvmpipe software GL) and Windows — runs
+  the real comparison.
+- `golden_compare` (tests/golden) — the GL-free comparison core and
+  fixture invariants; runs in every tree, including the local gate
+  (which excludes the GL-creating entries).
+
+References and regeneration (tools/golden/references/README.md): the
+reference PNGs are the CI-rendered frames of the reference
+environment (ubuntu-24.04, Debug, g++, llvmpipe), committed by a
+human. `laige-golden --update` re-renders and rewrites them (atomic:
+temp file + rename); it is never run under ctest. The regeneration
+path is the `workflow_dispatch`-only
+`.github/workflows/golden-update.yml` (the PR lane cannot upload
+artifacts — the pull_request token is read-only — so the run prints
+each reference to its log as base64 between `GOLDEN_REFERENCE_BEGIN`
+/ `GOLDEN_REFERENCE_END` markers for the committing human to decode
+and review). A driver or engine change that breaks the tolerance is
+handled by that reviewed regeneration, never by a silent tolerance
+widening (TEST-008).
+
+| Purpose | Command |
+|---|---|
+| Golden compare (the ctest form) | `ctest --test-dir build -R golden --output-on-failure` |
+| Golden compare (one fixture) | `./build/tools/golden/laige-golden --fixture ui_smoke --references tools/golden/references --max-channel-diff 2 --pixel-budget-pct 0.001` |
+| Regenerate references (local, needs GL) | `LAIGE_TEST_FONT_PATH=$PWD/tests/laige-render/assets/vera.ttf ./build/tools/golden/laige-golden --update --references tools/golden/references` |
+
+## 7. Running this step's checks
 
 | Purpose | Command |
 |---|---|

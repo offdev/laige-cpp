@@ -540,6 +540,23 @@ Status GlContext::readPixel(std::int32_t x, std::int32_t y,
   return Status();
 }
 
+Status GlContext::readPixels(std::int32_t x, std::int32_t y,
+                             std::int32_t width, std::int32_t height,
+                             std::uint8_t* rgba) const {
+  // The same precondition contract as readPixel (stopped, not current
+  // on this thread, or the rectangle outside the render target —
+  // including a non-positive extent), not engine failures: negative
+  // queries, no GL work, no log.
+  if (impl_ == nullptr || !isCurrentOnThisThread(impl_.get()) ||
+      rgba == nullptr || x < 0 || y < 0 || width <= 0 || height <= 0 ||
+      x + width > impl_->width || y + height > impl_->height) {
+    return Status(ErrorCode::InvalidArgument);
+  }
+  glad_glBindFramebuffer(GL_FRAMEBUFFER, impl_->fbo);
+  glad_glReadPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+  return Status();
+}
+
 std::uint32_t GlContext::refreshRateHz() const noexcept {
   // Stopped, or headless (the FBO is the render target — nothing is
   // ever presented, so no display rate applies): 0 (a negative query —

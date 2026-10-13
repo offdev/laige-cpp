@@ -38,6 +38,7 @@ fallback profile, no silent version downgrade (PRD §6).
 | `release()` | Unbind the context from the calling thread (the context stays valid and is no longer current on any thread). The first step of a cross-thread handoff — release here, `makeCurrent()` on the new thread. A no-op success when the calling thread holds no context. Not a hot path (a handoff/setup call, never per-frame). Failure: `GlUnavailable` (one structured Error event, `gl/context_release_failed`) | O(1), no allocation |
 | `clear(r, g, b, a)` | Clear the render target (the FBO on headless contexts, the window frame buffer on windowed ones) to an RGBA color; components are clamped to `[0, 1]` before the RGBA8 conversion (1.0 → 255, 0.25 → 64, 0.75 → 191 — the conversion is exact for these values). Precondition: valid() **and** the context is current on the calling thread — otherwise `InvalidArgument` (a precondition violation, not an engine failure: no log, no GL work) | O(1), no allocation; one `glBindFramebuffer` per call (see Performance) |
 | `readPixel(x, y, rgba[4])` | Read one RGBA8 pixel; `(0, 0)` is bottom-left (the GL convention). Precondition: valid(), the context current, and `(x, y)` within `[0, w) x [0, h)` — otherwise `InvalidArgument` | O(1), no allocation (one `glReadPixels` of 4 bytes) |
+| `readPixels(x, y, w, h, rgba)` | Read a `w x h` rectangle of RGBA8 pixels; `(0, 0)` is bottom-left (the GL convention — `rgba`'s row 0 is the BOTTOM row of the rectangle; a caller that wants a top-origin / y-down image flips the rows itself — the M2-GOLD-01 golden-frame capture does). Precondition: valid(), the context current, `rgba` non-null, and the rectangle `[x, x+w) x [y, y+h)` within the render target — otherwise `InvalidArgument`. The caller's buffer must hold `w*h*4` bytes | O(w·h) copied bytes, no allocation (one `glReadPixels`) |
 | `refreshRateHz()` | The windowed context's display refresh rate (Hz) — the M2-GL-02 frame clock's vsync pace (`docs/api/frame_pipeline.md`). Returns **0 when unavailable**: a headless context (the FBO is the render target and nothing is ever presented), a context detached from every monitor, or a video-mode query failure — the caller's target rate stands in. No GL call (a GLFW window query): the context need not be current on the calling thread. Precondition: valid() | O(1), no allocation |
 
 Move-only: `GlContext` is move-constructible/assignable; the source is
@@ -74,7 +75,8 @@ whose bind/release set success unconditionally).
 
 **Threading and phase.** Context creation is a setup-phase operation
 (one per process in the engine's design — M2-GL-02 runs exactly one
-render thread against it). `makeCurrent`/`clear`/`readPixel` may be
+render thread against it). `makeCurrent`/`clear`/`readPixel`/
+`readPixels` may be
 called from the thread that owns the context at the moment of the call;
 the GL functions they wrap are not reentrant across threads (that is the
 GL contract `makeCurrent` enforces). No engine locks are held across
@@ -210,9 +212,11 @@ budgets). One Info log line on success, one Error line on failure
 
 **Per-frame path.** `clear` is O(1), no allocation, no CPU/GPU
 synchronization (the GL call queues to the GPU; nothing blocks,
-RENDER-005/PERF-002). `readPixel` is the one deliberately synchronous
-call: a single-pixel `glReadPixels` forces a pipeline flush — it is a
-test/smoke primitive, not a per-frame operation (TEST-008). The
+RENDER-005/PERF-002). `readPixel` and `readPixels` are the deliberately
+synchronous calls: a `glReadPixels` forces a pipeline flush — they are
+test/smoke and golden-capture primitives (the M2-GOLD-01 reference
+frames are captured with `readPixels`), not per-frame operations
+(TEST-008, RENDER-005). The
 per-frame draw path (M2-SPRITE-02) binds its FBO once per frame instead
 of per call; `clear`/`readPixel` here bind per call because they are
 the M2-GL-01 frame primitives, not the batched submit path.
@@ -224,13 +228,17 @@ PERF-007: O(1) documented).
 
 **Misuse warnings.**
 
-- Calling `clear`/`readPixel` before `makeCurrent` (on a thread that
-  does not own the context) returns `InvalidArgument` — it is a
-  precondition query, not an error: no log, no GL work.
-- `clear`/`readPixel` on a stopped context (default-constructed or
-  moved-from) return `InvalidArgument` for the same reason.
-- Out-of-bounds `readPixel` returns `InvalidArgument`; the bounds are
-  the render-target size, checked before any GL call.
+- Calling `clear`/`readPixel`/`readPixels` before `makeCurrent` (on a
+  thread that does not own the context) returns `InvalidArgument` — it
+  is a precondition query, not an error: no log, no GL work.
+- `clear`/`readPixel`/`readPixels` on a stopped context
+  (default-constructed or moved-from) return `InvalidArgument` for the
+  same reason.
+- Out-of-bounds `readPixel`/`readPixels` return `InvalidArgument`; the
+  bounds are the render-target size, checked before any GL call.
+- `readPixels` is a readback (a pipeline flush, like `readPixel`): use
+  it for tests, smokes, and the golden-frame capture — never as a
+  per-frame operation.
 - Two `GlContext`s in one process are supported by the API (each owns
   its own context) but the engine's design uses exactly one
   (M2-GL-02); multiple contexts multiply GPU memory and driver
