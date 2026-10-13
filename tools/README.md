@@ -75,8 +75,11 @@ Engine tools and CI scripts, each landing with its roadmap step:
   flags by the ctest entry `golden`, TEST-008). `--update`
   re-renders and rewrites the references (atomic; the
   human-approved regeneration path, never run under ctest — the
-  CI form is the `workflow_dispatch`-only
-  `.github/workflows/golden-update.yml`). Exit codes: `0` ok · `1`
+  CI forms are the label-gated `golden-references` job of
+  `.github/workflows/ci-pull.yml` (PR lane, label
+  `ci:golden-update`) and the `workflow_dispatch`-only
+  `.github/workflows/golden-update.yml` (post-merge master)).
+  Exit codes: `0` ok · `1`
   compare failed · `2` usage/config/render error · `77` no usable
   OpenGL 3.3 environment (the ctest entry skips via
   SKIP_RETURN_CODE). Full contract:
