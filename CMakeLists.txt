@@ -272,4 +272,5 @@ if(LAIGE_BUILD_TESTS)
   add_subdirectory(tools/run)      # M1-HEAD-01: laige-run (+ smoke test)
   add_subdirectory(tools/replay)   # M1-DET-03: laige-replay
   add_subdirectory(tools/scene-iso)  # M2-SCENE-01: laige-scene-iso (+ CLI determinism gate)
+  add_subdirectory(tools/golden)     # M2-GOLD-01: laige-golden (+ golden entry)
 endif()

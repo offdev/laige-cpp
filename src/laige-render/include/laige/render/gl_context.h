@@ -198,6 +198,23 @@ class GlContext {
   [[nodiscard]] Status readPixel(std::int32_t x, std::int32_t y,
                                  std::uint8_t rgba[4]) const;
 
+  // Read a rectangle of RGBA8 pixels from the render target; (0, 0) is
+  // bottom-left (the GL convention: `rgba`'s row 0 is the BOTTOM row of
+  // the rectangle — callers that want a top-origin / y-down image, e.g.
+  // the golden frame capture of M2-GOLD-01, flip the rows themselves).
+  // One glReadPixels per call; O(width * height) in copied bytes, no
+  // allocation. Precondition: valid(); the context must be current on
+  // the calling thread; `rgba` non-null; the rectangle [x, x + width)
+  // x [y, y + height) within the render target (InvalidArgument
+  // otherwise); the buffer must hold width * height * 4 bytes (the
+  // caller's precondition — this method copies exactly that many). The
+  // same readback contract as readPixel (the FBO's completeness is
+  // checked at creation, so the readback cannot silently return
+  // garbage).
+  [[nodiscard]] Status readPixels(std::int32_t x, std::int32_t y,
+                                  std::int32_t width, std::int32_t height,
+                                  std::uint8_t* rgba) const;
+
   // The windowed context's display refresh rate (Hz); 0 when
   // unavailable (a headless context — the FBO is the render target and
   // nothing is ever presented — or a monitor/video-mode query failure).

@@ -52,9 +52,9 @@
       "owner": "src/laige-render",
       "source_url": "https://github.com/nothings/stb",
       "source_commit": "2c980bb59875b0d32144a71867fbdebb2f77cd20",
-      "sha256": "8f06584600718842d16098b13df213d0ec9ffecbf782a6fbadec3f4abf570685",
+      "sha256": "cd6a0a53710601af128ec2af52b970b7082eb70277153c0ead6b01b4c9b82487",
       "license": "MIT-like (stb's no-warranty license; the text lives in deps/stb/LICENSE)",
-      "justification": "PRD §11 (font rasterization, FR-2.8 bitmap fonts P0 — the stb_truetype row): single-header C font rasterizer that M2-TEXT-01 uses to build the fixed bitmap glyph atlas (the M2-TEXT-03 SDF step reuses the same header); the implementation compiles in the laige-stb target with the plain compiler policy, pinned by this lock (M2-TEXT-01, ADR 0009)"
+      "justification": "PRD §11 (font rasterization + texture decode/encode — the stb_image / stb_image_write / stb_truetype row): single-header C font rasterizer that M2-TEXT-01 uses to build the fixed bitmap glyph atlas (the M2-TEXT-03 SDF step reuses the same header) and the PNG codec that M2-GOLD-01's laige-golden tool uses to capture/compare/commit golden reference frames; the implementations compile in the laige-stb target with the plain compiler policy, pinned by this lock (M2-TEXT-01 ADR 0009; M2-GOLD-01)"
     }
   ]
 }

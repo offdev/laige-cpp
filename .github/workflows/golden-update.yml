@@ -1,0 +1,105 @@
+# ============================================================================
+# Golden reference regeneration (M2-GOLD-01)
+#
+# workflow_dispatch ONLY — the human-approved regeneration path for
+# the committed golden references (tools/golden/references). It
+# never runs on push or pull_request: a reference change is a human
+# decision (docs/testing.md, TEST-008 — no silent tolerance widening,
+# no unreviewed reference churn).
+#
+# This workflow only reaches the POST-MERGE master path:
+# workflow_dispatch only sees workflows on the default branch, so a
+# PR branch cannot be dispatched. The PR-lane equivalent is the
+# label-gated `golden-references` job of
+# .github/workflows/ci-pull.yml (label ci:golden-update).
+#
+# Why the references travel through the log: the PR lane
+# (.github/workflows/ci-pull.yml) cannot upload artifacts (the
+# pull_request token is read-only for artifact uploads), so this job
+# prints each reference to its log as base64 between stable markers:
+#
+#   GOLDEN_REFERENCE_BEGIN <fixture>
+#   <single-line base64>
+#   GOLDEN_REFERENCE_END <fixture>
+#
+# Procedure (documented in tools/golden/references/README.md):
+#   1. Trigger this workflow on the branch that carries the rendering
+#      change (workflow_dispatch, ref = the branch).
+#   2. Read the job log (gh api .../actions/runs/<run-id>/jobs, then the
+#      job log), extract each base64 block, and decode it to
+#      tools/golden/references/<fixture>.png.
+#   3. A human reviews each new PNG against the old reference (the
+#      rendered frame, not a byte diff: the tolerance is what ctest
+#      applies) and commits the PNGs with the change that caused them.
+#
+# The reference environment (documented in
+# tools/golden/references/README.md and asserted by the ctest entry
+# `golden` on every lane that has GL): ubuntu-24.04, CMake Debug, g++
+# (the P0 first lane), Mesa surfaceless EGL + llvmpipe software GL.
+name: golden-update
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    name: Golden references (ubuntu-24.04, g++, llvmpipe)
+    runs-on: ubuntu-24.04
+    # Two 1280x720 offscreen renders + font rasterization on software
+    # GL; 30 min is generous headroom on a slow shared runner.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # GLFW's X11 backend (GLFW_BUILD_WAYLAND=OFF in src/laige-render/
+        # CMakeLists.txt) needs only the X11 *headers* at configure time
+        # (GLFW 3.5 dlopens the X11/GL libraries at runtime); the
+        # ubuntu-24.04 runner image ships none of them. The libegl/libgl
+        # packages are the RUNTIME GL stack (Mesa surfaceless EGL +
+        # llvmpipe software GL; the engine and GLAD load them by dlopen
+        # at runtime) (M2-GL-01). The identical step in ci.yml's Linux
+        # jobs.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+      - name: Build laige-golden
+        run: cmake --build build --target laige-golden -j
+      - name: Render the references (--update, build directory)
+        # The references land in the build directory (never in the
+        # source tree — the source-tree copies are committed by a human
+        # from this run's log, step 3 of the header procedure).
+        env:
+          LAIGE_TEST_FONT_PATH: ${{ github.workspace }}/tests/laige-render/assets/vera.ttf
+        run: |
+          mkdir -p build/golden-references
+          ./build/bin/laige-golden --update --all \
+            --references build/golden-references
+      - name: Verify determinism (in-run compare)
+        # The freshly rendered frames must compare against themselves
+        # within the documented tolerance: a red here means the
+        # environment is not deterministic (or the tolerance contract
+        # broke), and the run's references must not be trusted.
+        env:
+          LAIGE_TEST_FONT_PATH: ${{ github.workspace }}/tests/laige-render/assets/vera.ttf
+        run: |
+          ./build/bin/laige-golden --all \
+            --references build/golden-references \
+            --max-channel-diff 2 --pixel-budget-pct 0.001
+      - name: Print the references (base64, for log extraction)
+        # One block per fixture: the BEGIN/END markers carry the fixture
+        # name (the reference file is <fixture>.png); the base64 is a
+        # single line (base64 -w0). The extraction step (procedure
+        # step 2) greps the job log for these markers.
+        run: |
+          for f in build/golden-references/*.png; do
+            name=$(basename "$f" .png)
+            echo "GOLDEN_REFERENCE_BEGIN $name"
+            base64 -w0 "$f"
+            echo
+            echo "GOLDEN_REFERENCE_END $name"
+          done

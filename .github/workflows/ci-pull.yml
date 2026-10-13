@@ -771,6 +771,77 @@ jobs:
           ctest --test-dir build-tsan --output-on-failure \
             -R '^ecs_stress$' 2>&1 | tee tsan-ctest-output.txt
 
+  # ------------------------------------------------------------------------
+  # Golden reference regeneration (M2-GOLD-01)
+  #
+  # Label-gated job for the PR lane (label ci:golden-update): renders
+  # the golden fixtures in the reference environment (ubuntu-24.04,
+  # Debug, g++, Mesa surfaceless EGL + llvmpipe) and prints the
+  # resulting PNGs to the job log as single-line base64 between
+  # GOLDEN_REFERENCE_BEGIN / GOLDEN_REFERENCE_END markers. The
+  # committing human decodes, reviews, and commits the references (no
+  # artifact upload — the pull_request token is read-only for those).
+  # The workflow_dispatch-only .github/workflows/golden-update.yml is
+  # the same job for the post-merge master path (workflow_dispatch
+  # only sees workflows on the default branch, so a PR branch cannot
+  # be dispatched). docs/testing.md §6,
+  # tools/golden/references/README.md.
+  # ------------------------------------------------------------------------
+  golden-references:
+    name: Golden references (label-gated, ubuntu-24.04, g++, llvmpipe)
+    runs-on: ubuntu-24.04
+    # 30: build (~1.5 min) + two 1280x720 software-GL renders + font
+    # rasterization, plus runner variance.
+    timeout-minutes: 30
+    if: contains(github.event.pull_request.labels.*.name, 'ci:golden-update')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-gcc).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+      - name: Build laige-golden
+        run: cmake --build build --target laige-golden -j
+      - name: Render the references (--update, build directory)
+        # The references land in the build directory (never in the
+        # source tree — the source-tree copies are committed by a
+        # human from this job's log).
+        env:
+          LAIGE_TEST_FONT_PATH: ${{ github.workspace }}/tests/laige-render/assets/vera.ttf
+        run: |
+          mkdir -p build/golden-references
+          ./build/bin/laige-golden --update --all \
+            --references build/golden-references
+      - name: Verify determinism (in-run compare)
+        # The freshly rendered frames must compare against themselves
+        # within the documented tolerance: a red here means the
+        # environment is not deterministic (or the tolerance contract
+        # broke), and the run's references must not be trusted.
+        env:
+          LAIGE_TEST_FONT_PATH: ${{ github.workspace }}/tests/laige-render/assets/vera.ttf
+        run: |
+          ./build/bin/laige-golden --all \
+            --references build/golden-references \
+            --max-channel-diff 2 --pixel-budget-pct 0.001
+      - name: Print the references (base64, for log extraction)
+        # One block per fixture: the BEGIN/END markers carry the
+        # fixture name (the reference file is <fixture>.png); the
+        # base64 is a single line (base64 -w0).
+        run: |
+          for f in build/golden-references/*.png; do
+            name=$(basename "$f" .png)
+            echo "GOLDEN_REFERENCE_BEGIN $name"
+            base64 -w0 "$f"
+            echo
+            echo "GOLDEN_REFERENCE_END $name"
+          done
+
   windows-msvc:
     name: Windows x64 (MSVC 2022)
     runs-on: windows-2022
