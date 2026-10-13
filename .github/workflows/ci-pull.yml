@@ -1,13 +1,13 @@
 # ============================================================================
 # Laige CI — full P0 platform matrix on pull request (M0-CI-01,
-# re-baselined 2026-10-11)
+# re-baselined 2026-10-11, slow-suite split 2026-10-13)
 #
 # Roadmap:  roadmap/M0-foundations.md, step M0-CI-01
 # PRD refs: §6 (P0 platforms, AC-6.1), §14 (cadence), §8.1 (build budget)
 #
-# Cadence (PRD §14, as amended 2026-10-11 — "test everything, all the
-# time"): this workflow runs on EVERY pull request, and ALL eleven jobs
-# run — unconditionally:
+# Cadence (PRD §14, as amended 2026-10-13 — "fast lane + gated slow
+# suites"): this workflow runs on EVERY pull request. The eleven FAST
+# jobs run unconditionally:
 #
 #   * the five P0 OS jobs (linux-gcc, linux-clang, windows-msvc,
 #     macos-arm64, macos-intel);
@@ -15,28 +15,70 @@
 #   * the four platform-independent tooling jobs (include-lint,
 #     determinism-lint, api-manifest, detcheck).
 #
-# The former ci:windows / ci:macos label selector is REMOVED: no job is
-# gated on a label and no test is ever skipped. Linux is no longer
-# "verified locally only" — it runs in the PR lane exactly as in the
-# merge lane (ci.yml), so a PR that breaks a Linux tree fails in the
-# PR lane before it can reach master. Local verification of the Linux
-# trees before pushing remains a developer obligation (AGENTS.md,
-# section 5: the local Linux test gate).
+# The SLOW suites do NOT run on a normal PR. Every ctest entry that took
+# longer than 30 s in the latest master run (38312355303, 2026-10-12)
+# has been moved out of the main job into a dedicated job of its own
+# (one per lane), and those jobs run ONLY when the PR carries the
+# matching ci:slow:* label:
+#
+#   label              ctest entry(es)                          lanes
+#   ci:slow:sim        laige-sim_tests                          gcc clang asan tsan
+#   ci:slow:render     laige-render_tests                       gcc clang asan tsan
+#   ci:slow:particle   particle_render                          gcc clang tsan
+#   ci:slow:zero-alloc zero_alloc                               asan tsan
+#   ci:slow:ecs-stress ecs_stress                               asan tsan
+#   ci:slow:bench-50k  laige_bench_render_50k_fpx16 / _fp32     gcc clang
+#
+#   Evidence (run 38312355303, per-entry times in s, threshold 30 s):
+#     laige_bench_render_50k_fpx16  gcc 577.05  clang 578.42
+#     laige_bench_render_50k_fp32   gcc 593.82  clang 566.52
+#     laige-sim_tests               gcc 59.97   clang 53.79  asan 124.03  tsan 159.52
+#     laige-render_tests            gcc 53.83   clang 44.45  asan 43.20   tsan 60.41
+#     particle_render               gcc 38.76   clang 34.67  asan 28.84   tsan 39.56
+#     zero_alloc                    gcc 16.16   clang 14.39  asan 43.76   tsan 54.75
+#     ecs_stress                    gcc 16.34   clang 14.45  asan 42.87   tsan 54.70
+#   The threshold is per lane (zero_alloc / ecs_stress stay in the main
+#   gcc/clang jobs, particle_render in the main asan job — see the
+#   evidence). No entry exceeds 30 s on windows/macOS (worst:
+#   laige-sim_tests 27.11 s on macos-intel), so those lanes have no slow
+#   jobs and their jobs are unchanged.
+#
+#   The main jobs' ctest EXCLUDES the moved entries (-E) and each slow
+#   job SELECTS its entry (-R): every entry runs exactly once per gated
+#   run, never twice, and never ungated. The suite list is re-derived
+#   from the latest master run whenever a suite crosses (or leaves) the
+#   30 s threshold — see AGENTS.md §5, "Slow CI suites and the
+#   milestone gate".
+#
+#   MILESTONE GATE: a milestone-gate PR MUST carry ALL six ci:slow:*
+#   labels so every slow job runs and passes before merge (AGENTS.md
+#   §5).
+#
+#   Label mechanics (the old ci:windows / ci:macos precedent, still the
+#   standing convention for those two labels even though no job reads
+#   them): a run snapshots the PR's labels when it starts, and adding a
+#   label later never re-triggers a finished or running run — so the
+#   ci:slow:* labels must be on the PR BEFORE the run is created (a
+#   push to the PR branch after adding the labels starts a fresh run).
+#
+#   Local verification of the Linux trees before pushing remains a
+#   developer obligation (AGENTS.md, section 5: the local Linux test
+#   gate).
 #
 # Jobs, runner images, steps, and the build-budget timeouts are the
 # same as in ci.yml — including the macOS exceptions (macOS arm64
 # carries timeout-minutes: 20, macOS Intel 15 — the shared-runners
-# tail latency)
-# and the Linux exception (the two Linux build jobs carry
-# timeout-minutes: 45, M2-PERF-01's render-50k gate), both documented
-# in ci.yml's header (the full matrix documentation and the Windows
-# multi-config note). The one difference: the sanitizer
-# jobs upload no artifacts here. The pull_request GITHUB_TOKEN is
-# read-only (contents:read for same-repo PRs, read-only for fork PRs —
-# Actions cannot grant actions:write on this event), so the report
-# files are not archived; the tee'd ctest output keeps every sanitizer
-# report in the job log, which is enough to diagnose a red PR. The
-# merge lane (ci.yml) still archives them as artifacts.
+# tail latency), both documented in ci.yml's header (the full matrix
+# documentation and the Windows multi-config note). The Linux fast jobs
+# carry timeout-minutes: 10 (the pre-split 45-min exception is gone —
+# the render-50k bench moved to the label-gated slow BENCH jobs, which
+# carry 30). The one difference from ci.yml: the sanitizer jobs upload
+# no artifacts here, neither fast nor slow. The pull_request
+# GITHUB_TOKEN is read-only (contents:read for same-repo PRs, read-only
+# for fork PRs — Actions cannot grant actions:write on this event), so
+# the report files are not archived; the tee'd ctest output keeps every
+# sanitizer report in the job log, which is enough to diagnose a red PR.
+# The merge lane (ci.yml) still archives them as artifacts.
 #
 # Fuzz lane (PRD §14 "every commit (bounded)"; M0-TEST-01): no separate
 # fuzz job — the `fuzz_json_parse` ctest entry (1000 deterministic runs
@@ -73,10 +115,12 @@ jobs:
   linux-gcc:
     name: Linux x64 (g++)
     runs-on: ubuntu-24.04
-    # 45 instead of the 10-min build budget: M2-PERF-01's render-50k
-    # gate (this job's Test step) — see ci.yml's header (the Linux
-    # exception) and the linux-gcc note there.
-    timeout-minutes: 45
+    # 10-min build budget (reverted from 45 on 2026-10-13): the render-50k
+    # bench and the other >30 s entries moved to the label-gated slow
+    # jobs (linux-gcc-slow / linux-gcc-bench, below). The heaviest
+    # remaining entries are the filtered sim/render suites (≤ 26 s) +
+    # the build (~1.5 min) — ~5 min total on the reference lane.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Install GLFW X11 headers (laige-render)
@@ -98,15 +142,19 @@ jobs:
       - name: Build
         run: cmake --build build -j
       - name: Test (unit)
-        run: ctest --test-dir build --output-on-failure
+        # -E excludes the >30 s entries that moved to the dedicated
+        # label-gated jobs (2026-10-13 split, see the header): they are
+        # selected there with -R, so each entry runs exactly once per
+        # gated run.
+        run: |
+          ctest --test-dir build --output-on-failure \
+            -E '^(laige-sim_tests|laige-render_tests|particle_render|laige_bench_render_50k_fpx16|laige_bench_render_50k_fp32)$'
 
   linux-clang:
     name: Linux x64 (clang++)
     runs-on: ubuntu-24.04
-    # 45 instead of the 10-min build budget: M2-PERF-01's render-50k
-    # gate (this job's Test step) — see ci.yml's header (the Linux
-    # exception) and the linux-gcc note there.
-    timeout-minutes: 45
+    # 10-min build budget — see the linux-gcc note and the header.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Install GLFW X11 headers (laige-render)
@@ -128,14 +176,22 @@ jobs:
       - name: Build
         run: cmake --build build -j
       - name: Test (unit)
-        run: ctest --test-dir build --output-on-failure
+        # -E excludes the >30 s entries that moved to the dedicated
+        # label-gated jobs (2026-10-13 split, see the header): they are
+        # selected there with -R, so each entry runs exactly once per
+        # gated run.
+        run: |
+          ctest --test-dir build --output-on-failure \
+            -E '^(laige-sim_tests|laige-render_tests|particle_render|laige_bench_render_50k_fpx16|laige_bench_render_50k_fp32)$'
 
   linux-asan:
     name: Linux x64 ASan+UBSan (clang++)
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # 10-min build budget: the >30 s entries moved to the label-gated
+    # linux-asan-slow job (2026-10-13 split, see the header).
     # No artifact step here: the pull_request token is read-only (see
     # the header). The tee keeps every report in the job log.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Install GLFW X11 headers (laige-render)
@@ -160,23 +216,29 @@ jobs:
         # Every sanitizer report is fatal to the test process: ASan via
         # abort_on_error=1:halt_on_error=1 here, UBSan via
         # -fno-sanitize-recover=all (wired by CMake). detect_leaks=1 (the
-        # Linux default) is stated explicitly.
+        # Linux default) is stated explicitly. -E excludes the >30 s
+        # entries that moved to the label-gated linux-asan-slow job
+        # (2026-10-13 split, see the header).
         env:
           ASAN_OPTIONS: "abort_on_error=1:halt_on_error=1:detect_leaks=1"
         run: |
           set -o pipefail
-          ctest --test-dir build-asan --output-on-failure 2>&1 | tee asan-ctest-output.txt
+          ctest --test-dir build-asan --output-on-failure \
+            -E '^(laige-sim_tests|laige-render_tests|zero_alloc|ecs_stress)$' \
+            2>&1 | tee asan-ctest-output.txt
 
   linux-tsan:
     name: Linux x64 TSan (clang++)
-    # 30 min (not 10): TSan is the slowest lane by design (~5-15x
-    # instrumentation overhead), and the suite has grown past the old
-    # margin (the documented rationale, with the evidence runs, is in
-    # the linux-tsan job of ci.yml).
+    # 10-min build budget: the >30 s entries moved to the label-gated
+    # linux-tsan-slow job (2026-10-13 split, see the header). Before the
+    # split the full TSan suite needed 30 min (the documented rationale
+    # is in ci.yml's linux-tsan note); the heaviest REMAINING entries
+    # are archetype (~26 s) and laige_run_smoke (~17 s) plus the build
+    # (~2 min).
     # No artifact step here: the pull_request token is read-only (see
     # the header). The tee keeps the race report in the job log.
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Install GLFW X11 headers (laige-render)
@@ -201,14 +263,520 @@ jobs:
         # TSAN_OPTIONS=halt_on_error=1 is applied per test by tests/
         # (M0-BUILD-01), so the first data race report kills the test
         # process and ctest fails. The race report is printed to stderr
-        # and captured by the tee below.
+        # and captured by the tee below. -E excludes the >30 s entries
+        # that moved to the label-gated linux-tsan-slow job (2026-10-13
+        # split, see the header).
         run: |
           set -o pipefail
-          ctest --test-dir build-tsan --output-on-failure 2>&1 | tee tsan-ctest-output.txt
+          ctest --test-dir build-tsan --output-on-failure \
+            -E '^(laige-sim_tests|laige-render_tests|particle_render|zero_alloc|ecs_stress)$' \
+            2>&1 | tee tsan-ctest-output.txt
+
+  # ------------------------------------------------------------------------
+  # Slow suites (2026-10-13 split; see the header). Each job below is one
+  # ctest entry that exceeded 30 s in the latest master run: one dedicated
+  # job per suite per lane (the matrix context is not available in a
+  # job-level `if:`, so one block per suite). The main job's ctest
+  # excludes the entry, so it runs exactly once per gated run, here.
+  # ------------------------------------------------------------------------
+  linux-gcc-sim:
+    name: "Linux x64 (g++) slow: laige-sim_tests"
+    runs-on: ubuntu-24.04
+    # 20: build (~1.5 min) + laige-sim_tests (59.97 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:sim')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-gcc).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+      - name: Build
+        run: cmake --build build -j
+      - name: "Test (slow: laige-sim_tests)"
+        run: ctest --test-dir build --output-on-failure -R '^laige-sim_tests$'
+
+  linux-gcc-render:
+    name: "Linux x64 (g++) slow: laige-render_tests"
+    runs-on: ubuntu-24.04
+    # 20: build (~1.5 min) + laige-render_tests (53.83 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:render')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-gcc).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+      - name: Build
+        run: cmake --build build -j
+      - name: "Test (slow: laige-render_tests)"
+        run: ctest --test-dir build --output-on-failure -R '^laige-render_tests$'
+
+  linux-gcc-particle:
+    name: "Linux x64 (g++) slow: particle_render"
+    runs-on: ubuntu-24.04
+    # 20: build (~1.5 min) + particle_render (38.76 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:particle')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-gcc).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+      - name: Build
+        run: cmake --build build -j
+      - name: "Test (slow: particle_render)"
+        run: ctest --test-dir build --output-on-failure -R '^particle_render$'
+
+  linux-gcc-bench-fpx16:
+    name: "Linux x64 (g++) slow bench: laige_bench_render_50k_fpx16"
+    runs-on: ubuntu-24.04
+    # 30: build (~1.5 min) + the render-50k bench (577.05 s in the evidence
+    # run) plus runner variance. The pre-split 45-min exception minus
+    # the rest of the suite.
+    timeout-minutes: 30
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:bench-50k')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-gcc).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+      - name: Build
+        run: cmake --build build -j
+      - name: "Test (slow bench: laige_bench_render_50k_fpx16)"
+        run: ctest --test-dir build --output-on-failure -R '^laige_bench_render_50k_fpx16$'
+
+  linux-gcc-bench-fp32:
+    name: "Linux x64 (g++) slow bench: laige_bench_render_50k_fp32"
+    runs-on: ubuntu-24.04
+    # 30: build (~1.5 min) + the render-50k bench (593.82 s in the evidence
+    # run) plus runner variance.
+    timeout-minutes: 30
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:bench-50k')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-gcc).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
+      - name: Build
+        run: cmake --build build -j
+      - name: "Test (slow bench: laige_bench_render_50k_fp32)"
+        run: ctest --test-dir build --output-on-failure -R '^laige_bench_render_50k_fp32$'
+
+  linux-clang-sim:
+    name: "Linux x64 (clang++) slow: laige-sim_tests"
+    runs-on: ubuntu-24.04
+    # 20: build (~1.5 min) + laige-sim_tests (53.79 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:sim')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-clang).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build -j
+      - name: "Test (slow: laige-sim_tests)"
+        run: ctest --test-dir build --output-on-failure -R '^laige-sim_tests$'
+
+  linux-clang-render:
+    name: "Linux x64 (clang++) slow: laige-render_tests"
+    runs-on: ubuntu-24.04
+    # 20: build (~1.5 min) + laige-render_tests (44.45 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:render')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-clang).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build -j
+      - name: "Test (slow: laige-render_tests)"
+        run: ctest --test-dir build --output-on-failure -R '^laige-render_tests$'
+
+  linux-clang-particle:
+    name: "Linux x64 (clang++) slow: particle_render"
+    runs-on: ubuntu-24.04
+    # 20: build (~1.5 min) + particle_render (34.67 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:particle')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-clang).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build -j
+      - name: "Test (slow: particle_render)"
+        run: ctest --test-dir build --output-on-failure -R '^particle_render$'
+
+  linux-clang-bench-fpx16:
+    name: "Linux x64 (clang++) slow bench: laige_bench_render_50k_fpx16"
+    runs-on: ubuntu-24.04
+    # 30: build (~1.5 min) + the render-50k bench (578.42 s in the evidence
+    # run) plus runner variance.
+    timeout-minutes: 30
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:bench-50k')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-clang).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build -j
+      - name: "Test (slow bench: laige_bench_render_50k_fpx16)"
+        run: ctest --test-dir build --output-on-failure -R '^laige_bench_render_50k_fpx16$'
+
+  linux-clang-bench-fp32:
+    name: "Linux x64 (clang++) slow bench: laige_bench_render_50k_fp32"
+    runs-on: ubuntu-24.04
+    # 30: build (~1.5 min) + the render-50k bench (566.52 s in the evidence
+    # run) plus runner variance.
+    timeout-minutes: 30
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:bench-50k')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-clang).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build -j
+      - name: "Test (slow bench: laige_bench_render_50k_fp32)"
+        run: ctest --test-dir build --output-on-failure -R '^laige_bench_render_50k_fp32$'
+
+  linux-asan-sim:
+    name: "Linux x64 ASan+UBSan (clang++) slow: laige-sim_tests"
+    runs-on: ubuntu-24.04
+    # 20: build (~2.5 min) + laige-sim_tests (124.03 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:sim')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-asan).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure (ASan+UBSan)
+        run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_ASAN=ON
+      - name: Build (ASan+UBSan)
+        run: cmake --build build-asan -j
+      - name: "Test (slow: laige-sim_tests, ASan+UBSan)"
+        env:
+          ASAN_OPTIONS: "abort_on_error=1:halt_on_error=1:detect_leaks=1"
+        run: |
+          set -o pipefail
+          ctest --test-dir build-asan --output-on-failure \
+            -R '^laige-sim_tests$' 2>&1 | tee asan-ctest-output.txt
+
+  linux-asan-render:
+    name: "Linux x64 ASan+UBSan (clang++) slow: laige-render_tests"
+    runs-on: ubuntu-24.04
+    # 20: build (~2.5 min) + laige-render_tests (43.20 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:render')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-asan).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure (ASan+UBSan)
+        run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_ASAN=ON
+      - name: Build (ASan+UBSan)
+        run: cmake --build build-asan -j
+      - name: "Test (slow: laige-render_tests, ASan+UBSan)"
+        env:
+          ASAN_OPTIONS: "abort_on_error=1:halt_on_error=1:detect_leaks=1"
+        run: |
+          set -o pipefail
+          ctest --test-dir build-asan --output-on-failure \
+            -R '^laige-render_tests$' 2>&1 | tee asan-ctest-output.txt
+
+  linux-asan-zero-alloc:
+    name: "Linux x64 ASan+UBSan (clang++) slow: zero_alloc"
+    runs-on: ubuntu-24.04
+    # 20: build (~2.5 min) + zero_alloc (43.76 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:zero-alloc')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-asan).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure (ASan+UBSan)
+        run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_ASAN=ON
+      - name: Build (ASan+UBSan)
+        run: cmake --build build-asan -j
+      - name: "Test (slow: zero_alloc, ASan+UBSan)"
+        env:
+          ASAN_OPTIONS: "abort_on_error=1:halt_on_error=1:detect_leaks=1"
+        run: |
+          set -o pipefail
+          ctest --test-dir build-asan --output-on-failure \
+            -R '^zero_alloc$' 2>&1 | tee asan-ctest-output.txt
+
+  linux-asan-ecs-stress:
+    name: "Linux x64 ASan+UBSan (clang++) slow: ecs_stress"
+    runs-on: ubuntu-24.04
+    # 20: build (~2.5 min) + ecs_stress (42.87 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:ecs-stress')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-asan).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure (ASan+UBSan)
+        run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_ASAN=ON
+      - name: Build (ASan+UBSan)
+        run: cmake --build build-asan -j
+      - name: "Test (slow: ecs_stress, ASan+UBSan)"
+        env:
+          ASAN_OPTIONS: "abort_on_error=1:halt_on_error=1:detect_leaks=1"
+        run: |
+          set -o pipefail
+          ctest --test-dir build-asan --output-on-failure \
+            -R '^ecs_stress$' 2>&1 | tee asan-ctest-output.txt
+
+  linux-tsan-sim:
+    name: "Linux x64 TSan (clang++) slow: laige-sim_tests"
+    runs-on: ubuntu-24.04
+    # 20: build (~2 min) + laige-sim_tests (159.52 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:sim')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-tsan).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure (TSan)
+        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_TSAN=ON
+      - name: Build (TSan)
+        run: cmake --build build-tsan -j
+      - name: "Test (slow: laige-sim_tests, TSan)"
+        run: |
+          set -o pipefail
+          ctest --test-dir build-tsan --output-on-failure \
+            -R '^laige-sim_tests$' 2>&1 | tee tsan-ctest-output.txt
+
+  linux-tsan-render:
+    name: "Linux x64 TSan (clang++) slow: laige-render_tests"
+    runs-on: ubuntu-24.04
+    # 20: build (~2 min) + laige-render_tests (60.41 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:render')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-tsan).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure (TSan)
+        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_TSAN=ON
+      - name: Build (TSan)
+        run: cmake --build build-tsan -j
+      - name: "Test (slow: laige-render_tests, TSan)"
+        run: |
+          set -o pipefail
+          ctest --test-dir build-tsan --output-on-failure \
+            -R '^laige-render_tests$' 2>&1 | tee tsan-ctest-output.txt
+
+  linux-tsan-particle:
+    name: "Linux x64 TSan (clang++) slow: particle_render"
+    runs-on: ubuntu-24.04
+    # 20: build (~2 min) + particle_render (39.56 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:particle')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-tsan).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure (TSan)
+        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_TSAN=ON
+      - name: Build (TSan)
+        run: cmake --build build-tsan -j
+      - name: "Test (slow: particle_render, TSan)"
+        run: |
+          set -o pipefail
+          ctest --test-dir build-tsan --output-on-failure \
+            -R '^particle_render$' 2>&1 | tee tsan-ctest-output.txt
+
+  linux-tsan-zero-alloc:
+    name: "Linux x64 TSan (clang++) slow: zero_alloc"
+    runs-on: ubuntu-24.04
+    # 20: build (~2 min) + zero_alloc (54.75 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:zero-alloc')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-tsan).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure (TSan)
+        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_TSAN=ON
+      - name: Build (TSan)
+        run: cmake --build build-tsan -j
+      - name: "Test (slow: zero_alloc, TSan)"
+        run: |
+          set -o pipefail
+          ctest --test-dir build-tsan --output-on-failure \
+            -R '^zero_alloc$' 2>&1 | tee tsan-ctest-output.txt
+
+  linux-tsan-ecs-stress:
+    name: "Linux x64 TSan (clang++) slow: ecs_stress"
+    runs-on: ubuntu-24.04
+    # 20: build (~2 min) + ecs_stress (54.70 s in the evidence run),
+    # plus runner variance.
+    timeout-minutes: 20
+    if: contains(github.event.pull_request.labels.*.name, 'ci:slow:ecs-stress')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW X11 headers (laige-render)
+        # Same rationale as the main job (see linux-tsan).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev \
+            libegl1 libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure (TSan)
+        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DLAIGE_TSAN=ON
+      - name: Build (TSan)
+        run: cmake --build build-tsan -j
+      - name: "Test (slow: ecs_stress, TSan)"
+        run: |
+          set -o pipefail
+          ctest --test-dir build-tsan --output-on-failure \
+            -R '^ecs_stress$' 2>&1 | tee tsan-ctest-output.txt
 
   windows-msvc:
     name: Windows x64 (MSVC 2022)
     runs-on: windows-2022
+    # Unchanged by the 2026-10-13 slow-suite split: no ctest entry
+    # exceeds 30 s on this lane (worst: laige-sim_tests 16.71 s in the
+    # evidence run), so the full suite stays in the main job.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -249,11 +817,9 @@ jobs:
     runs-on: macos-15
     # The shared macOS runners' tail latency exceeds the 10-min build
     # budget (the macOS exception, documented in ci.yml's header).
-    # 15 -> 20: this PR's run 38245828701 (2026-10-12) hit the 15-min
-    # cap on all three attempts — each attempt finished its full
-    # build + the 122/122 ctest suite at 15:00-15:10 and the cap
-    # fired seconds before the job's final cleanup (the identical
-    # macOS Intel job finished in 7:50 on the same run).
+    # Unchanged by the 2026-10-13 slow-suite split: no ctest entry
+    # exceeds 30 s on this lane (worst: laige-sim_tests 21.60 s in the
+    # evidence run), so the full suite stays in the main job.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -269,6 +835,9 @@ jobs:
     runs-on: macos-14
     # The shared macOS runners' tail latency exceeds the 10-min build
     # budget (the macOS exception, documented in ci.yml's header).
+    # Unchanged by the 2026-10-13 slow-suite split: no ctest entry
+    # exceeds 30 s on this lane (worst: laige-sim_tests 27.11 s in the
+    # evidence run), so the full suite stays in the main job.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -302,8 +871,8 @@ jobs:
     # src/laige-sim/**, with per-line LAIGE-DETERM-EXCEPTION markers as
     # the documented false-positive policy (docs/concepts/determinism.md).
     # Platform-independent: Python 3 stdlib only, no setup step. The
-    # CTest suite runs it against fixture trees and the real tree in
-    # every P0 job as well (tests/tools, tests `determinism-lint-*`).
+    # CTest suite runs it against the real tree in every P0 job as well
+    # (tests/tools, tests `determinism-lint-*`).
     name: Determinism source scan (sim module)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
