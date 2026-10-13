@@ -594,9 +594,12 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     and review). `ctest -R golden` selects both entries (the
     unanchored regex, the documented tilemap/tilemap_anim
     precedent). Environment contract: no usable OpenGL 3.3
-    environment (the macOS runners) → exit 77 → ctest skip
-    (SKIP_RETURN_CODE); the Linux trees (Mesa surfaceless EGL +
-    llvmpipe) and Windows run the real comparison. `stb_image` /
+    environment → exit 77 → ctest skip (SKIP_RETURN_CODE) — the
+    Windows and macOS runners are exactly that (the GL gtest
+    suites GTEST_SKIP on the same runners), so the Linux trees
+    (Mesa surfaceless EGL + llvmpipe) are the only CI lanes that
+    run the real comparison, and they define the reference
+    environment. `stb_image` /
     `stb_image_write` join the existing pinned stb dependency (the
     laige-stb target compiles the three implementations; deps.lock
     re-hashed; PRD §11's stb row already covers both headers, so the

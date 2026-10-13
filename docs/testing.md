@@ -220,10 +220,12 @@ regex, the documented tilemap/tilemap_anim precedent):
 
 - `golden` (tools/golden) — the offscreen compare. The documented
   environment contract: a runner without a usable OpenGL 3.3
-  environment (the macOS runners) exits 77, which ctest treats as a
-  skip (SKIP_RETURN_CODE); every runner with GL — the Linux trees
-  (Mesa surfaceless EGL + llvmpipe software GL) and Windows — runs
-  the real comparison.
+  environment exits 77, which ctest treats as a skip
+  (SKIP_RETURN_CODE). That is the Windows and macOS runners — the GL
+  gtest suites GTEST_SKIP on the same runners (their ctest-level
+  "Passed" is the same green skip). The Linux lanes (Mesa surfaceless
+  EGL + llvmpipe software GL) are the only CI lanes that run the real
+  comparison — and they define the reference environment.
 - `golden_compare` (tests/golden) — the GL-free comparison core and
   fixture invariants; runs in every tree, including the local gate
   (which excludes the GL-creating entries).
