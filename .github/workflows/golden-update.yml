@@ -1,11 +1,17 @@
 # ============================================================================
 # Golden reference regeneration (M2-GOLD-01)
 #
-# workflow_dispatch ONLY — the human-approved regeneration path for the
-# committed golden references (tools/golden/references). It never runs
-# on push or pull_request: a reference change is a human decision
-# (docs/testing.md, TEST-008 — no silent tolerance widening, no
-# unreviewed reference churn).
+# workflow_dispatch ONLY — the human-approved regeneration path for
+# the committed golden references (tools/golden/references). It
+# never runs on push or pull_request: a reference change is a human
+# decision (docs/testing.md, TEST-008 — no silent tolerance widening,
+# no unreviewed reference churn).
+#
+# This workflow only reaches the POST-MERGE master path:
+# workflow_dispatch only sees workflows on the default branch, so a
+# PR branch cannot be dispatched. The PR-lane equivalent is the
+# label-gated `golden-references` job of
+# .github/workflows/ci-pull.yml (label ci:golden-update).
 #
 # Why the references travel through the log: the PR lane
 # (.github/workflows/ci-pull.yml) cannot upload artifacts (the

@@ -17,9 +17,14 @@ docs/testing.md).
 - Build: CMake Debug, g++ (the canonical linux-gcc configuration).
 - GL: Mesa surfaceless EGL + llvmpipe software GL (the CI runtime
   stack of the Linux jobs).
-- Reference generator: `laige-golden --update`, invoked by the
-  `workflow_dispatch`-only workflow `.github/workflows/golden-update.yml`
-  (which also verifies in-run determinism before printing the frames).
+- Reference generator: `laige-golden --update`, invoked by either
+  generation path (both verify in-run determinism before printing
+  the frames): the label-gated `golden-references` job of
+  `.github/workflows/ci-pull.yml` (PR lane, label `ci:golden-update`)
+  or the `workflow_dispatch`-only workflow
+  `.github/workflows/golden-update.yml` (post-merge master path —
+  workflow_dispatch only sees workflows on the default branch, so a
+  PR branch cannot be dispatched).
 
 The provenance of the PNGs currently committed lives in the commit
 that added them (the golden-update run id and its environment are
@@ -28,8 +33,13 @@ human decision: regenerate, review, commit.
 
 ## Regeneration (human-approved path)
 
-1. Trigger `.github/workflows/golden-update.yml` (workflow_dispatch)
-   on the branch that carries the rendering change.
+1. Trigger the generation on the branch that carries the rendering
+   change: on a PR branch, add the `ci:golden-update` label to the
+   PR (the label-gated `golden-references` job of
+   `.github/workflows/ci-pull.yml` runs with the next run — the label
+   must be on the PR before the run starts); on master after the
+   change merged, dispatch `.github/workflows/golden-update.yml`
+   (workflow_dispatch).
 2. Read the job log; each reference is printed as single-line
    base64 between `GOLDEN_REFERENCE_BEGIN <fixture>` /
    `GOLDEN_REFERENCE_END <fixture>` markers (the PR lane cannot

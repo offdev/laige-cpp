@@ -235,12 +235,16 @@ reference PNGs are the CI-rendered frames of the reference
 environment (ubuntu-24.04, Debug, g++, llvmpipe), committed by a
 human. `laige-golden --update` re-renders and rewrites them (atomic:
 temp file + rename); it is never run under ctest. The regeneration
-path is the `workflow_dispatch`-only
-`.github/workflows/golden-update.yml` (the PR lane cannot upload
-artifacts — the pull_request token is read-only — so the run prints
-each reference to its log as base64 between `GOLDEN_REFERENCE_BEGIN`
-/ `GOLDEN_REFERENCE_END` markers for the committing human to decode
-and review). A driver or engine change that breaks the tolerance is
+path is the label-gated `golden-references` job of
+`.github/workflows/ci-pull.yml` on a PR branch (label
+`ci:golden-update`) or the `workflow_dispatch`-only
+`.github/workflows/golden-update.yml` on master after merge
+(workflow_dispatch only sees workflows on the default branch, so a
+PR branch cannot be dispatched). The PR lane cannot upload artifacts
+(the pull_request token is read-only), so the run prints each
+reference to its log as base64 between `GOLDEN_REFERENCE_BEGIN` /
+`GOLDEN_REFERENCE_END` markers for the committing human to decode
+and review. A driver or engine change that breaks the tolerance is
 handled by that reviewed regeneration, never by a silent tolerance
 widening (TEST-008).
 

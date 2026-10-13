@@ -585,13 +585,18 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     on the canonical frame — passed as flags by the `golden` ctest
     entry, never hidden). `--update` re-renders the references
     atomically (temp file + rename) and is the human-approved
-    regeneration path — never run under ctest; the CI form is the
-    `workflow_dispatch`-only `.github/workflows/golden-update.yml`
-    (the PR lane cannot upload artifacts — the pull_request token is
-    read-only — so the run prints each reference to its log as
-    single-line base64 between `GOLDEN_REFERENCE_BEGIN` /
-    `GOLDEN_REFERENCE_END` markers for the committing human to decode
-    and review). `ctest -R golden` selects both entries (the
+    regeneration path — never run under ctest; the CI forms are the
+    label-gated `golden-references` job of
+    `.github/workflows/ci-pull.yml` (PR lane, label
+    `ci:golden-update`) and the `workflow_dispatch`-only
+    `.github/workflows/golden-update.yml` (post-merge master path —
+    workflow_dispatch only sees workflows on the default branch, so
+    a PR branch cannot be dispatched). The PR lane cannot upload
+    artifacts (the pull_request token is read-only), so the run
+    prints each reference to its log as single-line base64 between
+    `GOLDEN_REFERENCE_BEGIN` / `GOLDEN_REFERENCE_END` markers for
+    the committing human to decode and review. `ctest -R golden`
+    selects both entries (the
     unanchored regex, the documented tilemap/tilemap_anim
     precedent). Environment contract: no usable OpenGL 3.3
     environment → exit 77 → ctest skip (SKIP_RETURN_CODE) — the
