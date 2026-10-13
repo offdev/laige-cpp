@@ -26,10 +26,14 @@ docs/testing.md).
   workflow_dispatch only sees workflows on the default branch, so a
   PR branch cannot be dispatched).
 
-The provenance of the PNGs currently committed lives in the commit
-that added them (the golden-update run id and its environment are
-stated there and in the PR/roadmap record). A reference change is a
-human decision: regenerate, review, commit.
+The committed PNGs were rendered by the label-gated `golden-references`
+job of run 38468040338 (2026-10-13, branch
+`feat/m2-gold-01-golden-image-tests`, the reference environment above),
+extracted from that job's log between the
+`GOLDEN_REFERENCE_BEGIN` / `GOLDEN_REFERENCE_END` markers. The job's
+in-run determinism compare passed (both fixtures: failing=0,
+max_diff=0, budget 9). A reference change is a human decision:
+regenerate, review, commit.
 
 ## Regeneration (human-approved path)
 

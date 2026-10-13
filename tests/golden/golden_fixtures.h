@@ -14,11 +14,14 @@
 //                    scale k = 0.125, the three probe cells declared
 //                    LAST, the three (atlas, material, blend) groups,
 //                    the clear color (0, 0, 255, 255). At 1280 x 720 a
-//                    1x1 world tile projects to 320 x 90 px: the lattice
-//                    covers a central diamond of the frame, the clear
-//                    color fills the rest (the frame is no longer an
-//                    exact tiling — the M2-SPRITE-02 128x128 smoke
-//                    tailed exactly; the golden frame does not need to).
+//                    1x1 world tile projects to 320 x 90 px, so the
+//                    32x32 lattice's diamond is far larger than the
+//                    frame: every pixel of the frame lies inside a
+//                    lattice cell (the clear color shows nowhere), the
+//                    visible content is the alpha checkerboard cells
+//                    plus a diagonal band of the additive checkerboard
+//                    cells across the bottom, and the solid (atlas 1)
+//                    rows fall below the frame.
 //   ui_smoke         the M2-UI-02 golden UI scene (the UiRenderSmoke
 //                    fixture): the five widgets (panel, button, text,
 //                    image, slider) at their fixed screen-px positions,
