@@ -251,8 +251,8 @@ widening (TEST-008).
 | Purpose | Command |
 |---|---|
 | Golden compare (the ctest form) | `ctest --test-dir build -R golden --output-on-failure` |
-| Golden compare (one fixture) | `./build/tools/golden/laige-golden --fixture ui_smoke --references tools/golden/references --max-channel-diff 2 --pixel-budget-pct 0.001` |
-| Regenerate references (local, needs GL) | `LAIGE_TEST_FONT_PATH=$PWD/tests/laige-render/assets/vera.ttf ./build/tools/golden/laige-golden --update --references tools/golden/references` |
+| Golden compare (one fixture) | `./build/bin/laige-golden --fixture ui_smoke --references tools/golden/references --max-channel-diff 2 --pixel-budget-pct 0.001` |
+| Regenerate references (local, needs GL) | `LAIGE_TEST_FONT_PATH=$PWD/tests/laige-render/assets/vera.ttf ./build/bin/laige-golden --update --references tools/golden/references` |
 
 ## 7. Running this step's checks
 

@@ -77,7 +77,7 @@ jobs:
           LAIGE_TEST_FONT_PATH: ${{ github.workspace }}/tests/laige-render/assets/vera.ttf
         run: |
           mkdir -p build/golden-references
-          ./build/tools/golden/laige-golden --update --all \
+          ./build/bin/laige-golden --update --all \
             --references build/golden-references
       - name: Verify determinism (in-run compare)
         # The freshly rendered frames must compare against themselves
@@ -87,7 +87,7 @@ jobs:
         env:
           LAIGE_TEST_FONT_PATH: ${{ github.workspace }}/tests/laige-render/assets/vera.ttf
         run: |
-          ./build/tools/golden/laige-golden --all \
+          ./build/bin/laige-golden --all \
             --references build/golden-references \
             --max-channel-diff 2 --pixel-budget-pct 0.001
       - name: Print the references (base64, for log extraction)

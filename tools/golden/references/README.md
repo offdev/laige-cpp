@@ -55,7 +55,7 @@ on the agents' GPU-restricted machines):
 
 ```
 LAIGE_TEST_FONT_PATH=$PWD/tests/laige-render/assets/vera.ttf \
-  ./build/tools/golden/laige-golden --update --references tools/golden/references
+  ./build/bin/laige-golden --update --references tools/golden/references
 ```
 
 `--update` writes atomically (a `.tmp` file in this directory, then
