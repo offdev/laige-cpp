@@ -426,7 +426,7 @@ Developed with the expectation that a significant share of game code is written 
 | Unit | Per-module, ASan/UBSan | Every commit |
 | Integration | ECS↔sim↔render↔net contracts; replay determinism; protocol fuzz; isometric picking/depth-key golden tests | Every commit |
 | Fuzz | Asset import, network packets, config parse | Every commit (bounded), nightly (long) |
-| Perf | Budget suite (§8.1) on pinned CI hardware, incl. worst-case isometric scene | Every PR (subset), nightly (full) |
+| Perf | Budget suite (§8.1) on pinned CI hardware, incl. worst-case isometric scene — the render-50k budget entries run label-gated (`ci:slow:bench-50k`) and always at the milestone gate (AGENTS.md §5) | Every PR (subset; render-50k label-gated), nightly (full) |
 | Determinism | Two-target bit-identity check (seeded scenarios) | Every merge |
 | Soak | 72 h auto-gameplay + abuse scenarios per release candidate | Per release |
 | Cross-OS | All P0 platforms in CI; one per PR, all per merge | Per PR/merge |

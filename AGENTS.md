@@ -161,6 +161,47 @@ GitHub without the gate is a rule violation (CORE-008): the PR lane
 all four Linux trees, but the gate exists so a red Linux tree is
 caught on the developer machine before it reaches GitHub.
 
+ ### Slow CI suites and the milestone gate (2026-10-13)
+
+ The CI lanes split into a fast lane (every PR, every merge) and
+ label-gated slow jobs. Every ctest entry that took longer than 30 s
+ in a merge-lane run has been moved out of the main job into a
+ dedicated job of its own, and it MUST NOT run unless its gate is
+ provided. The current slow set, measured on the latest master run
+ (38312355303, 2026-10-12):
+
+ - `laige-sim_tests` — gcc, clang, asan, tsan — label `ci:slow:sim`
+ - `laige-render_tests` — gcc, clang, asan, tsan — label
+   `ci:slow:render`
+ - `particle_render` — gcc, clang, tsan — label `ci:slow:particle`
+ - `zero_alloc` — asan, tsan — label `ci:slow:zero-alloc`
+ - `ecs_stress` — asan, tsan — label `ci:slow:ecs-stress`
+ - `laige_bench_render_50k_fpx16` / `laige_bench_render_50k_fp32` —
+   gcc, clang — label `ci:slow:bench-50k`
+
+ No entry exceeds 30 s on the windows/macOS lanes (worst:
+ `laige-sim_tests` 27.11 s on macos-intel), so those jobs keep the full
+ suite and have no slow jobs. The main jobs' `ctest` excludes the moved
+ entries (`-E`) and the slow jobs select theirs (`-R`): every entry
+ runs exactly once per gated run, never twice, and never ungated.
+
+ **Milestone gate.** The slow suites MUST run to finalize a milestone
+ gate: before a milestone-gate PR is merged, the PR MUST carry ALL
+ six `ci:slow:*` labels so every slow job runs and passes (a label
+ added after a run is created never re-triggers it — the labels must
+ be on the PR before the run starts). After the gate merges, a
+ `workflow_dispatch` on master with all six slow checkboxes ticked
+ re-runs the slow matrix on master. The local Linux test gate above is
+ unaffected: it still runs the complete unfiltered `ctest` of all four
+ trees locally, slow suites included.
+
+ **Threshold maintenance.** The slow set is re-derived from the latest
+ master run whenever a suite crosses the 30 s threshold: a main-job
+ entry that exceeds 30 s moves to a dedicated label-gated job in the
+ next PR, and a gated entry that is back under 30 s in the latest
+ master run returns to its main job. The per-lane evidence (the entry
+ times above) MUST be recorded in the workflow header of the change.
+
 ## 6. Architecture boundaries
 
 - **ARCH-001:** Keep simulation, rendering, platform, asset, audio, networking,
