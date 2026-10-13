@@ -55,11 +55,28 @@
 #include "laige/render/sprite_renderer.h"
 #include "laige/render/ui_render.h"
 #include "laige/result.h"
-#include "laige_test_seed.h"
 #include "stb_image.h"
 #include "stb_image_write.h"
 
 namespace {
+
+// The house env-var read (the laige_test_seed.h ReadEnvVar pattern,
+// inlined: that header pulls in gtest, which a non-test tool target
+// must not drag in — the CI runners have no system gtest).
+std::string readEnvVar(const char* name) {
+#if defined(_MSC_VER)
+  constexpr std::size_t kEnvValueMaxBytes = 4096;
+  char buf[kEnvValueMaxBytes];
+  std::size_t len = 0;
+  if (getenv_s(&len, buf, sizeof(buf), name) != 0) {
+    return {};
+  }
+  return std::string(buf, len);
+#else
+  const char* v = std::getenv(name);
+  return (v != nullptr) ? std::string(v) : std::string();
+#endif
+}
 
 using laige::render::GlContext;
 using laige::render::Mat4;
@@ -150,10 +167,10 @@ int parseArgs(int argc, char** argv, Config& cfg) {
   return kExitOk;
 }
 
-// The house font load (tests/support/laige_test_seed.h ReadEnvVar +
-// the fopen_s pattern from ui_render_tests.cpp, no gtest).
+// The house font load (the inlined env-var read above + the fopen_s
+// pattern from ui_render_tests.cpp, no gtest).
 std::vector<std::uint8_t> loadFont() {
-  const std::string path = laige::testing::ReadEnvVar("LAIGE_TEST_FONT_PATH");
+  const std::string path = readEnvVar("LAIGE_TEST_FONT_PATH");
   if (path.empty()) {
     std::fprintf(stderr,
                  "laige-golden: LAIGE_TEST_FONT_PATH is not set (CTest "

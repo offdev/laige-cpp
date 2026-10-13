@@ -19,12 +19,12 @@ laige_apply_engine_policy(laige-golden)
 target_link_libraries(laige-golden PRIVATE laige-render laige-stb)
 # The vendor PNG headers' DECLARATIONS (the implementations live in
 # laige-stb — the render tests' deps/glad include precedent) and the
-# shared golden headers (the fixtures + the comparison core) plus the
-# house env-var helper.
+# shared golden headers (the fixtures + the comparison core). The tool
+# is GL-free of gtest (no system gtest on the CI runners — its env-var
+# read is inlined from the house pattern).
 target_include_directories(laige-golden PRIVATE
   ${CMAKE_SOURCE_DIR}/deps/stb
-  ${CMAKE_SOURCE_DIR}/tests/golden
-  ${CMAKE_SOURCE_DIR}/tests/support)
+  ${CMAKE_SOURCE_DIR}/tests/golden)
 
 # The step's Verify command in executable form (roadmap: "ctest -R
 # golden" — the unanchored regex also selects the GL-free
