@@ -164,13 +164,11 @@ if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # exit-time segfault backtrace (gdb, a reduced frame count — the
   # crash is in the exit path, not the measured region). gdb is not
   # preinstalled on the ubuntu-24.04 runners — install it in-place.
+  # One single CMake string: CTest passes each quoted literal as a
+  # separate argv element, and bash only takes the first as its -c
+  # script (the multi-string form breaks the command line).
   add_test(NAME laige_bench_ac4_fpx16_gdb
-           COMMAND /bin/bash -c "sudo apt-get update -qq && "
-                                  "sudo apt-get install -y -qq gdb && "
-                                  "gdb -batch -ex run -ex bt --args laige-bench "
-                                  "--suite=ac4 --math=fixed_point_16_16 "
-                                  "--runs=20 --warmup=5 "
-                                  "--budget=sprites_10k_frame")
+           COMMAND /bin/bash -c "sudo apt-get update -qq && sudo apt-get install -y -qq gdb && gdb -batch -ex run -ex bt --args laige-bench --suite=ac4 --math=fixed_point_16_16 --runs=20 --warmup=5 --budget=sprites_10k_frame")
   set_tests_properties(laige_bench_ac4_fpx16_gdb
     PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
                TIMEOUT 600)
