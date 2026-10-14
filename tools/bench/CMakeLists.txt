@@ -168,9 +168,11 @@ if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # separate argv element, and bash only takes the first as its -c
   # script (the multi-string form breaks the command line). Absolute
   # binary path: CTest resolves bare names itself, but the PATH the
-  # bash -c child inherits does not include build/bin.
+  # bash -c child inherits does not include build/bin. Full canonical
+  # shape: the 20-frame run exits cleanly even on CI, so the
+  # frame-count must match the crashing entries.
   add_test(NAME laige_bench_ac4_fpx16_gdb
-           COMMAND /bin/bash -c "sudo apt-get update -qq && sudo apt-get install -y -qq gdb && gdb -batch -ex run -ex bt --args ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/laige-bench --suite=ac4 --math=fixed_point_16_16 --runs=20 --warmup=5 --budget=sprites_10k_frame")
+           COMMAND /bin/bash -c "sudo apt-get update -qq && sudo apt-get install -y -qq gdb && gdb -batch -ex run -ex bt --args ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/laige-bench --suite=ac4 --math=fixed_point_16_16 --runs=3000 --warmup=1000 --budget=sprites_10k_frame")
   set_tests_properties(laige_bench_ac4_fpx16_gdb
     PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
                TIMEOUT 600)
