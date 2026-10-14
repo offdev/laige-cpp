@@ -159,6 +159,18 @@ if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                        laige_bench_ac4_fp32
     PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
                TIMEOUT 1800)
+
+  # TEMPORARY DIAGNOSTIC (removed once root-caused): the ac4 run's
+  # exit-time segfault backtrace (gdb, a reduced frame count — the
+  # crash is in the exit path, not the measured region).
+  add_test(NAME laige_bench_ac4_fpx16_gdb
+           COMMAND /usr/bin/gdb -batch -ex run -ex bt
+                   --args laige-bench --suite=ac4 --math=fixed_point_16_16
+                         --runs=20 --warmup=5
+                         --budget=sprites_10k_frame)
+  set_tests_properties(laige_bench_ac4_fpx16_gdb
+    PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
+               TIMEOUT 300)
 endif()
 
 # All-platform sim-tick smoke (no budget gate): the sim-tick workload
