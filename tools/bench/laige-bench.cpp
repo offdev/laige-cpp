@@ -227,6 +227,16 @@ std::string Ac4ThreadNames() {
   ::closedir(dir);
   return out;
 }
+
+// TEMPORARY DIAGNOSTIC: count the process's threads (/proc/self/task).
+std::size_t Ac4ThreadCount() {
+  std::size_t n = 0;
+  DIR* dir = ::opendir("/proc/self/task");
+  if (dir == nullptr) return 1;
+  while (::readdir(dir) != nullptr) ++n;
+  ::closedir(dir);
+  return n >= 2 ? n - 2 : 0;  // drop "." and ".."
+}
 #endif
 
 // The parsed command-line configuration (defined before the suites —
@@ -760,6 +770,23 @@ bool render50SetupImpl(const Config& cfg, Render50State<Backend>& st) {
         render50Fail("bindAtlas failed for the UI widget atlas");
       }
     }
+#if defined(__linux__)
+    // TEMPORARY DIAGNOSTIC: the render-50k control census (this
+    // workload exits cleanly on CI — compare its thread state against
+    // the ac4 one). Fails when workers are present, for log
+    // visibility (same reasoning as the ac4 check).
+    {
+      const std::string line =
+          "ac4 diagnostic: render-50k post-GL threads=[" +
+          Ac4ThreadNames() + "]\n";
+      (void)!::write(STDERR_FILENO, line.data(), line.size());
+      if (Ac4ThreadCount() > 1) {
+        render50Fail(std::to_string(Ac4ThreadCount() - 1) +
+                     " worker thread(s) present after GL init (diagnostic "
+                     "census above)");
+      }
+    }
+#endif
   } else {
     st.glAvailable = false;
     std::fprintf(stderr,
@@ -1132,10 +1159,17 @@ bool ac4SetupImpl(const Config& cfg, Ac4State& st) {
 #if defined(__linux__)
     // TEMPORARY DIAGNOSTIC: the thread census after the GL context is
     // up (vs the startup census — did the GL init spawn the workers?).
+    // Like the startup check, fail when workers are present so the
+    // census is visible in the CI job log.
     {
       const std::string line =
           "ac4 diagnostic: post-GL threads=[" + Ac4ThreadNames() + "]\n";
       (void)!::write(STDERR_FILENO, line.data(), line.size());
+      if (Ac4ThreadCount() > 1) {
+        ac4Fail(std::to_string(Ac4ThreadCount() - 1) +
+                " worker thread(s) present after GL init (diagnostic "
+                "census above)");
+      }
     }
 #endif
   } else {
@@ -1475,6 +1509,22 @@ int main(int argc, char** argv) {
     usage(stderr);
     return 1;
   }
+
+#if defined(__linux__)
+  // TEMPORARY DIAGNOSTIC: for the ac4 suite, fail the run if worker
+  // threads are present, so the census is visible in the CI job log
+  // even when the segfault does not reproduce (ctest only shows
+  // output of failing tests).
+  if (cfg.suite == "ac4" && Ac4ThreadCount() > 1) {
+    std::fprintf(stderr,
+                 "ac4 diagnostic: %zu worker thread(s) present at "
+                 "startup — failing so the census is visible in the "
+                 "job log\n",
+                 Ac4ThreadCount() - 1);
+    std::fflush(stderr);
+    return 1;
+  }
+#endif
 
   const Suite* suite = nullptr;
   for (const Suite& s : kSuites)
