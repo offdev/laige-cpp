@@ -251,23 +251,42 @@ struct GlContext::Impl {
 
   void destroy() {
     if (backend == Backend::egl) {
+      // Drain all GL work submitted to this context before destroying
+      // it: the software rasterizer (llvmpipe, the P0 CI headless
+      // path) executes submitted work on a worker pool, and the
+      // context — and, below, the driver library itself — must not be
+      // torn down while a pool thread is still inside it (the pool
+      // threads then segfault during exit; M2-AC-01 CI evidence).
+      // glFinish is one-shot teardown work, never on the frame loop.
+      if (eglContext != nullptr) {
+        egl.bindApi(egl::kOpenGlApi);
+        egl.makeCurrent(eglDisplay, nullptr, nullptr, eglContext);
+        glad_glFinish();
+      }
       if (egl.destroyContext != nullptr && eglContext != nullptr) {
         egl.destroyContext(eglDisplay, eglContext);
       }
       if (egl.destroyDisplay != nullptr && eglDisplay != nullptr) {
         egl.destroyDisplay(eglDisplay);
       }
-      // libEGL is dlopened only on the Linux headless path (createHeadless
-      // #else branch); on Windows/macOS eglHandle is always null and
-      // <dlfcn.h> is not included (see the include guard above), so the
-      // close is compiled only where the handle can exist.
-#if !defined(__APPLE__) && !defined(_WIN32)
-      if (eglHandle != nullptr) {
-        dlclose(eglHandle);
-      }
-#endif
+      // libEGL is dlopened only on the Linux headless path
+      // (createHeadless #else branch); on Windows/macOS eglHandle is
+      // always null and <dlfcn.h> is not included (see the include
+      // guard above). The handle is NOT closed, even though the
+      // platform permits it: the driver (llvmpipe on the P0 CI
+      // runners) runs a worker pool it never joins, and dlclose'ing a
+      // library with live threads inside it is undefined behavior —
+      // the pool threads segfault during exit (M2-AC-01 CI evidence,
+      // the crash tids were llvmpipe workers). The mapping leaks for
+      // the process's remaining lifetime (bounded: one handle per
+      // created context; the process reclaims it at exit).
     } else {
       if (window != nullptr) {
+        // The same drain, on the windowed backend (driver command
+        // queues are asynchronous on every real GPU): the context is
+        // destroyed with the window, and must be idle first.
+        glfwMakeContextCurrent(window);
+        glad_glFinish();
         glfwDestroyWindow(window);  // destroys the context with it
       }
     }

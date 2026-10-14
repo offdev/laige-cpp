@@ -457,11 +457,12 @@ TEST(BudgetHarnessTable, LoadsTheRepoBudgetsFile) {
   ASSERT_TRUE(table.ok()) << laige::errorText(table.error());
   const BudgetTable& t = table.value();
 
-  // One entry per PRD 8.1 target (17 rows: sim tick, 50k sprites,
+  // One entry per PRD 8.1 target (18 rows: sim tick, 50k sprites,
   // cold start, build time, and zone server each carry two budgets,
   // plus the single-budget M2 render targets — iso_depthkey_rebuild,
-  // iso_picking, depth_sort_10k, particle_render_10k).
-  EXPECT_EQ(std::size_t(17), t.size());
+  // iso_picking, depth_sort_10k, particle_render_10k, and
+  // sprites_10k_frame (M2-AC-01 AC-4.3's 60 FPS frame budget)).
+  EXPECT_EQ(std::size_t(18), t.size());
 
   const BudgetEntry* frame = t.find("frame_time_render");
   ASSERT_NE(frame, nullptr);

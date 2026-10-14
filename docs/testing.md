@@ -195,13 +195,29 @@ The fixtures (tests/golden/golden_fixtures.h, GL-free builders):
   (panel, button, text, image, slider) at fixed screen-px positions,
   the 4x4 UI atlas + the committed test font's 1024x1024 glyph
   atlas, the identity screen camera, the clear color (0, 0, 0, 255).
+- `ac4_iso` / `ac4_side_view` — the M2-AC-01 AC-4.1 acceptance scenes:
+  the SAME 96-sprite world (the 12 x 8 grid at scale 1.0, four
+  (atlas, material, blend) groups of 24, the engine depth keys) +
+  the SAME 3-widget UI pass, differing only in the config struct —
+  `ac4_iso` with the engine-default Iso projection (the ADR 0005
+  preset at k = 0.06) and `ac4_side_view` with the SideView plane
+  camera (`planeOrtho` at the same half extents and z slab). One
+  engine build renders both; the scene shape invariants are pinned
+  GL-free (the `GoldenFixtures.Ac4*` tests). Documented geometry
+  note: `SpriteItem` carries the 2D ground-plane position (no
+  elevation field), so the side-view frame's world pass is
+  degenerate by construction (all z = 0 sprites project to
+  zero-height quads under the z = 0 reference plane); the side-view
+  frame's visible content is the screen-space UI pass, identical in
+  both configs (the AC-4.1 "differing only in config" is asserted on
+  the scene, not on the world raster).
 
-Both render at the canonical golden frame (1280x720, top-origin /
+All four render at the canonical golden frame (1280x720, top-origin /
 y-down) with a fixed camera and no PRNG; the frame protocol is the
-M2-SPRITE-02 offscreen one (clear, submit, one
-`GlContext::readPixels` capture of the whole frame, rows flipped to
-the screen convention). The scene shape invariants (item/quad
-counts, groups, camera matrices, clear colors) are pinned by the
+M2-SPRITE-02 offscreen one (clear, the declared passes in frame
+order, one `GlContext::readPixels` capture of the whole frame, rows
+flipped to the screen convention). The scene shape invariants (item/
+quad counts, groups, camera matrices, clear colors) are pinned by the
 GL-free `GoldenFixtures*` suite, ctest entry `golden_compare`.
 
 Tolerance contract (explicit, never hidden — the ctest entry passes

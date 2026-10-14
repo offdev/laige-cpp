@@ -27,11 +27,16 @@
 #   ci:slow:particle   particle_render                          gcc clang tsan
 #   ci:slow:zero-alloc zero_alloc                               asan tsan
 #   ci:slow:ecs-stress ecs_stress                               asan tsan
-#   ci:slow:bench-50k  laige_bench_render_50k_fpx16 / _fp32     gcc clang
+#   ci:slow:bench-50k  laige_bench_render_50k_fpx16 / _fp32 and
+#                      laige_bench_ac4_fpx16 / _fp32 (M2-AC-01)     gcc clang
 #
 #   Evidence (run 38312355303, per-entry times in s, threshold 30 s):
 #     laige_bench_render_50k_fpx16  gcc 577.05  clang 578.42
 #     laige_bench_render_50k_fp32   gcc 593.82  clang 566.52
+#     laige_bench_ac4_fpx16 / _fp32 NEW in M2-AC-01 — estimated ~60 s
+#     from the render-50k evidence (577 s over 4000 frames of 116k
+#     quads vs the ac4 frame's 10k quads); first-run times replace this
+#     estimate in the header once the entry has a master-run measurement
 #     laige-sim_tests               gcc 59.97   clang 53.79  asan 124.03  tsan 159.52
 #     laige-render_tests            gcc 53.83   clang 44.45  asan 43.20   tsan 60.41
 #     particle_render               gcc 38.76   clang 34.67  asan 28.84   tsan 39.56
@@ -148,7 +153,7 @@ jobs:
         # gated run.
         run: |
           ctest --test-dir build --output-on-failure \
-            -E '^(laige-sim_tests|laige-render_tests|particle_render|laige_bench_render_50k_fpx16|laige_bench_render_50k_fp32)$'
+            -E '^(laige-sim_tests|laige-render_tests|particle_render|laige_bench_render_50k_fpx16|laige_bench_render_50k_fp32|laige_bench_ac4_fpx16|laige_bench_ac4_fp32)$'
 
   linux-clang:
     name: Linux x64 (clang++)
@@ -182,7 +187,7 @@ jobs:
         # gated run.
         run: |
           ctest --test-dir build --output-on-failure \
-            -E '^(laige-sim_tests|laige-render_tests|particle_render|laige_bench_render_50k_fpx16|laige_bench_render_50k_fp32)$'
+            -E '^(laige-sim_tests|laige-render_tests|particle_render|laige_bench_render_50k_fpx16|laige_bench_render_50k_fp32|laige_bench_ac4_fpx16|laige_bench_ac4_fp32)$'
 
   linux-asan:
     name: Linux x64 ASan+UBSan (clang++)
@@ -352,11 +357,11 @@ jobs:
         run: ctest --test-dir build --output-on-failure -R '^particle_render$'
 
   linux-gcc-bench-fpx16:
-    name: "Linux x64 (g++) slow bench: laige_bench_render_50k_fpx16"
+    name: "Linux x64 (g++) slow bench: laige_bench_render_50k_fpx16 + laige_bench_ac4_fpx16"
     runs-on: ubuntu-24.04
     # 30: build (~1.5 min) + the render-50k bench (577.05 s in the evidence
-    # run) plus runner variance. The pre-split 45-min exception minus
-    # the rest of the suite.
+    # run) + the ac4 bench (estimated ~60 s, M2-AC-01) plus runner
+    # variance. The pre-split 45-min exception minus the rest of the suite.
     timeout-minutes: 30
     if: contains(github.event.pull_request.labels.*.name, 'ci:slow:bench-50k')
     steps:
@@ -373,14 +378,14 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
       - name: Build
         run: cmake --build build -j
-      - name: "Test (slow bench: laige_bench_render_50k_fpx16)"
-        run: ctest --test-dir build --output-on-failure -R '^laige_bench_render_50k_fpx16$'
+      - name: "Test (slow bench: render-50k + ac4, fpx16)"
+        run: ctest --test-dir build --output-on-failure -R '^(laige_bench_render_50k_fpx16|laige_bench_ac4_fpx16)$'
 
   linux-gcc-bench-fp32:
-    name: "Linux x64 (g++) slow bench: laige_bench_render_50k_fp32"
+    name: "Linux x64 (g++) slow bench: laige_bench_render_50k_fp32 + laige_bench_ac4_fp32"
     runs-on: ubuntu-24.04
     # 30: build (~1.5 min) + the render-50k bench (593.82 s in the evidence
-    # run) plus runner variance.
+    # run) + the ac4 bench (estimated ~60 s, M2-AC-01) plus runner variance.
     timeout-minutes: 30
     if: contains(github.event.pull_request.labels.*.name, 'ci:slow:bench-50k')
     steps:
@@ -397,8 +402,8 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++
       - name: Build
         run: cmake --build build -j
-      - name: "Test (slow bench: laige_bench_render_50k_fp32)"
-        run: ctest --test-dir build --output-on-failure -R '^laige_bench_render_50k_fp32$'
+      - name: "Test (slow bench: render-50k + ac4, fp32)"
+        run: ctest --test-dir build --output-on-failure -R '^(laige_bench_render_50k_fp32|laige_bench_ac4_fp32)$'
 
   linux-clang-sim:
     name: "Linux x64 (clang++) slow: laige-sim_tests"
@@ -473,10 +478,10 @@ jobs:
         run: ctest --test-dir build --output-on-failure -R '^particle_render$'
 
   linux-clang-bench-fpx16:
-    name: "Linux x64 (clang++) slow bench: laige_bench_render_50k_fpx16"
+    name: "Linux x64 (clang++) slow bench: laige_bench_render_50k_fpx16 + laige_bench_ac4_fpx16"
     runs-on: ubuntu-24.04
     # 30: build (~1.5 min) + the render-50k bench (578.42 s in the evidence
-    # run) plus runner variance.
+    # run) + the ac4 bench (estimated ~60 s, M2-AC-01) plus runner variance.
     timeout-minutes: 30
     if: contains(github.event.pull_request.labels.*.name, 'ci:slow:bench-50k')
     steps:
@@ -493,14 +498,14 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
       - name: Build
         run: cmake --build build -j
-      - name: "Test (slow bench: laige_bench_render_50k_fpx16)"
-        run: ctest --test-dir build --output-on-failure -R '^laige_bench_render_50k_fpx16$'
+      - name: "Test (slow bench: render-50k + ac4, fpx16)"
+        run: ctest --test-dir build --output-on-failure -R '^(laige_bench_render_50k_fpx16|laige_bench_ac4_fpx16)$'
 
   linux-clang-bench-fp32:
-    name: "Linux x64 (clang++) slow bench: laige_bench_render_50k_fp32"
+    name: "Linux x64 (clang++) slow bench: laige_bench_render_50k_fp32 + laige_bench_ac4_fp32"
     runs-on: ubuntu-24.04
     # 30: build (~1.5 min) + the render-50k bench (566.52 s in the evidence
-    # run) plus runner variance.
+    # run) + the ac4 bench (estimated ~60 s, M2-AC-01) plus runner variance.
     timeout-minutes: 30
     if: contains(github.event.pull_request.labels.*.name, 'ci:slow:bench-50k')
     steps:
@@ -517,8 +522,8 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
       - name: Build
         run: cmake --build build -j
-      - name: "Test (slow bench: laige_bench_render_50k_fp32)"
-        run: ctest --test-dir build --output-on-failure -R '^laige_bench_render_50k_fp32$'
+      - name: "Test (slow bench: render-50k + ac4, fp32)"
+        run: ctest --test-dir build --output-on-failure -R '^(laige_bench_render_50k_fp32|laige_bench_ac4_fp32)$'
 
   linux-asan-sim:
     name: "Linux x64 ASan+UBSan (clang++) slow: laige-sim_tests"
@@ -790,8 +795,10 @@ jobs:
   golden-references:
     name: Golden references (label-gated, ubuntu-24.04, g++, llvmpipe)
     runs-on: ubuntu-24.04
-    # 30: build (~1.5 min) + two 1280x720 software-GL renders + font
-    # rasterization, plus runner variance.
+    # 30: build (~1.5 min) + four 1280x720 software-GL renders (the
+    # sprite + UI fixtures, and the two M2-AC-01 ac4 fixtures — two
+    # passes each, small scenes) + font rasterization, plus runner
+    # variance.
     timeout-minutes: 30
     if: contains(github.event.pull_request.labels.*.name, 'ci:golden-update')
     steps:

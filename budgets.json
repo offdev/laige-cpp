@@ -43,6 +43,14 @@
       "workload": "50k visible sprites (worst-case isometric overlap), 3 parallax layers, UI (PRD 8.1)"
     },
     {
+      "name": "sprites_10k_frame",
+      "metric": "mean",
+      "unit": "ms",
+      "target": 16.7,
+      "measured": 12.1453,
+      "workload": "10 000 overlapping sprites (100 x 10 grid, 10 stacked per cell), whole frame sorted + drawn offscreen at 60 FPS (M2-AC-01 AC-4.3, PRD 4)"
+    },
+    {
       "name": "iso_depthkey_rebuild",
       "metric": "mean",
       "unit": "ms",

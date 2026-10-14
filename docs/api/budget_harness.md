@@ -49,12 +49,19 @@ The end-to-end form is the tool:
 - `--suite` — required; `synthetic` (the M0 harness stand-in),
   `sim-tick` (the M1-BENCH-01 PRD §8.1 workload: 10k entities, 2k
   dynamic bodies, 60 Hz, movement + per-tick state hash — its baseline:
-  `docs/benchmarks/baselines/m1-sim-tick.md`), or `render-50k`
+  `docs/benchmarks/baselines/m1-sim-tick.md`), `render-50k`
   (the M2-PERF-01 PRD §8.1 "50k visible sprites" workload: the FULL
   M2-SCENE-01 reference scene rendered offscreen at 1280x720, both
   SimMath backends — its baseline:
-  `docs/benchmarks/baselines/m2-render-50k.md`). `--list` prints the
-  suite table.
+  `docs/benchmarks/baselines/m2-render-50k.md`), or `ac4` /
+  `render-sort-10k` (the M2-AC-01 AC-4.x acceptance workload: 10k
+  overlapping sprites — a 100 x 10 grid, 10 stacked per cell — sorted
+  + drawn in one 60 FPS frame, both SimMath backends; the two names
+  select the same workload — `ac4` is the CI wiring's name
+  (`--suite=ac4`, `ctest -R ac4`), `render-sort-10k` the dedicated
+  suite name the AC-4.3 scope uses — its baseline:
+  `docs/benchmarks/baselines/m2-ac4.md`). `--list` prints the suite
+  table.
 - `--budget` — **repeatable**: one run checks every named budget (each
   entry's `metric` picks its statistic), printing one report per
   entry. A duplicate name is a usage error. Each named budget is
@@ -62,12 +69,18 @@ The end-to-end form is the tool:
   generic iteration-timer histogram, except for a name a suite
   records itself — the render-50k suite records the batch-stage CPU
   window and the frame's draw-call count into two of its own
-  (`sprites_50k_cpu` and `sprites_50k_draw_calls`). The M1 gate form:
-  `--budget=sim_tick_avg --budget=sim_tick_p99`; the M2 gate form:
-  `--budget=sprites_50k_draw_calls --budget=sprites_50k_cpu`.
-- `--math` — the SimMath backend (ADR 0002) the `sim-tick` and
-  `render-50k` suites run on; `fixed_point_16_16` (the default) or
-  `float_pinned_32`. Other suites ignore it.
+  (`sprites_50k_cpu` and `sprites_50k_draw_calls`), and the ac4 suite
+  records the whole frame's CPU time (batch stage + submit stage)
+  into its own `sprites_10k_frame` histogram — recorded only while an
+  offscreen GL 3.3 context is available (a CPU-only run leaves it
+  empty and the check fails `NO_SAMPLES`, loud). The M1 gate form:
+  `--budget=sim_tick_avg --budget=sim_tick_p99`; the M2 gate forms:
+  `--budget=sprites_50k_draw_calls --budget=sprites_50k_cpu` and
+  `--budget=sprites_10k_frame`.
+- `--math` — the SimMath backend (ADR 0002) the `sim-tick`,
+  `render-50k`, and `ac4` / `render-sort-10k` suites run on;
+  `fixed_point_16_16` (the default) or `float_pinned_32`. Other
+  suites ignore it.
 - `--budgets` — the budgets file (default: `$LAIGE_BUDGETS_PATH`, then
   `budgets.json` in the working directory — the ctest gate entries set
   the env var to the repo root).
@@ -76,8 +89,9 @@ The end-to-end form is the tool:
 Exit code 0 on pass, 2 on a failed budget check (any one of the named
 budgets failing fails the run — PRD 8.1 policy: a budget regression
 fails CI), 1 on usage/load errors or a broken workload contract
-(the render-50k suite's zero-allocation assertion, a failed
-declare/build/submit — the loud `simTickFail` shape).
+(the render-50k and ac4 suites' zero-allocation assertions, a failed
+declare/build/submit, the ac4 suite's AC-4.4 engine-default
+assertion — the loud `simTickFail` shape).
 
 ## `laige::Histogram`
 
@@ -245,7 +259,7 @@ is smaller than the run and then claiming "all samples"; using
 
 The harness measures wall-clock durations: it is *not* deterministic
 simulation state and plays no part in replay/lockstep (ARCH-010). All
-three suites are deterministic by construction, which is what makes
+five suites are deterministic by construction, which is what makes
 their baselines reproducible: `synthetic` (fixed LCG constants —
 Marsaglia 2003 — no RNG, no allocation;
 `docs/benchmarks/baselines/m0-synthetic.md`, M0-EXIT-01), `sim-tick`
@@ -253,9 +267,15 @@ Marsaglia 2003 — no RNG, no allocation;
 no randomness in the measured path — the run's `final_hash` line is a
 bit-identical fingerprint across runs, build types, and compilers per
 the ADR 0002 scope; `docs/benchmarks/baselines/m1-sim-tick.md`,
-M1-BENCH-01), and `render-50k` (the FULL M2-SCENE-01 reference scene at
+M1-BENCH-01), `render-50k` (the FULL M2-SCENE-01 reference scene at
 fixed seed `0x1F055EED`, static camera, one particle update per frame —
 the scene's group structure is bit-identical per M2-SCENE-01, so the
 run's `draw_calls` line is a bit-identical fingerprint across runs,
 build types, and compilers;
-`docs/benchmarks/baselines/m2-render-50k.md`, M2-PERF-01).
+`docs/benchmarks/baselines/m2-render-50k.md`, M2-PERF-01), and
+`ac4` / `render-sort-10k` (a fixed 10k-sprite workload built from its
+index grid — no RNG at all — so the run's `ac4:` identity line,
+including the frame's draw-call count and the default-projection
+assertion, is a bit-identical fingerprint across runs, build types,
+and compilers per the ADR 0002 scope;
+`docs/benchmarks/baselines/m2-ac4.md`, M2-AC-01).

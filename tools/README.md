@@ -51,6 +51,19 @@ Engine tools and CI scripts, each landing with its roadmap step:
   `tests/tools` (fixture trees + the real tree). Scope, rules, and the
   exception policy:
   [docs/concepts/determinism.md](../docs/concepts/determinism.md).
+- `laige-surface-lint` — projection-surface lint (M2-AC-01 AC-4.2).
+  Pure Python 3 stdlib; run it as `python3 tools/laige-surface-lint
+  [--root REPO_ROOT]`. The AC-4.2 proof that no simulation, physics,
+  pathing, or network code depends on the projection mode: the
+  public surface of `laige-sim` and `laige-net` (their `include/`
+  trees) MUST NOT mention `ProjectionMode` at all (RENDER-006).
+  Exit codes: `0` OK (prints the scanned header count) · `1` a
+  `ProjectionMode` mention in a public header (each hit printed as
+  `rel/path:line: text`) · `2` structural (a module has source but
+  no public-header root). Runs in CI on every PR and merge as the
+  CTest entries `ac4_surface*` in `tests/tools` (fixture trees for
+  each exit path + the real tree — the `laige-include-lint` CTest
+  pattern).
 - `laige-api` — public API manifest generator (M0-TOOL-01)
 - `laige-detcheck` — determinism checker skeleton (M0-TOOL-02, in
   `tools/detcheck`): runs a named scenario in two build configurations
@@ -66,9 +79,10 @@ Engine tools and CI scripts, each landing with its roadmap step:
   runs the CLI determinism gate (ctest entry `scene_iso_cli`)
 - `laige-golden` — the golden image test tool (M2-GOLD-01, in
   `tools/golden`): renders the committed golden scene fixtures
-  (the M2-SPRITE-02 sprite scene + the M2-UI-02 UI scene)
-  offscreen at the canonical 1280x720 frame (fixed camera, no
-  PRNG), captures the frame (one `GlContext::readPixels`), and
+  (the M2-SPRITE-02 sprite scene, the M2-UI-02 UI scene, and the
+  M2-AC-01 `ac4_iso` / `ac4_side_view` acceptance scenes — one
+  engine build, config-only difference) offscreen at the canonical
+  1280x720 frame (fixed camera, no PRNG), captures the frame (one `GlContext::readPixels`), and
   compares it against the committed reference PNG
   (`tools/golden/references`) with the documented tolerance
   (max channel diff 2 + 0.001% pixel budget — passed as explicit

@@ -13,17 +13,20 @@
 # Suites: `synthetic` (the M0 harness stand-in — laige-core only),
 # `sim-tick` (the M1-BENCH-01 PRD 8.1 workload — drives the laige-sim
 # World/systems/GameLoop: 10k entities, 2k dynamic bodies, 60 Hz,
-# BenchMove + BenchHash systems, both SimMath backends), and
+# BenchMove + BenchHash systems, both SimMath backends),
 # `render-50k` (the M2-PERF-01 PRD 8.1 "50k visible sprites" workload —
 # the FULL M2-SCENE-01 reference scene rendered offscreen through the
-# batcher + submit stages, both SimMath backends).
+# batcher + submit stages, both SimMath backends), and `ac4` /
+# `render-sort-10k` (the M2-AC-01 AC-4.x acceptance workload — 10k
+# overlapping sprites sorted + drawn at 60 FPS, both SimMath backends).
 
 add_executable(laige-bench laige-bench.cpp)
 laige_apply_engine_policy(laige-bench)
-# The sim-tick and render-50k suites carry deterministic sim math
-# (the BenchMove systems and the reference scene's fixed-point depth
-# keys run on the SimMath op surface) — the ADR 0002 pinned flag set
-# applies to the TU exactly as to every sim target.
+# The sim-tick, render-50k, and ac4 suites carry deterministic sim
+# math (the BenchMove systems, the reference scene's fixed-point depth
+# keys, and the ac4 workload's per-backend isoDepthKey runs on the
+# SimMath op surface) — the ADR 0002 pinned flag set applies to the TU
+# exactly as to every sim target.
 laige_apply_simmath_policy(laige-bench)
 target_link_libraries(laige-bench PRIVATE laige-core laige-sim laige-render)
 
@@ -116,6 +119,44 @@ if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                                  --budget=sprites_50k_cpu)
   set_tests_properties(laige_bench_render_50k_fpx16
                        laige_bench_render_50k_fp32
+    PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
+               TIMEOUT 1800)
+endif()
+
+# The M2-AC-01 CI gate (PRD §4 AC-4.3): the 10 000-overlapping-sprite
+# workload (the 100 x 10 grid, 10 sprites stacked per cell — the
+# sort's equal-key ties + the frame's overdraw) sorted + drawn at
+# 60 FPS, both SimMath backends, in the canonical 3000-run /
+# 1000-warmup shape, checked against the `sprites_10k_frame` budget
+# (the whole frame's CPU ms, mean <= 16.7 ms); the suite's
+# zero-allocation assertion (M1-ALLOC-01 extended to the batcher)
+# aborts the run on the first allocating frame (exit 1, CORE-008), and
+# the AC-4.4 engine-default assert (the default ProjectionView's mode
+# is Iso) runs in setup. Platform scope as the render-50k gate: the
+# absolute target is calibrated on the CI reference machine
+# (methodology §5 — the P0 Linux jobs, ubuntu-24.04); the entry is
+# Linux-only because the frame sample needs an offscreen GL 3.3
+# context (the CI's Mesa surfaceless EGL + llvmpipe stack, M2-GL-01 —
+# a CPU-only run would leave the frame histogram empty and fail
+# NO_SAMPLES, not skip, and the macOS runners have no usable GL) and
+# the workload's 4000 x 10k-quad frames would not fit the other
+# lanes' time budgets. Excluded from the sanitizer trees:
+# instrumentation inflates the absolute cost (the m1-profiler-cost
+# precedent). The 1800 s timeout bounds 4000 offscreen frames of the
+# 10k-quad frame with wide margin (the render-50k gate's shape).
+# `ctest -R ac4` selects these two entries together with the
+# ac4_surface* lint entries (the AC-4.x suite in one ctest selection).
+if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_test(NAME laige_bench_ac4_fpx16
+           COMMAND laige-bench --suite=ac4 --math=fixed_point_16_16
+                                 --runs=3000 --warmup=1000
+                                 --budget=sprites_10k_frame)
+  add_test(NAME laige_bench_ac4_fp32
+           COMMAND laige-bench --suite=ac4 --math=float_pinned_32
+                                 --runs=3000 --warmup=1000
+                                 --budget=sprites_10k_frame)
+  set_tests_properties(laige_bench_ac4_fpx16
+                       laige_bench_ac4_fp32
     PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
                TIMEOUT 1800)
 endif()

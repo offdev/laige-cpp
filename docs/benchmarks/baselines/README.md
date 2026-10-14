@@ -116,3 +116,17 @@ Recorded so far:
   `sprites_50k_draw_calls`; supersedes nothing (`measured` was 0);
   calibrates `sprites_50k_cpu` `target` 2.0 → **100.0 ms** in the same
   PR (PRD §8.1 v0.5), `measured` 0 → **60.4450** and **14**.
+- [m2-ac4.md](m2-ac4.md) (M2-AC-01, 2026-10-14) — the PRD §4 AC-4.x
+  acceptance record: the `ac4` / `render-sort-10k` workload (10 000
+  overlapping sprites, 100×10 grid, 10 stacked per cell, four (atlas,
+  material, blend) groups, 4 draw calls/frame, whole 60 FPS frame at
+  1280×720 offscreen software GL, both backends, 3000 measured frames):
+  12.1453 ms mean on the CI reference lane (worse backend fp32_pinned;
+  worst across lanes 12.6959 ms) against the 16.7 ms frame budget —
+  37.5% margin, zero per-frame allocation, exactly 4 draw calls.
+  **The thirteenth baseline** — first recording of
+  `sprites_10k_frame`; supersedes nothing (`measured` was 0); carries
+  the AC-4.1…AC-4.4 checklist and the root-cause record of the ac4
+  exit-time segfault (llvmpipe worker pool vs the context
+  teardown/dlclose — fixed by the `glFinish` drain in
+  `GlContext::Impl::destroy` + the end of the EGL driver `dlclose`).

@@ -198,6 +198,32 @@ function(laige_add_lint_test name expect_exit root)
   endforeach()
   set(PYTHON "${LAIGE_LINT_PYTHON}")
   set(LINT "${CMAKE_SOURCE_DIR}/tools/laige-include-lint")
+  set(LINT_NAME "laige-include-lint")
+  set(ROOT "${root}")
+  set(EXPECT_EXIT "${expect_exit}")
+  set(CHECKS "${_checks}")
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/expect-lint-result.cmake.in"
+                 "${CMAKE_CURRENT_BINARY_DIR}/${name}.cmake" @ONLY)
+  add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -P
+           "${CMAKE_CURRENT_BINARY_DIR}/${name}.cmake")
+endfunction()
+
+# The same generated-check pattern, pointed at the AC-4.2 surface lint
+# (M2-AC-01: no ProjectionMode in the laige-sim/laige-net public
+# surface; the companion of the include-lint R2 rule above).
+function(laige_add_surface_lint_test name expect_exit root)
+  set(_checks "")
+  foreach(_needle IN LISTS ARGN)
+    string(REPLACE "\\" "\\\\" _esc "${_needle}")
+    string(REPLACE "\"" "\\\"" _esc "${_esc}")
+    string(APPEND _checks
+      "if(NOT _text MATCHES \"${_esc}\")\n"
+      "  string(APPEND _problems \"output missing '<${_esc}'>; \")\n"
+      "endif()\n")
+  endforeach()
+  set(PYTHON "${LAIGE_LINT_PYTHON}")
+  set(LINT "${CMAKE_SOURCE_DIR}/tools/laige-surface-lint")
+  set(LINT_NAME "laige-surface-lint")
   set(ROOT "${root}")
   set(EXPECT_EXIT "${expect_exit}")
   set(CHECKS "${_checks}")
@@ -222,6 +248,54 @@ laige_add_lint_test(include-lint-sim-to-render 1 "${FX}/sim-to-render"
   "R2: include of 'laige/render/projection.h' reaches module 'laige-render'")
 laige_add_lint_test(include-lint-real-tree 0 "${CMAKE_SOURCE_DIR}"
   "laige-include-lint: OK")
+
+# ===========================================================================
+# surface-lint tests (M2-AC-01, AC-4.2)
+#
+# tools/laige-surface-lint scans the PUBLIC surface of laige-sim and
+# laige-net for the render-side projection type ProjectionMode (the
+# surface half of AC-4.2; the include-graph half is the include-lint
+# R2 rule, the sim-to-render fixture above). Same fixture +
+# generated-`cmake -P` pattern.
+# ===========================================================================
+
+set(FXS "${CMAKE_BINARY_DIR}/surface-lint-fixtures")
+file(REMOVE_RECURSE "${FXS}")
+
+# --- fixture: clean sim + net public headers (expect exit 0) -----------
+file(MAKE_DIRECTORY "${FXS}/clean/src/laige-sim/include/laige/sim")
+file(MAKE_DIRECTORY "${FXS}/clean/src/laige-net/include/laige/net")
+file(WRITE "${FXS}/clean/src/laige-sim/include/laige/sim/s.h" "#pragma once
+// A sim concept that must not mention the projection type.
+enum class Mode { A, B };
+")
+file(WRITE "${FXS}/clean/src/laige-net/include/laige/net/n.h" "#pragma once
+// The net module is README-only in the real tree (no CMake yet);
+// the fixture gives it one header.
+struct Packet { int id; };
+")
+
+# --- fixture: ProjectionMode in the sim public surface (expect 1) -----
+file(MAKE_DIRECTORY "${FXS}/violation/src/laige-sim/include/laige/sim")
+file(WRITE "${FXS}/violation/src/laige-sim/include/laige/sim/pick.h" "#pragma once
+// AC-4.2 violation: the projection type leaks into the sim surface.
+enum class ProjectionMode { Iso, SideView };
+")
+
+# --- fixture: sim has code but no public-header root (expect 2) --------
+file(MAKE_DIRECTORY "${FXS}/structural/src/laige-sim")
+file(WRITE "${FXS}/structural/src/laige-sim/sim.cpp" "#include <cstdint>
+")
+
+# (name, expected exit, tree, required output fragments...)
+laige_add_surface_lint_test(ac4_surface_clean 0 "${FXS}/clean"
+  "laige-surface-lint: OK")
+laige_add_surface_lint_test(ac4_surface_violation 1 "${FXS}/violation"
+  "laige-surface-lint: FAIL" "'ProjectionMode'")
+laige_add_surface_lint_test(ac4_surface_structural 2 "${FXS}/structural"
+  "no public-header root")
+laige_add_surface_lint_test(ac4_surface 0 "${CMAKE_SOURCE_DIR}"
+  "laige-surface-lint: OK")
 
 # ===========================================================================
 # determinism-source-scan tests (M1-DET-01)
