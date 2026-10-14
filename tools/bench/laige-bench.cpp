@@ -144,6 +144,8 @@
 // gives backtrace_symbols real names.
 #if defined(__linux__)
 #include <csignal>
+#include <cstring>
+#include <dirent.h>
 #include <execinfo.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -195,6 +197,35 @@ namespace {
   // reach here only if it was blocked or ignored — terminate directly
   // (the process is dying either way, no cleanup to run).
   std::_Exit(128 + sig);
+}
+
+// TEMPORARY DIAGNOSTIC: dump the process's thread names from
+// /proc/self/task (identifying the component that spawns the worker
+// threads seen at exit). Returns "tid=name tid=name ...".
+std::string Ac4ThreadNames() {
+  std::string out;
+  DIR* dir = ::opendir("/proc/self/task");
+  if (dir == nullptr) return out;
+  while (const struct dirent* entry = ::readdir(dir)) {
+    if (entry->d_name[0] == '.') continue;
+    char commPath[288];
+    std::snprintf(commPath, sizeof(commPath), "/proc/self/task/%s/comm",
+                  entry->d_name);
+    char comm[128] = {0};
+    if (std::FILE* file = std::fopen(commPath, "r")) {
+      if (std::fgets(comm, sizeof(comm), file) != nullptr) {
+        const std::size_t len = std::strlen(comm);
+        if (len > 0 && comm[len - 1] == '\n') comm[len - 1] = '\0';
+      }
+      std::fclose(file);
+    }
+    out += entry->d_name;
+    out += "=";
+    out += comm;
+    out += ' ';
+  }
+  ::closedir(dir);
+  return out;
 }
 #endif
 
@@ -1098,6 +1129,15 @@ bool ac4SetupImpl(const Config& cfg, Ac4State& st) {
         ac4Fail("bindAtlas failed for the ac4 atlas " + std::to_string(id));
       }
     }
+#if defined(__linux__)
+    // TEMPORARY DIAGNOSTIC: the thread census after the GL context is
+    // up (vs the startup census — did the GL init spawn the workers?).
+    {
+      const std::string line =
+          "ac4 diagnostic: post-GL threads=[" + Ac4ThreadNames() + "]\n";
+      (void)!::write(STDERR_FILENO, line.data(), line.size());
+    }
+#endif
   } else {
     st.glAvailable = false;
     std::fprintf(stderr,
@@ -1420,12 +1460,11 @@ int main(int argc, char** argv) {
   // is printed here so the crashed tid in the handler line can be
   // compared against it.
   {
-    char line[64];
-    std::snprintf(line, sizeof(line),
-                  "ac4 diagnostic: main tid=%ld\n",
-                  static_cast<long>(::syscall(SYS_gettid)));
-    (void)!::write(STDERR_FILENO, line,
-                   static_cast<std::size_t>(std::strlen(line)));
+    const std::string line =
+        "ac4 diagnostic: main tid=" +
+        std::to_string(static_cast<long>(::syscall(SYS_gettid))) +
+        " threads=[" + Ac4ThreadNames() + "]\n";
+    (void)!::write(STDERR_FILENO, line.data(), line.size());
   }
   ::signal(SIGSEGV, &Ac4CrashHandler);
   ::signal(SIGBUS, &Ac4CrashHandler);
