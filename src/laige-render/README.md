@@ -824,5 +824,5 @@ O(1) bookkeeping (two to four `steady_clock` reads per frame, no
 allocation) and the composite 50k render-CPU budget is measured with
 M2-PERF-01.
 
-The remaining M2 steps (M2-GOLD-01, M2-AC-01, M2-SAMPLE-01,
-M2-EXIT-01) land in later steps.
+The remaining M2 steps (M2-SAMPLE-01, M2-SAMPLE-02, M2-EXIT-01)
+land in later steps.

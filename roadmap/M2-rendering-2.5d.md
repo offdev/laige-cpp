@@ -688,6 +688,16 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
   - **Verify:** CI builds + runs it (headless, 100 frames, picking test case prints expected cell); cold-start time recorded in baseline.
   - **Size:** ~250 lines (sample + wiring)
 
+- [ ] **M2-SAMPLE-02 · `flappy-bird.laige` template (flappy bird clone)**
+  - **Refs:** NFR-13.5 (the template list), M2-EXIT-01 (template completeness check)
+  - **Depends:** M2-GL-01, M2-GL-02, M2-CAM-01, M2-PROJ-01, M2-SPRITE-02, M2-SPRITE-03
+  - **Scope:**
+    - `samples/flappy-bird/`: flappy bird clone — one bird (gravity + flap impulse, 3-frame flap animation through `spriteFrameUv`), deterministically spawned scrolling pipe pairs, pass score + game over; side-view ortho camera (the config sets `projection=side_view` explicitly — the engine default stays `iso`, checked in M2-EXIT-01); **≤ 200 lines of game code**, commented.
+    - Bundles the flappy bird asset set under `samples/flappy-bird/assets/` (bird frames, pipe, background, base, score digits, game over panel; the sound files ship with the assets but stay unwired until engine audio lands); the sample includes the pinned `stb_image` header for its declarations and links the `laige-render` implementation TU (the `laige-golden` precedent) — no new public API.
+    - Runs headless (offscreen) in CI with a scripted input sequence (deterministic flap schedule, prints the expected score + collision ticks) and windowed locally (flap on Space); renders in < 2 s cold start (PRD §8.1 — measured on CI desktop job).
+  - **Verify:** CI builds + runs it (headless, scripted input, prints the deterministic score + collision ticks); cold-start time recorded in baseline.
+  - **Size:** ~300 lines (sample + wiring)
+
 ## Milestone gate
 
 - [ ] **M2-EXIT-01 · M2 exit gate**
