@@ -136,20 +136,6 @@
 #include "laige/sim_math.h"  // SimMath backends (laige-core)
 #include "laige/sim/system.h"  // SystemDef, LAIGE_SYSTEM, Io
 
-// TEMPORARY DIAGNOSTIC (removed with the root-cause fix): the ac4
-// entries segfault at process exit on the CI Linux lanes but do not
-// crash under gdb, under ASan, or locally (a Heisenbug), so capture
-// the crashing stack in-process. -O0 Debug keeps frame pointers for
-// backtrace(); --export-dynamic (a temporary CMake option below)
-// gives backtrace_symbols real names.
-#if defined(__linux__)
-#include <csignal>
-#include <cstring>
-#include <execinfo.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-#endif
-
 // The benchmark's workload component (FR-1.2, G-R8): the dynamic
 // body's 2D velocity in the selected SimMath backend's Vec2. The
 // marks specialize engine trait templates (laige::detail) and
@@ -170,35 +156,6 @@ LAIGE_DETERMINISM_SAFE(
     laige::sim::SimMath<laige::sim::Fp32Pinned>::Vec2);
 
 namespace {
-
-#if defined(__linux__)
-// TEMPORARY DIAGNOSTIC: the in-process exit-time segfault capture
-// (see the include above). The backtrace goes to stderr (the CI job
-// log under ctest --output-on-failure); the default handler is
-// restored and the signal re-raised, so the original crash outcome
-// is unchanged.
-[[noreturn]] void Ac4CrashHandler(int sig) {
-  // The crashed thread id matters: if it is not the main thread, the
-  // crash is inside a library worker racing with the exit path.
-  char line[128];
-  std::snprintf(line, sizeof(line),
-                "ac4 diagnostic: fatal signal %d in exit path, "
-                "crashed tid=%ld, stack:\n",
-                sig, static_cast<long>(::syscall(SYS_gettid)));
-  (void)!::write(STDERR_FILENO, line,
-                 static_cast<std::size_t>(std::strlen(line)));
-  void* frames[64];
-  const int n = backtrace(frames, 64);
-  backtrace_symbols_fd(frames, n, STDERR_FILENO);
-  ::signal(sig, SIG_DFL);
-  ::raise(sig);
-  // The re-raised signal terminates the process (default disposition);
-  // reach here only if it was blocked or ignored — terminate directly
-  // (the process is dying either way, no cleanup to run).
-  std::_Exit(128 + sig);
-}
-
-#endif
 
 // The parsed command-line configuration (defined before the suites —
 // the sim-tick suite's setup callback reads the selected backend).
@@ -1414,22 +1371,6 @@ int main(int argc, char** argv) {
   using laige::BudgetReportContext;
   using laige::Histogram;
   using laige::TimeIt;
-
-#if defined(__linux__)
-  // TEMPORARY DIAGNOSTIC: capture the exit-time segfault stack (the
-  // handler is process-wide, so it is still in force during the
-  // static-destruction phase after main returns). The main thread id
-  // is printed here so the crashed tid in the handler line can be
-  // compared against it.
-  {
-    const std::string line =
-        "ac4 diagnostic: main tid=" +
-        std::to_string(static_cast<long>(::syscall(SYS_gettid))) + "\n";
-    (void)!::write(STDERR_FILENO, line.data(), line.size());
-  }
-  ::signal(SIGSEGV, &Ac4CrashHandler);
-  ::signal(SIGBUS, &Ac4CrashHandler);
-#endif
 
   Config cfg;
   if (!parseArgs(argc, argv, cfg)) {

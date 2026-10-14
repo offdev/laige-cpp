@@ -30,13 +30,6 @@ laige_apply_engine_policy(laige-bench)
 laige_apply_simmath_policy(laige-bench)
 target_link_libraries(laige-bench PRIVATE laige-core laige-sim laige-render)
 
-# TEMPORARY DIAGNOSTIC (removed with the root-cause fix): export the
-# dynamic symbol table so the in-process crash backtrace
-# (Ac4CrashHandler in laige-bench.cpp) prints function names.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_link_options(laige-bench PRIVATE -Wl,--export-dynamic)
-endif()
-
 # The report's "build" context field records the build type (AGENTS 12);
 # CMake stamps it so the binary does not have to guess.
 target_compile_definitions(laige-bench PRIVATE

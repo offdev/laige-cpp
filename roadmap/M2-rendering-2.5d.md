@@ -612,7 +612,7 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     (1851 → 1852 symbols). No `budgets.json` entry (the count stays
     17).
 
-- [ ] **M2-AC-01 · AC-4.x acceptance suite**
+- [x] **M2-AC-01 · AC-4.x acceptance suite**
   - **Refs:** PRD §4 AC-4.1 … AC-4.4
   - **Depends:** all M2 functional steps
   - **Scope:**
@@ -623,6 +623,58 @@ if M2 slips, and its status is recorded in M2-EXIT-01.
     - Suite wired into CI as `laige-bench --suite=ac4` + `ctest -R ac4`.
   - **Verify:** `ctest -R ac4` and the AC-4 bench green; AC checklist recorded in `docs/benchmarks/baselines/m2-ac4.md`.
   - **Size:** test wiring + ~150 lines
+  - **Shipped** (2026-10-14, PR #99): **AC-4.1** — the golden tool
+    now renders multi-pass frames, and the `ac4_iso` / `ac4_side_view`
+    fixtures run the SAME 96-sprite world (the 12 x 8 grid at scale
+    1.0, four (atlas, material, blend) groups of 24, the engine depth
+    keys) plus the SAME 3-widget UI pass under the two projection
+    configs (the ADR 0005 Iso preset at k = 0.06 / the SideView plane
+    camera), one engine build, config-only difference; the GL-free
+    `GoldenFixtures.Ac4*` tests pin the shared scene shape and the
+    config-only difference. The documented geometry note stands:
+    `SpriteItem` carries the 2D ground-plane position (no elevation
+    field — no new engine API, CORE-004), so the side-view world pass
+    is degenerate by construction (all z = 0 sprites project to
+    zero-height quads under the z = 0 reference plane); the side-view
+    frame's visible content is the screen-space UI pass, identical in
+    both configs — the AC-4.1 assertion is on the scene, not the world
+    raster (a platformer vertical scene needs the M3 elevation work).
+    **AC-4.2** — `tools/laige-surface-lint` (Python stdlib, exit 0 OK /
+    1 violation / 2 structural) proves no `ProjectionMode` mention in
+    the `laige-sim` / `laige-net` public surface (RENDER-006); CTest
+    entries `ac4_surface*` (fixture trees for each exit path + the
+    real tree, the `laige-include-lint` pattern) run in every PR and
+    merge. **AC-4.3 / AC-4.4** — the `ac4` / `render-sort-10k` bench
+    suites (10 000 overlapping sprites: 100 x 10 grid, 10 stacked per
+    cell — the sort's equal-key ties + the frame's overdraw — one
+    60 FPS frame, the batcher zero-allocation assertion, and the
+    AC-4.4 engine-default `ProjectionView{}.mode == Iso` assert in
+    setup); CTest entries `laige_bench_ac4_fpx16` / `_fp32` (Linux,
+    canonical 3000/1000) in the `ci:slow:bench-50k` label-gated jobs
+    of both workflows. `budgets.json` gains `sprites_10k_frame`
+    (count 18 — the `BudgetHarnessTable` pin moves 17 → 18);
+    `laige-api.json` unchanged (no public-header change). `ctest -R
+    ac4` selects the bench + lint entries; the AC checklist and the
+    first CI measurement: `docs/benchmarks/baselines/m2-ac4.md` (the
+    two ac4 golden references were committed from this PR's
+    label-gated `golden-references` job — the M2-GOLD-01 two-run
+    bootstrap). **Exit-time segfault (root-caused and fixed here)** —
+    during the first measurement runs every ac4 entry segfaulted in
+    the exit path after the report (a Heisenbug: clean under gdb,
+    ASan, at 20 frames, and locally); the in-process capture showed
+    the crashed threads were Mesa's llvmpipe worker pool (the
+    `/proc` census named them `llvmpipe-0..3`), still inside the
+    driver when the engine destroyed the EGL context and `dlclose`d
+    the library. Fix in `GlContext::Impl::destroy()` (both
+    backends): make the context current and `glFinish`-drain all
+    pending work before `eglDestroyContext` / `glfwDestroyWindow`,
+    and stop `dlclose`ing the dlopened libEGL handle (a library with
+    live, never-joined threads must not be closed; the handle is kept
+    for the process's remaining lifetime). Verification run
+    38552829408: all eight bench entries (4 ac4 + 4 render-50k) PASS
+    on all four Linux lanes; the temporary capture/census
+    diagnostics and the `--export-dynamic` link option were removed
+    with the fix.
 
 ## Template
 
