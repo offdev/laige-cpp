@@ -30,6 +30,13 @@ laige_apply_engine_policy(laige-bench)
 laige_apply_simmath_policy(laige-bench)
 target_link_libraries(laige-bench PRIVATE laige-core laige-sim laige-render)
 
+# TEMPORARY DIAGNOSTIC (removed with the root-cause fix): export the
+# dynamic symbol table so the in-process crash backtrace
+# (Ac4CrashHandler in laige-bench.cpp) prints function names.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_options(laige-bench PRIVATE -Wl,--export-dynamic)
+endif()
+
 # The report's "build" context field records the build type (AGENTS 12);
 # CMake stamps it so the binary does not have to guess.
 target_compile_definitions(laige-bench PRIVATE
@@ -159,36 +166,6 @@ if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                        laige_bench_ac4_fp32
     PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
                TIMEOUT 1800)
-
-  # TEMPORARY DIAGNOSTIC (removed once root-caused): the ac4 run's
-  # exit-time segfault backtrace (gdb, a reduced frame count — the
-  # crash is in the exit path, not the measured region). gdb is not
-  # preinstalled on the ubuntu-24.04 runners — install it in-place.
-  # One single CMake string: CTest passes each quoted literal as a
-  # separate argv element, and bash only takes the first as its -c
-  # script (the multi-string form breaks the command line). Absolute
-  # binary path: CTest resolves bare names itself, but the PATH the
-  # bash -c child inherits does not include build/bin. Full canonical
-  # shape: the 20-frame run exits cleanly even on CI, so the
-  # frame-count must match the crashing entries.
-  add_test(NAME laige_bench_ac4_fpx16_gdb
-           COMMAND /bin/bash -c "sudo apt-get update -qq && sudo apt-get install -y -qq gdb && gdb -batch -ex run -ex bt --args ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/laige-bench --suite=ac4 --math=fixed_point_16_16 --runs=3000 --warmup=1000 --budget=sprites_10k_frame")
-  set_tests_properties(laige_bench_ac4_fpx16_gdb
-    PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
-               TIMEOUT 600)
-endif()
-
-# TEMPORARY DIAGNOSTIC (removed once root-caused): the ac4 exit-time
-# segfault under AddressSanitizer (the reduced frame count — the crash
-# is in the exit path; ASan reports the first heap error with a stack).
-if(LAIGE_ASAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  add_test(NAME laige_bench_ac4_fpx16_asan_dbg
-           COMMAND laige-bench --suite=ac4 --math=fixed_point_16_16
-                         --runs=20 --warmup=5
-                         --budget=sprites_10k_frame)
-  set_tests_properties(laige_bench_ac4_fpx16_asan_dbg
-    PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
-               TIMEOUT 600)
 endif()
 
 # All-platform sim-tick smoke (no budget gate): the sim-tick workload
