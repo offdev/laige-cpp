@@ -375,9 +375,9 @@ int runFixture(const std::string& name, const Config& cfg,
              name == kAc4SideFixtureName) {
     // AC-4.1: the one scene under the two projection configs (the
     // config is the only difference between the two fixtures).
-    const Ac4SceneConfig cfg =
+    const Ac4SceneConfig ac4Cfg =
         (name == kAc4IsoFixtureName) ? kAc4IsoConfig : kAc4SideConfig;
-    auto sceneR = buildAc4Scene(cfg);
+    auto sceneR = buildAc4Scene(ac4Cfg);
     if (sceneR.isError()) {
       std::fprintf(stderr, "laige-golden: ac4 fixture build failed: %s\n",
                    laige::errorText(sceneR.error()));
