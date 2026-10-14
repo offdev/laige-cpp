@@ -83,12 +83,17 @@ using laige::render::Mat4;
 using laige::render::SpriteBatcher;
 using laige::render::SpriteItem;
 using laige::render::SpriteRenderer;
+using laige::testing::golden::Ac4Scene;
+using laige::testing::golden::Ac4SceneConfig;
 using laige::testing::golden::Comparison;
 using laige::testing::golden::SpriteScene;
 using laige::testing::golden::Tolerance;
 using laige::testing::golden::UiScene;
+using laige::testing::golden::buildAc4Scene;
 using laige::testing::golden::buildSpriteScene;
 using laige::testing::golden::buildUiScene;
+using laige::testing::golden::kAc4IsoConfig;
+using laige::testing::golden::kAc4SideConfig;
 using laige::testing::golden::compareFrames;
 using laige::testing::golden::kGoldenHeight;
 using laige::testing::golden::kGoldenWidth;
@@ -101,6 +106,8 @@ constexpr int kExitNoGl = 77;
 // The fixture names (the reference file is <references>/<name>.png).
 constexpr char const* kSpriteFixtureName = "sprite_iso_1000";
 constexpr char const* kUiFixtureName = "ui_smoke";
+constexpr char const* kAc4IsoFixtureName = "ac4_iso";
+constexpr char const* kAc4SideFixtureName = "ac4_side_view";
 
 // The per-fixture renderer/batcher budgets (the fixtures are tiny:
 // 1000 sprites, 7 quads; the ceilings are headroom, not tuning).
@@ -120,11 +127,12 @@ void usage(char const* prog) {
       "           [--references DIR] [--max-channel-diff N]\n"
       "           [--pixel-budget-pct P]\n"
       "\n"
-      "Fixtures: %s, %s (tests/golden/golden_fixtures.h).\n"
+      "Fixtures: %s, %s, %s, %s (tests/golden/golden_fixtures.h).\n"
       "Exit codes: 0 ok, 1 compare failed, 2 usage/configuration\n"
       "error, 77 no usable OpenGL 3.3 environment (the documented\n"
       "environment contract).\n",
-      prog, kSpriteFixtureName, kUiFixtureName);
+      prog, kSpriteFixtureName, kUiFixtureName, kAc4IsoFixtureName,
+      kAc4SideFixtureName);
 }
 
 int parseArgs(int argc, char** argv, Config& cfg) {
@@ -212,20 +220,27 @@ struct RenderedFrame {
                                    // frame convention)
 };
 
+// One pass of the fixture's frame: its world -> NDC matrix, its atlas
+// binds, and its declares (the M2-SPRITE-02 world pass, or the
+// M2-UI-02 screen-space UI pass — one SpriteBatcher and one
+// SpriteRenderer per pass, the render-50k two-pass frame shape).
+struct Pass {
+  Mat4 matrix;
+  std::function<void(SpriteRenderer&)> setupAtlases;
+  std::function<void(SpriteBatcher&)> declare;
+};
+
 // The offscreen frame protocol of one fixture (the M2-SPRITE-02
-// protocol): clear before the first draw, submit, then read back the
-// whole frame (one glReadPixels; the 921 600-pixel 1x1 readPixel loop
-// is what readPixels replaced) and flip the GL bottom-left origin to
-// the top-origin / y-down screen convention. The setup and declare
-// callbacks carry the fixture-specific work (the atlas binds, the item
-// declares); they run on the creating thread, single-threaded. A
-// missing GL environment exits with 77 (the documented contract);
-// every other failure exits with 2.
-RenderedFrame renderFrame(
-    float clearR, float clearG, float clearB, float clearA,
-    const Mat4& matrix,
-    const std::function<void(SpriteRenderer&)>& setupAtlases,
-    const std::function<void(SpriteBatcher&)>& declare) {
+// protocol): clear before the first draw, submit each pass in order,
+// then read back the whole frame (one glReadPixels; the 921 600-pixel
+// 1x1 readPixel loop is what readPixels replaced) and flip the GL
+// bottom-left origin to the top-origin / y-down screen convention.
+// The passes' setup and declare callbacks carry the fixture-specific
+// work (the atlas binds, the item declares); they run on the creating
+// thread, single-threaded. A missing GL environment exits with 77
+// (the documented contract); every other failure exits with 2.
+RenderedFrame renderFrame(float clearR, float clearG, float clearB,
+                          float clearA, std::vector<Pass> passes) {
   RenderedFrame out;
   auto ctxR = GlContext::createHeadless(
       static_cast<std::int32_t>(kGoldenWidth),
@@ -239,37 +254,39 @@ RenderedFrame renderFrame(
     std::exit(kExitNoGl);
   }
   GlContext ctx = std::move(ctxR).takeValue();
-  auto rrR = SpriteRenderer::create(
-      ctx, SpriteRenderer::Options{kMaxInstances, kMaxAtlases});
-  if (rrR.isError()) {
-    std::fprintf(stderr, "laige-golden: SpriteRenderer::create failed: "
-                         "%s\n",
-                 laige::errorText(rrR.error()));
-    std::exit(kExitConfigError);
-  }
-  SpriteRenderer renderer = std::move(rrR).takeValue();
-  setupAtlases(renderer);
-  auto bcR = SpriteBatcher::create(SpriteBatcher::Options{kMaxInstances});
-  if (bcR.isError()) {
-    std::fprintf(stderr, "laige-golden: SpriteBatcher::create failed: "
-                         "%s\n",
-                 laige::errorText(bcR.error()));
-    std::exit(kExitConfigError);
-  }
-  SpriteBatcher batcher = std::move(bcR).takeValue();
-  batcher.beginFrame();
-  declare(batcher);
-  if (!batcher.build().ok()) {
-    std::fprintf(stderr, "laige-golden: batcher.build() failed\n");
-    std::exit(kExitConfigError);
-  }
   if (!ctx.clear(clearR, clearG, clearB, clearA).ok()) {
     std::fprintf(stderr, "laige-golden: clear failed\n");
     std::exit(kExitConfigError);
   }
-  if (!renderer.submit(batcher, matrix).ok()) {
-    std::fprintf(stderr, "laige-golden: submit failed\n");
-    std::exit(kExitConfigError);
+  for (const Pass& pass : passes) {
+    auto rrR = SpriteRenderer::create(
+        ctx, SpriteRenderer::Options{kMaxInstances, kMaxAtlases});
+    if (rrR.isError()) {
+      std::fprintf(stderr, "laige-golden: SpriteRenderer::create failed: "
+                           "%s\n",
+                   laige::errorText(rrR.error()));
+      std::exit(kExitConfigError);
+    }
+    SpriteRenderer renderer = std::move(rrR).takeValue();
+    pass.setupAtlases(renderer);
+    auto bcR = SpriteBatcher::create(SpriteBatcher::Options{kMaxInstances});
+    if (bcR.isError()) {
+      std::fprintf(stderr, "laige-golden: SpriteBatcher::create failed: "
+                           "%s\n",
+                   laige::errorText(bcR.error()));
+      std::exit(kExitConfigError);
+    }
+    SpriteBatcher batcher = std::move(bcR).takeValue();
+    batcher.beginFrame();
+    pass.declare(batcher);
+    if (!batcher.build().ok()) {
+      std::fprintf(stderr, "laige-golden: batcher.build() failed\n");
+      std::exit(kExitConfigError);
+    }
+    if (!renderer.submit(batcher, pass.matrix).ok()) {
+      std::fprintf(stderr, "laige-golden: submit failed\n");
+      std::exit(kExitConfigError);
+    }
   }
   const std::uint32_t w = kGoldenWidth;
   const std::uint32_t h = kGoldenHeight;
@@ -319,31 +336,100 @@ int runFixture(const std::string& name, const Config& cfg,
       std::exit(kExitConfigError);
     }
     SpriteScene scene = std::move(sceneR).takeValue();
+    frame = renderFrame(scene.clearR, scene.clearG, scene.clearB,
+                        scene.clearA,
+                        {Pass{
+                            scene.matrix,
+                            [&scene](SpriteRenderer& rr) {
+                              if (!rr.bindAtlas(
+                                      laige::testing::golden::kSpriteAtlas0Id,
+                                      4, 4, std::span{scene.atlas0})
+                                       .ok()) {
+                                std::fprintf(stderr,
+                                             "laige-golden: bindAtlas(0) "
+                                             "failed\n");
+                                std::exit(kExitConfigError);
+                              }
+                              if (!rr.bindAtlas(
+                                      laige::testing::golden::kSpriteAtlas1Id,
+                                      4, 4, std::span{scene.atlas1})
+                                       .ok()) {
+                                std::fprintf(stderr,
+                                             "laige-golden: bindAtlas(1) "
+                                             "failed\n");
+                                std::exit(kExitConfigError);
+                              }
+                            },
+                            [&scene](SpriteBatcher& b) {
+                              for (const SpriteItem& it : scene.items) {
+                                if (!b.add(it).ok()) {
+                                  std::fprintf(stderr,
+                                               "laige-golden: batcher.add "
+                                               "failed\n");
+                                  std::exit(kExitConfigError);
+                                }
+                              }
+                            },
+                        }});
+  } else if (name == kAc4IsoFixtureName ||
+             name == kAc4SideFixtureName) {
+    // AC-4.1: the one scene under the two projection configs (the
+    // config is the only difference between the two fixtures).
+    const Ac4SceneConfig cfg =
+        (name == kAc4IsoFixtureName) ? kAc4IsoConfig : kAc4SideConfig;
+    auto sceneR = buildAc4Scene(cfg);
+    if (sceneR.isError()) {
+      std::fprintf(stderr, "laige-golden: ac4 fixture build failed: %s\n",
+                   laige::errorText(sceneR.error()));
+      std::exit(kExitConfigError);
+    }
+    Ac4Scene scene = std::move(sceneR).takeValue();
     frame = renderFrame(
         scene.clearR, scene.clearG, scene.clearB, scene.clearA,
-        scene.matrix,
-        [&scene](SpriteRenderer& rr) {
-          if (!rr.bindAtlas(laige::testing::golden::kSpriteAtlas0Id, 4, 4,
-                            std::span{scene.atlas0})
-                   .ok()) {
-            std::fprintf(stderr, "laige-golden: bindAtlas(0) failed\n");
-            std::exit(kExitConfigError);
-          }
-          if (!rr.bindAtlas(laige::testing::golden::kSpriteAtlas1Id, 4, 4,
-                            std::span{scene.atlas1})
-                   .ok()) {
-            std::fprintf(stderr, "laige-golden: bindAtlas(1) failed\n");
-            std::exit(kExitConfigError);
-          }
-        },
-        [&scene](SpriteBatcher& b) {
-          for (const SpriteItem& it : scene.items) {
-            if (!b.add(it).ok()) {
-              std::fprintf(stderr, "laige-golden: batcher.add failed\n");
-              std::exit(kExitConfigError);
-            }
-          }
-        });
+        {Pass{
+             scene.worldMatrix,
+             [&scene](SpriteRenderer& rr) {
+               if (!rr.bindAtlas(laige::testing::golden::kSpriteAtlas0Id, 4, 4,
+                                 std::span{scene.atlas0})
+                        .ok()) {
+                 std::fprintf(stderr, "laige-golden: bindAtlas(0) failed\n");
+                 std::exit(kExitConfigError);
+               }
+               if (!rr.bindAtlas(laige::testing::golden::kSpriteAtlas1Id, 4, 4,
+                                 std::span{scene.atlas1})
+                        .ok()) {
+                 std::fprintf(stderr, "laige-golden: bindAtlas(1) failed\n");
+                 std::exit(kExitConfigError);
+               }
+             },
+             [&scene](SpriteBatcher& b) {
+               for (const SpriteItem& it : scene.items) {
+                 if (!b.add(it).ok()) {
+                   std::fprintf(stderr, "laige-golden: batcher.add failed\n");
+                   std::exit(kExitConfigError);
+                 }
+               }
+             },
+         },
+         Pass{
+             scene.uiMatrix,
+             [&scene](SpriteRenderer& rr) {
+               if (!rr.bindAtlas(scene.uiAtlasId, 4, 4,
+                                 std::span{scene.uiAtlas})
+                        .ok()) {
+                 std::fprintf(stderr, "laige-golden: bindAtlas(ui) failed\n");
+                 std::exit(kExitConfigError);
+               }
+             },
+             [&scene](SpriteBatcher& b) {
+               if (!laige::render::declareUi(b, scene.table, scene.tree,
+                                             laige::render::UiDeclareOptions{})
+                        .ok()) {
+                 std::fprintf(stderr, "laige-golden: declareUi failed\n");
+                 std::exit(kExitConfigError);
+               }
+             },
+         }});
   } else {  // kUiFixtureName
     auto sceneR = buildUiScene(font);
     if (sceneR.isError()) {
@@ -352,30 +438,41 @@ int runFixture(const std::string& name, const Config& cfg,
       std::exit(kExitConfigError);
     }
     UiScene scene = std::move(sceneR).takeValue();
-    frame = renderFrame(
-        scene.clearR, scene.clearG, scene.clearB, scene.clearA,
-        scene.matrix,
-        [&scene](SpriteRenderer& rr) {
-          if (!rr.bindAtlas(scene.uiAtlasId, 4, 4, std::span{scene.uiAtlas})
-                   .ok()) {
-            std::fprintf(stderr, "laige-golden: bindAtlas(ui) failed\n");
-            std::exit(kExitConfigError);
-          }
-          if (!rr.bindAtlas(scene.fontAtlasId, 1024, 1024,
-                            std::span{scene.fontRgba})
-                   .ok()) {
-            std::fprintf(stderr, "laige-golden: bindAtlas(font) failed\n");
-            std::exit(kExitConfigError);
-          }
-        },
-        [&scene](SpriteBatcher& b) {
-          if (!laige::render::declareUi(b, scene.table, scene.tree,
-                                        scene.declareOptions())
-                   .ok()) {
-            std::fprintf(stderr, "laige-golden: declareUi failed\n");
-            std::exit(kExitConfigError);
-          }
-        });
+    frame = renderFrame(scene.clearR, scene.clearG, scene.clearB,
+                        scene.clearA,
+                        {Pass{
+                            scene.matrix,
+                            [&scene](SpriteRenderer& rr) {
+                              if (!rr.bindAtlas(scene.uiAtlasId, 4, 4,
+                                                std::span{scene.uiAtlas})
+                                       .ok()) {
+                                std::fprintf(stderr,
+                                             "laige-golden: bindAtlas(ui) "
+                                             "failed\n");
+                                std::exit(kExitConfigError);
+                              }
+                              if (!rr.bindAtlas(scene.fontAtlasId, 1024, 1024,
+                                                std::span{scene.fontRgba})
+                                       .ok()) {
+                                std::fprintf(stderr,
+                                             "laige-golden: bindAtlas(font) "
+                                             "failed\n");
+                                std::exit(kExitConfigError);
+                              }
+                            },
+                            [&scene](SpriteBatcher& b) {
+                              if (!laige::render::declareUi(b, scene.table,
+                                                           scene.tree,
+                                                           scene
+                                                               .declareOptions())
+                                       .ok()) {
+                                std::fprintf(stderr,
+                                             "laige-golden: declareUi "
+                                             "failed\n");
+                                std::exit(kExitConfigError);
+                              }
+                            },
+                        }});
   }
 
   const std::string path = cfg.references + "/" + name + ".png";
@@ -458,17 +555,20 @@ int main(int argc, char** argv) {
   }
   std::vector<std::string> names = cfg.fixtures;
   if (names.empty()) {
-    names = {kSpriteFixtureName, kUiFixtureName};
+    names = {kSpriteFixtureName, kUiFixtureName, kAc4IsoFixtureName,
+             kAc4SideFixtureName};
   }
   for (const std::string& n : names) {
-    if (n != kSpriteFixtureName && n != kUiFixtureName) {
+    if (n != kSpriteFixtureName && n != kUiFixtureName &&
+        n != kAc4IsoFixtureName && n != kAc4SideFixtureName) {
       std::fprintf(stderr, "laige-golden: unknown fixture %s\n", n.c_str());
       usage(argv[0]);
       return kExitConfigError;
     }
   }
   // The ui_smoke fixture needs the committed test font; fail fast (2)
-  // before any GL work.
+  // before any GL work. (The ac4 fixtures declare no text widgets and
+  // use the null default font — no font needed.)
   std::vector<std::uint8_t> font;
   for (const std::string& n : names) {
     if (n == kUiFixtureName) {

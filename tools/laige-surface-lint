@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+# ============================================================================
+# laige-surface-lint — the AC-4.2 public-surface check
+#
+# Roadmap:  roadmap/M2-rendering-2.5d.md, step M2-AC-01 (AC-4.2)
+# PRD refs: §4 AC-4.2 ("proof no sim/physics/pathing/network code depends
+#           on projection mode: include-graph lint rule + surface check
+#           (no ProjectionMode in laige-sim/laige-net public surface) —
+#           automated in CI")
+# AGENTS:   RENDER-006 (camera projection must not leak into game logic),
+#           CORE-008 (no silent failure), TEST-007 (architecture changes
+#           need integration validation)
+#
+# Usage:
+#   python3 tools/laige-surface-lint [--root REPO_ROOT]
+#
+# REPO_ROOT defaults to the current directory. CI runs it as the CTest
+# entry `ac4_surface` (tests/tools: fixture trees + the real tree) in
+# every P0 job; the include-graph half of AC-4.2 is the existing
+# include-lint R2 rule (the `include-lint-real-tree` entry) — R2 blocks
+# every laige-sim / laige-net -> laige-render include, so a sim or net
+# module cannot even USE a render type.
+#
+# What it does
+# ------------
+# This is the SURFACE half of AC-4.2. Scans the PUBLIC surface of the
+# simulation and networking modules — every public header under
+# src/laige-sim/include/** and src/laige-net/include/** — for any
+# textual mention of the render-side projection type `ProjectionMode`
+# (a word-boundary match: `laige::render::ProjectionMode`, a comment,
+# a default argument, a typedef — any of it puts a presentation
+# concept into the sim/net contract). The scan is textual like the
+# include-lint (no preprocessing); a mention inside a string literal
+# is still a boundary violation by the AC-4.2 wording (the type name
+# in the public surface), so no exclusion is needed.
+#
+# Exit codes: 0 = pass (no mentions) · 1 = surface violation (one or
+# more mentions reported) · 2 = structural failure (a scanned module
+# directory has code but no public-header root, or the module layout
+# is otherwise ambiguous — loud, never silent). A module directory
+# that is absent or README-only (laige-net has no CMake yet) is NOT a
+# structural failure: it simply contributes zero headers to the scan.
+#
+# Python 3 stdlib only; no third-party imports (the include-lint
+# policy — the lint must run on any CI runner's python3).
+# ============================================================================
+
+import os
+import re
+import sys
+
+# The AC-4.2 modules: the simulation and the networking surface.
+MODULES = ["laige-sim", "laige-net"]
+
+# The render-side projection type (src/laige-render/include/laige/render/
+# projection.h). A word-boundary match: `projectionMode` (a local
+# variable with a different case) does not trip the check;
+# `SomeProjectionMode` or `ProjectionModes` do not either (the \b
+# boundaries require non-word characters on both sides).
+TOKEN_RE = re.compile(r"\bProjectionMode\b")
+
+# A module directory with code but no public-header root is ambiguous
+# (the surface cannot be defined) — a structural failure, not a pass.
+CODE_MARKERS = ("CMakeLists.txt",)
+SOURCE_EXT = (".cpp", ".cc", ".cxx", ".h", ".hpp", ".c")
+
+
+def fail_structural(root, msg):
+    print(f"laige-surface-lint: ERROR — {msg}")
+    sys.exit(2)
+
+
+def module_public_headers(root, module):
+    """The public headers of one module: src/<module>/include/**/*.h{,pp}.
+
+    Returns (headers, has_code). has_code is True when the module
+    directory holds code markers or source files (the structural-failure
+    test for a missing include root).
+    """
+    mod_dir = os.path.join(root, "src", module)
+    inc_dir = os.path.join(mod_dir, "include")
+    if not os.path.isdir(mod_dir):
+        return [], False  # the module is not in the tree yet (laige-net)
+
+    has_code = any(
+        os.path.isfile(os.path.join(mod_dir, m)) for m in CODE_MARKERS
+    )
+    for dirpath, _dirnames, filenames in os.walk(mod_dir):
+        for fn in filenames:
+            if fn.endswith(SOURCE_EXT):
+                has_code = True
+                break
+        if has_code:
+            break
+
+    if not os.path.isdir(inc_dir):
+        if has_code:
+            fail_structural(
+                root,
+                f"src/{module} has code but no public-header root "
+                f"(src/{module}/include): the AC-4.2 surface cannot be "
+                "defined — add the public root or remove the code",
+            )
+        return [], False  # README-only module: no surface to scan
+
+    headers = []
+    for dirpath, _dirnames, filenames in os.walk(inc_dir):
+        for fn in sorted(filenames):
+            if fn.endswith((".h", ".hpp", ".hh")):
+                headers.append(os.path.join(dirpath, fn))
+    return headers, has_code
+
+
+def scan_header(path):
+    """The (line-number, line-text) hits of the token in one header."""
+    hits = []
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for lineno, line in enumerate(f, start=1):
+            if TOKEN_RE.search(line):
+                hits.append((lineno, line.rstrip("\n")))
+    return hits
+
+
+def main(argv):
+    root = os.getcwd()
+    args = argv[1:]
+    if "--root" in args:
+        i = args.index("--root")
+        if i + 1 >= len(args):
+            print("usage: laige-surface-lint [--root REPO_ROOT]",
+                  file=sys.stderr)
+            return 2
+        root = args[i + 1]
+    if not os.path.isdir(root):
+        print(f"laige-surface-lint: ERROR — root directory not found: "
+              f"'{root}' (pass --root REPO_ROOT)", file=sys.stderr)
+        return 2
+
+    total = 0
+    violations = 0
+    for module in MODULES:
+        headers, _has_code = module_public_headers(root, module)
+        total += len(headers)
+        for path in headers:
+            rel = os.path.relpath(path, root)
+            for lineno, line in scan_header(path):
+                violations += 1
+                print(f"{rel}:{lineno}: {line.strip()}")
+
+    if violations:
+        print(
+            f"laige-surface-lint: FAIL — {violations} 'ProjectionMode' "
+            f"mention(s) in the public surface of {', '.join(MODULES)} "
+            "(AC-4.2: no sim/physics/pathing/network code depends on the "
+            "projection mode)"
+        )
+        return 1
+
+    print(
+        f"laige-surface-lint: OK — {total} public header(s) scanned "
+        f"({', '.join(MODULES)}), no 'ProjectionMode' mention"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

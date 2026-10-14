@@ -6,18 +6,21 @@
 // max-channel test, the pixel budget, the frame pass/fail decision,
 // the bounded failing-pixel samples — TEST-008's explicit-tolerance
 // requirement), and the committed golden scene fixtures
-// (golden_fixtures.h — the M2-SPRITE-02 and M2-UI-02 scenes' shape
-// invariants at the canonical 1280x720 frame: the item/quad counts,
-// the (atlas, material, blend) groups, the fixed camera matrices, the
-// clear colors — the fixture drift a golden failure must never
-// swallow silently).
+// (golden_fixtures.h — the M2-SPRITE-02, M2-UI-02, and M2-AC-01
+// scenes' shape invariants at the canonical 1280x720 frame: the
+// item/quad counts, the (atlas, material, blend) groups, the fixed
+// camera matrices, the clear colors — the fixture drift a golden
+// failure must never swallow silently).
 //
 // The suite map (the `golden_compare` CTest entry selects exactly
 // these; no GL anywhere — the offscreen render + PNG comparison is
 // the tool's job, ctest entry `golden`):
 //   GoldenCompare    the comparison core (the tolerance model + the
 //                    budget boundary + the sample bounds);
-//   GoldenFixtures   the scene shape invariants (both fixtures).
+//   GoldenFixtures   the scene shape invariants (all four fixtures —
+//                    the Ac4* tests pin the M2-AC-01 AC-4.1 scenes:
+//                    one world + one UI pass under the two projection
+//                    configs, the configs differing in NOTHING else).
 //
 // The GoldenFixtures UI half reads the committed test font
 // (tests/laige-render/assets/vera.ttf — the LAIGE_TEST_FONT_PATH env
@@ -51,9 +54,18 @@ using laige::testing::golden::Comparison;
 using laige::testing::golden::Tolerance;
 using laige::testing::golden::kGoldenHeight;
 using laige::testing::golden::kGoldenWidth;
+using laige::testing::golden::Ac4Scene;
+using laige::testing::golden::buildAc4Scene;
 using laige::testing::golden::buildSpriteScene;
 using laige::testing::golden::buildUiScene;
 using laige::testing::golden::compareFrames;
+using laige::testing::golden::kAc4IsoConfig;
+using laige::testing::golden::kAc4IsoScale;
+using laige::testing::golden::kAc4SideConfig;
+using laige::testing::golden::kAc4SideHalfHeight;
+using laige::testing::golden::kAc4SideHalfWidth;
+using laige::testing::golden::kAc4SideZFar;
+using laige::testing::golden::kAc4SideZNear;
 using laige::testing::golden::uiAtlasRgba;
 
 // The test font (the house loadFont pattern, ui_render_tests.cpp).
@@ -333,4 +345,160 @@ TEST(GoldenFixtures, UiSceneShape) {
   // white-on-alpha font atlas.
   EXPECT_EQ(64u, uiAtlasRgba().size());
   EXPECT_EQ(1024u * 1024u * 4u, scene.fontRgba.size());
+}
+
+// ---------------------------------------------------------------------------
+// The AC-4.1 fixture (M2-AC-01): one scene, two projection configs —
+// the config is the only difference between the two fixtures (PRD
+// AC-4.1), and the scene-shape invariants a golden failure must never
+// swallow silently.
+// ---------------------------------------------------------------------------
+
+// The world scene's shape invariants, shared by both configs: 96
+// sprites, the four (atlas, material, blend) groups of 24 each, the
+// G-R11 depth keys, the three-widget UI pass (one group), the shared
+// clear color.
+void ac4SharedShape(Ac4Scene& scene) {
+  ASSERT_EQ(96u, scene.items.size());
+  // The grid cell (x, y) = (-6, -4) is declared first (row-major, y
+  // then x).
+  EXPECT_EQ(-6.0f, scene.items.front().pos.x);
+  EXPECT_EQ(-4.0f, scene.items.front().pos.y);
+  // The G-R11 engine-owned key for that cell (step height 0, ground
+  // layer), bit-exact against the isoDepthKey builder.
+  using laige::sim::Fp32Pinned;
+  using laige::sim::SimMath;
+  EXPECT_EQ(laige::render::isoDepthKey<Fp32Pinned>(
+                SimMath<Fp32Pinned>::Vec2{-6.0f, -4.0f}, 0, 0),
+            scene.items.front().depthKey);
+  // The four (atlas, material, blend) groups: atlas 0 when (x + y) is
+  // even, Alpha when x is even — 24 instances each.
+  std::uint32_t g0a = 0, g0d = 0, g1a = 0, g1d = 0;
+  for (const SpriteItem& it : scene.items) {
+    if (it.atlasId == 0 && it.blend == BlendMode::Alpha) {
+      ++g0a;
+    } else if (it.atlasId == 0 && it.blend == BlendMode::Additive) {
+      ++g0d;
+    } else if (it.atlasId == 1 && it.blend == BlendMode::Alpha) {
+      ++g1a;
+    } else if (it.atlasId == 1 && it.blend == BlendMode::Additive) {
+      ++g1d;
+    } else {
+      ADD_FAILURE() << "unexpected (atlas, blend) pair";
+    }
+  }
+  EXPECT_EQ(24u, g0a);
+  EXPECT_EQ(24u, g0d);
+  EXPECT_EQ(24u, g1a);
+  EXPECT_EQ(24u, g1d);
+  // The UI pass (identical in both configs): 3 quads, one group
+  // (7, 0, Alpha) — declared GL-free through the real UI pass.
+  auto bc = SpriteBatcher::create({16});
+  ASSERT_TRUE(bc.ok());
+  SpriteBatcher batcher = std::move(bc).takeValue();
+  batcher.beginFrame();
+  ASSERT_TRUE(
+      laige::render::declareUi(batcher, scene.table, scene.tree,
+                               laige::render::UiDeclareOptions{})
+          .ok());
+  ASSERT_TRUE(batcher.build().ok());
+  EXPECT_EQ(3u, batcher.frameCount());
+  EXPECT_EQ(1u, batcher.batchCount());
+  // The identity screen matrix at the canonical frame, bit-exact
+  // against the M2-UI-02 builder.
+  EXPECT_EQ(laige::render::uiScreenMatrix(
+                static_cast<std::int32_t>(kGoldenWidth),
+                static_cast<std::int32_t>(kGoldenHeight)),
+            scene.uiMatrix);
+  // The clear color (16, 24, 48 / 255) — shared by both configs.
+  EXPECT_FLOAT_EQ(16.0f / 255.0f, scene.clearR);
+  EXPECT_FLOAT_EQ(24.0f / 255.0f, scene.clearG);
+  EXPECT_FLOAT_EQ(48.0f / 255.0f, scene.clearB);
+  EXPECT_FLOAT_EQ(1.0f, scene.clearA);
+}
+
+TEST(GoldenFixtures, Ac4SceneShapeIso) {
+  auto r = buildAc4Scene(kAc4IsoConfig);
+  ASSERT_TRUE(r.ok());
+  Ac4Scene scene = std::move(r).takeValue();
+  // The config: the engine-default iso mode (the ADR 0005 preset at
+  // the fixture scale).
+  EXPECT_EQ(laige::render::ProjectionMode::Iso, scene.config.mode);
+  EXPECT_FLOAT_EQ(kAc4IsoScale, scene.config.isoScale);
+  // The fixed camera: the ADR 0005 preset at kAc4IsoScale, bit-exact.
+  EXPECT_EQ(laige::render::isoDimetric2To1(kAc4IsoScale), scene.worldMatrix);
+  ac4SharedShape(scene);
+}
+
+TEST(GoldenFixtures, Ac4SceneShapeSideView) {
+  auto r = buildAc4Scene(kAc4SideConfig);
+  ASSERT_TRUE(r.ok());
+  Ac4Scene scene = std::move(r).takeValue();
+  // The config: the side-view mode, the plane camera's parameters.
+  EXPECT_EQ(laige::render::ProjectionMode::SideView, scene.config.mode);
+  EXPECT_EQ(0.0f, scene.config.center.x);
+  EXPECT_EQ(0.0f, scene.config.center.y);
+  EXPECT_EQ(0.0f, scene.config.center.z);
+  EXPECT_FLOAT_EQ(kAc4SideHalfWidth, scene.config.halfWidth);
+  EXPECT_FLOAT_EQ(kAc4SideHalfHeight, scene.config.halfHeight);
+  EXPECT_FLOAT_EQ(kAc4SideZNear, scene.config.zNear);
+  EXPECT_FLOAT_EQ(kAc4SideZFar, scene.config.zFar);
+  // The fixed camera: the mode's documented base plane (right
+  // (1,0,0), up (0,0,1)), bit-exact.
+  EXPECT_EQ(laige::render::planeOrtho(
+                laige::render::Vec3{0.0f, 0.0f, 0.0f},
+                laige::render::Vec3{1.0f, 0.0f, 0.0f},
+                laige::render::Vec3{0.0f, 0.0f, 1.0f},
+                kAc4SideHalfWidth, kAc4SideHalfHeight, kAc4SideZNear,
+                kAc4SideZFar),
+            scene.worldMatrix);
+  ac4SharedShape(scene);
+}
+
+TEST(GoldenFixtures, Ac4ConfigsOnlyDiffer) {
+  auto ri = buildAc4Scene(kAc4IsoConfig);
+  auto rs = buildAc4Scene(kAc4SideConfig);
+  ASSERT_TRUE(ri.ok());
+  ASSERT_TRUE(rs.ok());
+  const Ac4Scene iso = std::move(ri).takeValue();
+  const Ac4Scene side = std::move(rs).takeValue();
+  // The ONLY difference is the config (PRD AC-4.1): the projection
+  // mode and its matrix-builder parameters.
+  EXPECT_EQ(laige::render::ProjectionMode::Iso, iso.config.mode);
+  EXPECT_EQ(laige::render::ProjectionMode::SideView, side.config.mode);
+  // The scene content is bit-identical (the items field by field —
+  // SpriteUvRect has no operator==, so field-wise).
+  ASSERT_EQ(iso.items.size(), side.items.size());
+  for (std::size_t i = 0; i < iso.items.size(); ++i) {
+    const SpriteItem& a = iso.items[i];
+    const SpriteItem& b = side.items[i];
+    EXPECT_EQ(a.pos.x, b.pos.x);
+    EXPECT_EQ(a.pos.y, b.pos.y);
+    EXPECT_EQ(a.depthKey, b.depthKey);
+    EXPECT_EQ(a.uv.u0, b.uv.u0);
+    EXPECT_EQ(a.uv.v0, b.uv.v0);
+    EXPECT_EQ(a.uv.u1, b.uv.u1);
+    EXPECT_EQ(a.uv.v1, b.uv.v1);
+    EXPECT_EQ(a.scale.x, b.scale.x);
+    EXPECT_EQ(a.scale.y, b.scale.y);
+    EXPECT_EQ(a.rotation, b.rotation);
+    EXPECT_EQ(a.tint.r, b.tint.r);
+    EXPECT_EQ(a.tint.g, b.tint.g);
+    EXPECT_EQ(a.tint.b, b.tint.b);
+    EXPECT_EQ(a.tint.a, b.tint.a);
+    EXPECT_EQ(a.atlasId, b.atlasId);
+    EXPECT_EQ(a.materialId, b.materialId);
+    EXPECT_EQ(a.blend, b.blend);
+  }
+  EXPECT_EQ(iso.atlas0, side.atlas0);
+  EXPECT_EQ(iso.atlas1, side.atlas1);
+  EXPECT_EQ(iso.uiAtlas, side.uiAtlas);
+  EXPECT_EQ(iso.uiAtlasId, side.uiAtlasId);
+  EXPECT_EQ(iso.uiMatrix, side.uiMatrix);
+  EXPECT_EQ(iso.clearR, side.clearR);
+  EXPECT_EQ(iso.clearG, side.clearG);
+  EXPECT_EQ(iso.clearB, side.clearB);
+  EXPECT_EQ(iso.clearA, side.clearA);
+  // The config difference is visible: the world matrices differ.
+  EXPECT_NE(iso.worldMatrix, side.worldMatrix);
 }

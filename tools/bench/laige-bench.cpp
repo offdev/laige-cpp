@@ -15,8 +15,8 @@
 // and the pass/fail reports are printed; a failed check exits
 // non-zero so the command is CI-gateable (PRD 8.1 policy: a budget
 // regression fails CI). `--math` selects the SimMath backend (ADR
-// 0002) the `sim-tick` and `render-50k` suites run on; the other
-// suites ignore it.
+// 0002) the `sim-tick`, `render-50k`, and `ac4` / `render-sort-10k`
+// suites run on; the other suites ignore it.
 //
 // Exit codes:
 //   0  ok (and every budget check passed, when --budget was given)
@@ -79,6 +79,22 @@
 //               the draw-call histogram stays empty (a named check
 //               against it fails NO_SAMPLES, loud per CORE-008).
 //               Its baseline: docs/benchmarks/baselines/m2-render-50k.md.
+//   ac4         M2-AC-01's AC-4.x acceptance workload (the dedicated
+//               AC-4.3 suite under the alias `render-sort-10k` —
+//               two entries, one workload): 10 000 overlapping
+//               sprites (a 100 x 10 cell grid, 10 sprites stacked
+//               per cell at the same position and step height — the
+//               sort's equal-key ties + the frame's overdraw),
+//               scale 1.0, two atlases x two blends = four
+//               (atlas, material, blend) groups, sorted and drawn in
+//               one 60 FPS frame (the `sprites_10k_frame` sample =
+//               the whole frame's CPU ms, batch stage + submit
+//               stage, 16.7 ms budget) with the batcher zero-
+//               allocation assertion; setup additionally asserts the
+//               AC-4.4 engine default (the default ProjectionView's
+//               mode is Iso — ADR 0005). Both SimMath backends
+//               (--math). Its baseline:
+//               docs/benchmarks/baselines/m2-ac4.md.
 //
 // The synthetic suite is a deterministic, allocation-free stand-in
 // workload; the sim-tick suite is deterministic too (fixed seed
@@ -96,6 +112,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -104,7 +121,9 @@
 #include "laige/errors.h"
 #include "laige/render/gl_context.h"
 #include "laige/render/iso_camera.h"
+#include "laige/render/iso_depth_key.h"
 #include "laige/render/iso_reference_scene.h"
+#include "laige/render/projection.h"
 #include "laige/render/sprite_batcher.h"
 #include "laige/render/sprite_renderer.h"
 #include "laige/render/ui_render.h"
@@ -846,6 +865,319 @@ void render50Teardown() {
   }
 }
 
+// --- The ac4 suite (M2-AC-01: PRD §4 AC-4.3 + AC-4.4, budgets
+//     sprites_10k_frame) ------------------------------------------------------
+//
+// The AC-4.3 workload: 10 000 overlapping sprites sorted and drawn in
+// one 60 FPS frame (16.7 ms, the §8.1 60 FPS frame budget). The sprites
+// are stacked K deep over a 100 x 10 cell grid: 1000 cells at their
+// centers (gx - 49.5, gy - 4.5), 10 sprites per cell at the SAME
+// position and step height ((gx >> 4) + (gy >> 4), 0..6 — the G-R11
+// engine-owned isoDepthKey, 10-way equal-key ties per stack, broken by
+// declaration order per RENDER-003), scale 1.0, atlas k mod 2, Alpha
+// for k < 5 else Additive: four (atlas, material, blend) groups —
+// 3000 / 2000 / 2000 / 3000 instances — so the frame is exactly four
+// instanced draw calls (RENDER-001). The grid's 1x1 tiles edge-touch on
+// screen and each stack overlaps itself 10 times: the sort's
+// equal-key ties AND the overdraw are both exercised.
+//
+// One measured iteration = one frame (the AC-4.3 "sorted + drawn at
+// 60 FPS" — the whole frame, batch stage + submit stage): the batch
+// stage (beginFrame + 10 000 adds + build) with the M1-ALLOC-01
+// zero-allocation watch armed around it (a frame that allocates
+// aborts, the render-50k batch-stage assertion's shape), then the
+// submit stage's offscreen render. The `sprites_10k_frame` sample is
+// the whole frame's CPU ms; it is recorded only when an offscreen GL
+// 3.3 context is available — on a host without one the frame histogram
+// stays empty and a named budget check against it fails NO_SAMPLES
+// (loud, the render-50k draw-call precedent; the batch-stage
+// zero-allocation still measures CPU-only).
+//
+// The AC-4.4 engine-default assertion lives in setup (the suite is the
+// "asserted here" of the AC-4.4 scope): ProjectionView{}'s default
+// mode MUST be Iso (ADR 0005) — a default drift is a loud failure,
+// not a baseline shift. The world matrix is the Iso default's
+// documented builder (isoDimetric2To1) at the grid-fit scale.
+//
+// The `render-sort-10k` suite entry is the same workload under the
+// dedicated suite name the AC-4.3 scope uses; `ac4` is the acceptance
+// name the CI wiring uses (--suite=ac4, ctest -R ac4).
+
+constexpr std::uint32_t kAc4Sprites = 10000;    // the AC-4.3 sprite count
+constexpr std::uint32_t kAc4GridCols = 100;     // the x cell count
+constexpr std::uint32_t kAc4GridRows = 10;      // the y cell count
+constexpr std::uint32_t kAc4StackPerCell = 10;  // sprites stacked per cell
+constexpr float kAc4BenchIsoScale = 1.0f / 128.0f;  // the grid's NDC fit
+                                               // NDC x = s(2x - y) in
+                                               // [-0.83203125, 0.83203125],
+                                               // NDC y = -s(x + y) in
+                                               // [-0.4375, 0.4375], over the
+                                               // 1x1 tiles' quad corners
+                                               // (x' in [-50.5, 50.5],
+                                               // y' in [-5.5, 5.5])
+constexpr float kAc4SpriteScale = 1.0f;        // the 1x1 world tile
+
+// The float cell center -> the backend's Vec2 (the RENDER-006 load
+// boundary, the iso_reference_scene.h isoRefBackendVec2 pattern):
+// exact for the workload's dyadic half-integer centers in both
+// backends (|v| < 2^23, Q16.16 exact).
+template <typename Backend>
+typename laige::sim::SimMath<Backend>::Vec2 ac4BackendVec2(float x,
+                                                           float y) {
+  using laige::sim::Fp32Pinned;
+  if constexpr (std::is_same_v<Backend, Fp32Pinned>) {
+    return typename laige::sim::SimMath<Backend>::Vec2{x, y};
+  } else {
+    return typename laige::sim::SimMath<Backend>::Vec2{
+        laige::fpx16_16::fromFloat(x), laige::fpx16_16::fromFloat(y)};
+  }
+}
+
+// The workload's items for one SimMath backend (the depth keys are
+// backend-quantized — the per-backend state, the render-50k shape).
+template <typename Backend>
+std::vector<laige::render::SpriteItem> ac4Items() {
+  using laige::render::BlendMode;
+  using laige::render::SpriteItem;
+  using laige::render::isoDepthKey;
+
+  std::vector<SpriteItem> items;
+  items.reserve(kAc4Sprites);
+  for (std::uint32_t gy = 0; gy < kAc4GridRows; ++gy) {
+    for (std::uint32_t gx = 0; gx < kAc4GridCols; ++gx) {
+      const float x =
+          static_cast<float>(gx) - static_cast<float>(kAc4GridCols) / 2.0f
+          + 0.5f;  // the cell center, in -49.5..49.5
+      const float y =
+          static_cast<float>(gy) - static_cast<float>(kAc4GridRows) / 2.0f
+          + 0.5f;  // the cell center, in -4.5..4.5
+      const int stepHeight =
+          static_cast<int>(gx >> 4) + static_cast<int>(gy >> 4);
+      for (std::uint32_t k = 0; k < kAc4StackPerCell; ++k) {
+        SpriteItem it;
+        it.pos = {x, y};
+        it.depthKey = isoDepthKey<Backend>(ac4BackendVec2<Backend>(x, y),
+                                           stepHeight, /*layer=*/0);
+        it.uv = {0.0f, 0.0f, 1.0f, 1.0f};
+        it.scale = {kAc4SpriteScale, kAc4SpriteScale};
+        it.rotation = 0.0f;
+        it.tint = {1.0f, 1.0f, 1.0f, 1.0f};
+        it.atlasId = k % 2u;
+        it.materialId = 0;
+        it.blend = (k < 5u) ? BlendMode::Alpha : BlendMode::Additive;
+        items.push_back(it);
+      }
+    }
+  }
+  return items;
+}
+
+struct Ac4State {
+  std::vector<laige::render::SpriteItem> items;
+  laige::render::Mat4 worldToNdc{};  // built once (the static matrix)
+  bool glAvailable = true;  // false: CPU-only mode (no offscreen GL)
+  // The GL resources live AFTER the context in declaration order only
+  // so the REVERSED destruction order destroys them first (the
+  // renderer holds a non-owning context view).
+  laige::render::GlContext ctx;
+  std::unique_ptr<laige::render::SpriteBatcher> batcher;
+  std::unique_ptr<laige::render::SpriteRenderer> renderer;
+};
+
+Ac4State g_ac4Fpx;
+Ac4State g_ac4Fp32;
+bool g_ac4FpxActive = false;
+
+// The suite's quantities (the section header): the whole frame's CPU
+// ms (batch + submit) and the frame's draw-call count. Both record on
+// EVERY iteration (warmup included) and only while GL is available
+// (a CPU-only run leaves them empty — the NO_SAMPLES loud-fail path).
+struct Ac4Histograms {
+  std::unique_ptr<laige::Histogram> frame;
+  std::unique_ptr<laige::Histogram> drawCalls;
+};
+Ac4Histograms g_ac4Hists;
+
+const laige::Histogram* ac4HistogramFor(std::string_view name) {
+  if (name == "sprites_10k_frame") return g_ac4Hists.frame.get();
+  return nullptr;
+}
+
+[[noreturn]] void ac4Fail(const std::string& what) {
+  std::fprintf(stderr, "laige-bench: ac4 failed: %s\n", what.c_str());
+  std::fflush(stderr);
+  std::exit(1);
+}
+
+template <typename Backend>
+bool ac4SetupImpl(const Config& cfg, Ac4State& st) {
+  // The AC-4.4 engine-default assertion (asserted HERE, the AC-4.4
+  // scope's wording): the default ProjectionView's mode is Iso (ADR
+  // 0005) — a default drift breaks new-project templates (the
+  // isometric-first-class set) and is a loud failure.
+  const laige::render::ProjectionView view{};
+  if (view.mode != laige::render::ProjectionMode::Iso) {
+    ac4Fail("the engine's default projection is not Iso (AC-4.4: the "
+            "default ProjectionView.mode drifted from ProjectionMode::Iso)");
+  }
+
+  st.items = ac4Items<Backend>();
+  st.worldToNdc = laige::render::isoDimetric2To1(kAc4BenchIsoScale);
+
+  {
+    laige::render::SpriteBatcher::Options o{};
+    o.maxSprites = kAc4Sprites;
+    auto r = laige::render::SpriteBatcher::create(o);
+    if (!r.ok()) ac4Fail("the world batcher create failed");
+    st.batcher =
+        std::make_unique<laige::render::SpriteBatcher>(std::move(r).takeValue());
+  }
+
+  // The offscreen GL 3.3 context (the CI headless mechanism — Mesa
+  // surfaceless EGL, the render-50k precedent). A host without it runs
+  // CPU-ONLY (loud): the batch-stage zero-allocation still measures;
+  // the frame histogram stays empty (the NO_SAMPLES loud-fail).
+  auto cr = laige::render::GlContext::createHeadless(kRender50Width,
+                                                     kRender50Height);
+  if (cr.ok()) {
+    st.ctx = std::move(cr).takeValue();
+    laige::render::SpriteRenderer::Options o{};
+    o.maxInstances = kAc4Sprites;
+    o.maxAtlases = 2;  // the workload's atlas ids 0..1
+    auto r = laige::render::SpriteRenderer::create(st.ctx, o);
+    if (!r.ok()) ac4Fail("the world renderer create failed");
+    st.renderer = std::make_unique<laige::render::SpriteRenderer>(
+        std::move(r).takeValue());
+    for (std::uint32_t id = 0; id < 2u; ++id) {
+      const std::vector<std::uint8_t> atlas = render50SolidAtlas(id);
+      if (!st.renderer
+               ->bindAtlas(id, kRender50AtlasTexels, kRender50AtlasTexels,
+                           atlas)
+               .ok()) {
+        ac4Fail("bindAtlas failed for the ac4 atlas " + std::to_string(id));
+      }
+    }
+  } else {
+    st.glAvailable = false;
+    std::fprintf(stderr,
+                 "laige-bench: ac4: no offscreen GL 3.3 context (%s) — "
+                 "running CPU-only (the frame budget is NOT measured)\n",
+                 laige::errorText(cr.error()));
+    std::fflush(stderr);
+  }
+
+  g_ac4Hists.frame =
+      std::make_unique<laige::Histogram>(laige::Histogram::Options{cfg.runs});
+  g_ac4Hists.drawCalls =
+      std::make_unique<laige::Histogram>(laige::Histogram::Options{cfg.runs});
+  return true;
+}
+
+bool ac4Setup(const Config& cfg) {
+  if (cfg.mathFpx16) {
+    g_ac4FpxActive = true;
+    return ac4SetupImpl<laige::sim::Fpx16_16>(cfg, g_ac4Fpx);
+  }
+  g_ac4FpxActive = false;
+  return ac4SetupImpl<laige::sim::Fp32Pinned>(cfg, g_ac4Fp32);
+}
+
+// One measured iteration = one frame (the section header): the batch
+// stage with the zero-allocation watch armed around it, then the
+// submit stage's offscreen render; the whole frame's CPU ms is the
+// `sprites_10k_frame` sample (GL runs only).
+void ac4Iteration(Ac4State& st) {
+  laige::allocWatchArm();
+  laige::TimeIt timer;
+  st.batcher->beginFrame();
+  for (const laige::render::SpriteItem& it : st.items) {
+    const laige::Result<std::uint32_t> a = st.batcher->add(it);
+    if (!a.ok()) {
+      ac4Fail(std::string("batcher.add failed: ") + laige::errorName(a.error()));
+    }
+  }
+  const laige::Status wb = st.batcher->build();
+  if (!wb.ok()) {
+    ac4Fail(std::string("the world batcher build failed: ") +
+            laige::errorName(wb.error()));
+  }
+  const laige::AllocWatchReading reading = laige::allocWatchRead();
+  if (laige::allocWatchLive() && reading.allocs != 0u) {
+    ac4Fail("the batch stage allocated " +
+            std::to_string(reading.allocs) +
+            " heap block(s) this frame (first site " +
+            (reading.firstSite != nullptr ? "captured" : "unknown") +
+            ") — FR-2.2 zero-allocation contract");
+  }
+  if (st.glAvailable) {
+    const laige::Status ws =
+        st.renderer->submit(*st.batcher, st.worldToNdc);
+    if (!ws.ok()) {
+      ac4Fail(std::string("the world submit failed: ") +
+              laige::errorName(ws.error()));
+    }
+    g_ac4Hists.frame->record(timer.elapsedMs());
+    g_ac4Hists.drawCalls->record(
+        static_cast<double>(st.renderer->frameStats().drawCalls));
+  }
+}
+
+void ac4IterationDispatch() {
+  if (g_ac4FpxActive) {
+    ac4Iteration(g_ac4Fpx);
+  } else {
+    ac4Iteration(g_ac4Fp32);
+  }
+}
+
+void ac4TeardownImpl(const Ac4State& st, const char* name) {
+  // The machine-greppable identity line (the render-50k fingerprint
+  // precedent): the workload shape + the run's measured extremes. The
+  // frame statistics are printed only for GL runs — a CPU-only run
+  // records no frame samples (the NO_SAMPLES loud-fail, the
+  // render-50k draw-call precedent).
+  if (st.glAvailable) {
+    const laige::HistogramStats frame = g_ac4Hists.frame->stats();
+    const std::uint32_t drawsMax =
+        static_cast<std::uint32_t>(g_ac4Hists.drawCalls->stats().max);
+    // The RENDER-001 group count is part of the AC-4.3 contract (the
+    // four (atlas, material, blend) groups — one instanced draw each).
+    if (drawsMax != 4u) {
+      ac4Fail("the frame drew " + std::to_string(drawsMax) +
+              " draw call(s) — the four (atlas, material, blend) groups "
+              "must draw exactly four (RENDER-001)");
+    }
+    std::printf(
+        "ac4: backend=%s sprites=%llu grid=%ux%u stack=%u groups=4 "
+        "default=Iso resolution=%ux%u mode=gl draw_calls=%u frames=%llu "
+        "frame_min_ms=%.6f frame_max_ms=%.6f\n",
+        name,
+        static_cast<unsigned long long>(st.items.size()),
+        kAc4GridCols, kAc4GridRows, kAc4StackPerCell,
+        kRender50Width, kRender50Height,
+        drawsMax,
+        static_cast<unsigned long long>(frame.n),
+        frame.min, frame.max);
+  } else {
+    std::printf(
+        "ac4: backend=%s sprites=%llu grid=%ux%u stack=%u groups=4 "
+        "default=Iso resolution=%ux%u mode=cpu\n",
+        name,
+        static_cast<unsigned long long>(st.items.size()),
+        kAc4GridCols, kAc4GridRows, kAc4StackPerCell,
+        kRender50Width, kRender50Height);
+  }
+  std::fflush(stdout);
+}
+
+void ac4Teardown() {
+  if (g_ac4FpxActive) {
+    ac4TeardownImpl(g_ac4Fpx, "fixed_point_16_16");
+  } else {
+    ac4TeardownImpl(g_ac4Fp32, "float_pinned_32");
+  }
+}
+
 // --- The suite table ---------------------------------------------------------
 
 struct Suite {
@@ -884,6 +1216,20 @@ const Suite kSuites[] = {
      "assertion; both SimMath backends (--math)",
      render50Setup, render50Iteration, render50Teardown,
      render50HistogramFor},
+    {"ac4",
+     "M2-AC-01 AC-4.x acceptance: 10 000 overlapping sprites "
+     "(100 x 10 grid, 10 stacked per cell — equal-key ties + "
+     "overdraw) sorted + drawn in one 60 FPS frame "
+     "(sprites_10k_frame) + the batcher zero-allocation assertion + "
+     "the AC-4.4 engine-default projection assert (Iso); both "
+     "SimMath backends (--math). Same workload as render-sort-10k.",
+     ac4Setup, ac4IterationDispatch, ac4Teardown, ac4HistogramFor},
+    {"render-sort-10k",
+     "PRD 4 AC-4.3 dedicated suite: 10 000 overlapping sprites "
+     "(100 x 10 grid, 10 stacked per cell) sorted + drawn at 60 FPS "
+     "(sprites_10k_frame) + the batcher zero-allocation assertion; "
+     "both SimMath backends (--math). Same workload as ac4.",
+     ac4Setup, ac4IterationDispatch, ac4Teardown, ac4HistogramFor},
 };
 
 bool parseUint(std::string_view text, std::uint64_t& out) {

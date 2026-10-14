@@ -26,14 +26,20 @@ docs/testing.md).
   workflow_dispatch only sees workflows on the default branch, so a
   PR branch cannot be dispatched).
 
-The committed PNGs were rendered by the label-gated `golden-references`
-job of run 38468040338 (2026-10-13, branch
-`feat/m2-gold-01-golden-image-tests`, the reference environment above),
-extracted from that job's log between the
+The `sprite_iso_1000` and `ui_smoke` PNGs were rendered by the
+label-gated `golden-references` job of run 38468040338 (2026-10-13,
+branch `feat/m2-gold-01-golden-image-tests`, the reference environment
+above), extracted from that job's log between the
 `GOLDEN_REFERENCE_BEGIN` / `GOLDEN_REFERENCE_END` markers. The job's
 in-run determinism compare passed (both fixtures: failing=0,
 max_diff=0, budget 9). A reference change is a human decision:
 regenerate, review, commit.
+
+The `ac4_iso` / `ac4_side_view` PNGs (M2-AC-01) were rendered by the
+same job in the reference environment and committed in the PR that
+added the fixtures: adding a fixture always costs one red `golden` run
+(the entry compares every fixture) plus one reviewed regeneration —
+the M2-GOLD-01 bootstrap contract.
 
 ## Regeneration (human-approved path)
 

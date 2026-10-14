@@ -35,7 +35,7 @@ endif()
 @CHECKS@
 if(NOT _problems STREQUAL "")
   message(FATAL_ERROR
-    "laige-include-lint check failed [${_problems}]\n"
+    "@LINT_NAME@ check failed [${_problems}]\n"
     "--- lint output ---\n${_text}\n--- end of lint output ---")
 endif()
-message("laige-include-lint check OK: exit @EXPECT_EXIT@, required output present")
+message("@LINT_NAME@ check OK: exit @EXPECT_EXIT@, required output present")
