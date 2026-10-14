@@ -165,12 +165,26 @@ if(NOT LAIGE_ASAN AND NOT LAIGE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # crash is in the exit path, not the measured region). gdb is not
   # preinstalled on the ubuntu-24.04 runners — install it in-place.
   add_test(NAME laige_bench_ac4_fpx16_gdb
-           COMMAND /bin/bash -c
-                   "sudo apt-get update -qq && sudo apt-get install -y -qq gdb && "
-                   "gdb -batch -ex run -ex bt --args "
-                   "$<TARGET_FILE:laige-bench> --suite=ac4 --math=fixed_point_16_16 "
-                   "--runs=20 --warmup=5 --budget=sprites_10k_frame")
+           COMMAND /bin/bash -c "sudo apt-get update -qq && "
+                                  "sudo apt-get install -y -qq gdb && "
+                                  "gdb -batch -ex run -ex bt --args laige-bench "
+                                  "--suite=ac4 --math=fixed_point_16_16 "
+                                  "--runs=20 --warmup=5 "
+                                  "--budget=sprites_10k_frame")
   set_tests_properties(laige_bench_ac4_fpx16_gdb
+    PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
+               TIMEOUT 600)
+endif()
+
+# TEMPORARY DIAGNOSTIC (removed once root-caused): the ac4 exit-time
+# segfault under AddressSanitizer (the reduced frame count — the crash
+# is in the exit path; ASan reports the first heap error with a stack).
+if(LAIGE_ASAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_test(NAME laige_bench_ac4_fpx16_asan_dbg
+           COMMAND laige-bench --suite=ac4 --math=fixed_point_16_16
+                         --runs=20 --warmup=5
+                         --budget=sprites_10k_frame)
+  set_tests_properties(laige_bench_ac4_fpx16_asan_dbg
     PROPERTIES ENVIRONMENT "LAIGE_BUDGETS_PATH=${CMAKE_SOURCE_DIR}/budgets.json"
                TIMEOUT 600)
 endif()
